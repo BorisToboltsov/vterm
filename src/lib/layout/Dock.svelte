@@ -253,7 +253,7 @@
         onHide: () => {
           setPanelHidden(id, true);
           // The tab is gone from the screen — say where the way back is.
-          notifyInfo(t("dock.hiddenHint", { panel: panelLabel(id) }));
+          notifyInfo(t("dock.hiddenHint", { panel: panelLabel(id) }), { source: "settings" });
         },
       }),
     };

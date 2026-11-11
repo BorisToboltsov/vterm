@@ -249,6 +249,40 @@ pub fn save_window_places(places: &crate::winplace::Places) -> AppResult<()> {
     write_atomic(&path, &json)
 }
 
+// ── The journal of notifications (ADR 0062) ─────────────────────────────
+//
+// Every message the app showed, for all its windows (`journal.rs` keeps it, and
+// decides when to write). A store file like the others: rewritten whole,
+// atomically, quarantined when it does not parse — a lost journal must say so,
+// not read as "nothing ever happened".
+
+fn journal_path() -> Option<PathBuf> {
+    config_file("journal.json")
+}
+
+/// The journal of the previous launch; empty on the first one.
+pub fn load_journal() -> Vec<crate::journal::Entry> {
+    let Some(path) = journal_path() else {
+        return Vec::new();
+    };
+    read_store(&path)
+}
+
+/// Write the journal as it stands now.
+pub fn save_journal(entries: &[crate::journal::Entry]) -> AppResult<()> {
+    let path = journal_path().ok_or("could not resolve config directory")?;
+    let json = serde_json::to_vec(entries).map_err(|e| format!("serialize: {e}"))?;
+    write_atomic(&path, &json)?;
+    Ok(())
+}
+
+/// Take the journal off the disk: the user does not keep it across launches.
+pub fn remove_journal() {
+    if let Some(path) = journal_path() {
+        let _ = fs::remove_file(path);
+    }
+}
+
 // ── Host-key store (vterm-managed known_hosts) ─────────────────────────────────
 //
 // Maps "host:port" → host-key fingerprint (SHA256). Used to verify server

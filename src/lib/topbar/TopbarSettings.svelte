@@ -103,7 +103,7 @@
     onclick={() => {
       resetTopbar();
       // The settings window covers the bar — say that something happened.
-      notifySuccess(t("settings.topbarResetDone"));
+      notifySuccess(t("settings.topbarResetDone"), { source: "settings" });
     }}
   >
     {t("topbar.reset")}

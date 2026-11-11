@@ -111,10 +111,10 @@ export function listViolations(files: Record<string, string>): string[] {
     }
   }
   const settings = code(files[SETTINGS] ?? "");
-  if (!/topbar:\s*sanitizeTopbar\(raw\.topbar\)/.test(settings)) {
+  if (!/topbar:\s*sanitizeTopbar\(raw\.topbar(?:, knownBuiltins\(raw\.topbarKnown\))?\)/.test(settings)) {
     out.push("the stored list is not read through sanitizeTopbar");
   }
-  if (!/next\.topbar = sanitizeTopbar\(r\.topbar\);/.test(settings)) {
+  if (!/next\.topbar = sanitizeTopbar\(r\.topbar(?:, knownBuiltins\(r\.topbarKnown\))?\);/.test(settings)) {
     out.push("an imported list is not read through sanitizeTopbar");
   }
   // In the settings store the list is only ever a default or a sanitized value.
@@ -208,10 +208,10 @@ export function reachViolations(files: Record<string, string>): string[] {
   if (!/onSessionAction\?\.\(id\);/.test(win)) out.push("the Utilities window does not run a session action");
   // The window's own button is one of the two the bar is never without.
   const model = code(files[MODEL] ?? "");
-  if (!/export const ANCHORS = \["utilities", "settings"\] as const/.test(model)) {
+  if (!/export const ANCHORS = \[[^\]]*"utilities"[^\]]*\] as const/.test(model)) {
     out.push("the Utilities button can be taken off the bar");
   }
-  if (!/for \(const id of ANCHORS\) if \(!out\.includes\(id\)\) out\.push\(id\);/.test(fn(model, "sanitizeTopbar"))) {
+  if (!/for \(const id of ANCHORS\) if \(!out\.includes\(id\)\) out\.splice\(beforeGear\(out\), 0, id\);/.test(fn(model, "sanitizeTopbar"))) {
     out.push("a stored list that lost an anchor is not given it back");
   }
   return out;
@@ -317,20 +317,24 @@ describe("top-bar guard — catches what it exists for", () => {
   });
 
   it("a stored list taken as it is", () => {
-    const stored = mutate(all[SETTINGS], "topbar: sanitizeTopbar(raw.topbar),", "topbar: raw.topbar,");
+    const stored = mutate(all[SETTINGS], "topbar: sanitizeTopbar(raw.topbar, knownBuiltins(raw.topbarKnown)),", "topbar: raw.topbar,");
     expect(listViolations(withSource(SETTINGS, stored))).toEqual([
       "the stored list is not read through sanitizeTopbar",
       `${SETTINGS}: \`topbar: raw.topbar\` gives the list a value of its own`,
     ]);
-    const imported = mutate(all[SETTINGS], "next.topbar = sanitizeTopbar(r.topbar);", "next.topbar = r.topbar as TopbarId[];");
+    const imported = mutate(
+      all[SETTINGS],
+      "next.topbar = sanitizeTopbar(r.topbar, knownBuiltins(r.topbarKnown));",
+      "next.topbar = r.topbar as TopbarId[];",
+    );
     expect(listViolations(withSource(SETTINGS, imported))[0]).toBe("an imported list is not read through sanitizeTopbar");
   });
 
   it("a rule named only in a comment", () => {
     const broken = mutate(
       all[SETTINGS],
-      "topbar: sanitizeTopbar(raw.topbar),",
-      "// topbar: sanitizeTopbar(raw.topbar),\n      topbar: raw.topbar,",
+      "topbar: sanitizeTopbar(raw.topbar, knownBuiltins(raw.topbarKnown)),",
+      "// topbar: sanitizeTopbar(raw.topbar, knownBuiltins(raw.topbarKnown)),\n      topbar: raw.topbar,",
     );
     expect(listViolations(withSource(SETTINGS, broken))).toContain("the stored list is not read through sanitizeTopbar");
   });

@@ -206,7 +206,7 @@ export function createWindowFlow(deps: WindowDeps) {
     if (held) {
       void dragEnd().catch(() => {});
       const reason = t(DETACH_BLOCK_MESSAGE[held.block]);
-      notifyInfo(t("window.paneBlocked", { tab: deps.title(tabs[held.at]), reason }));
+      notifyInfo(t("window.paneBlocked", { tab: deps.title(tabs[held.at]), reason }), { source: "windows" });
       return;
     }
     const under = await dragDrop(describeTab(lead)).catch(() => null);
@@ -232,7 +232,7 @@ export function createWindowFlow(deps: WindowDeps) {
     const block = detachBlocker(stateOf(tab), true);
     if (block) {
       void dragEnd().catch(() => {});
-      notifyInfo(t(DETACH_BLOCK_MESSAGE[block]));
+      notifyInfo(t(DETACH_BLOCK_MESSAGE[block]), { source: "windows" });
       return;
     }
     // Asked now, not taken from where the tab was last drawn: the release is
@@ -263,7 +263,7 @@ export function createWindowFlow(deps: WindowDeps) {
     // The only tab of a secondary window may go back to an open window, not to a new one.
     const block = detachBlocker(stateOf(tab), toOpenWindow);
     if (block) {
-      notifyInfo(t(DETACH_BLOCK_MESSAGE[block]));
+      notifyInfo(t(DETACH_BLOCK_MESSAGE[block]), { source: "windows" });
       return false;
     }
     detaching = sessionId;
@@ -271,7 +271,7 @@ export function createWindowFlow(deps: WindowDeps) {
       await handOver(sessionId, to);
       return true;
     } catch (e) {
-      notifyError(t(detachErrorKey(e, toOpenWindow)));
+      notifyError(t(detachErrorKey(e, toOpenWindow)), { source: "windows" });
       return false;
     } finally {
       detaching = null;
@@ -356,7 +356,7 @@ export function createWindowFlow(deps: WindowDeps) {
     const held = paneMoveBlocker(tabs.map(stateOf), toOpenWindow);
     if (held) {
       const reason = t(DETACH_BLOCK_MESSAGE[held.block]);
-      notifyInfo(held.block === "lastTab" ? reason : t("window.paneBlocked", { tab: deps.title(tabs[held.at]), reason }));
+      notifyInfo(held.block === "lastTab" ? reason : t("window.paneBlocked", { tab: deps.title(tabs[held.at]), reason }), { source: "windows" });
       return;
     }
     const steps = paneMoveOrder(
@@ -394,7 +394,7 @@ export function createWindowFlow(deps: WindowDeps) {
         moved += 1;
       }
     } catch (e) {
-      notifyError(moved === 0 ? t(detachErrorKey(e, toOpenWindow)) : t(partly, { moved, total: steps.length }));
+      notifyError(moved === 0 ? t(detachErrorKey(e, toOpenWindow)) : t(partly, { moved, total: steps.length }), { source: "windows" });
     } finally {
       detaching = null;
     }
@@ -470,7 +470,7 @@ export function createWindowFlow(deps: WindowDeps) {
       if (tabs.length === 0 || detaching) return;
       const held = paneMoveBlocker(tabs.map(stateOf), true);
       if (held) {
-        notifyInfo(t("window.windowBlocked", { tab: deps.title(tabs[held.at]), reason: t(DETACH_BLOCK_MESSAGE[held.block]) }));
+        notifyInfo(t("window.windowBlocked", { tab: deps.title(tabs[held.at]), reason: t(DETACH_BLOCK_MESSAGE[held.block]) }), { source: "windows" });
         return;
       }
       const steps = windowMoveOrder(tabsState.center.root, (pane) => pane.tabs.filter((id) => findTab(id)));

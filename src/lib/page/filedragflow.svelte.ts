@@ -135,7 +135,7 @@ export function createFileDragFlow(deps: FileDragDeps) {
           files.entries.map((e) => e.path),
           deps.localShell(meaning.to),
         );
-        if (text === null) notifyInfo(t("filedrag.cannotPaste"));
+        if (text === null) notifyInfo(t("filedrag.cannotPaste"), { source: "files" });
         else deps.paste(meaning.to, `${text} `);
         return;
       }
@@ -186,11 +186,11 @@ export function createFileDragFlow(deps: FileDragDeps) {
   function tellNotCarried(files: CarriedFiles) {
     const why = dragOutBlocker(files, dropTabs, hostEnv.os);
     if (why === null) {
-      if (systemDeclined) notifyInfo(t(declinedMessage(systemDeclined.why)));
+      if (systemDeclined) notifyInfo(t(declinedMessage(systemDeclined.why)), { source: "files" });
       return;
     }
     if (!dragOutTold(why)) return;
-    notifyInfo(t("dragout.sessionDown"));
+    notifyInfo(t("dragout.sessionDown"), { source: "files" });
   }
 
   $effect(() => {

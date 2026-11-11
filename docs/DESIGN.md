@@ -266,6 +266,35 @@ Uppercase-микротекст — `text-caption uppercase tracking-wider` (и �
 - **Тосты** ([Toast.svelte](../src/lib/ui/Toast.svelte) + [стор](../src/lib/stores/toasts.svelte.ts))
   — контейнер снизу-справа, тон по типу: error → `danger` (`alert`), success → `ok` (`check`),
   info → `accent` (`info`); авто-дисмисс по `TOAST_TTL` (у критичных сообщений TTL = 0).
+  Не больше трёх (`MAX_TOASTS`), столбец не выше окна (`max-h-[calc(100dvh-1.5rem)]`), текст —
+  `line-clamp-4`. Под текстом — о чём он: «сервер · источник» `text-meta text-muted`. Повтор —
+  счётчик справа `×N`: `rounded border border-current px-1 text-meta tabular-nums`, тоном тоста.
+  Остальное — строка `rounded-lg border border-edge bg-panel-alt px-3 py-1.5 text-meta text-muted`:
+  значок журнала 13 (`JOURNAL_ICON`), «Ещё в журнале: N», текстовые кнопки «Открыть» · «Скрыть все» `text-accent hover:bg-edge`.
+- **Журнал** ([JournalPanel](../src/lib/notifications/JournalPanel.svelte)) —
+  всплывающее окно под кнопкой журнала: `fixed z-40 w-[28rem] max-h-[min(70vh,40rem)] rounded-lg
+  border border-edge bg-panel-alt shadow-lg`, правым краем к кнопке, без затемнения. Шапка —
+  «Журнал» `text-sm font-medium` и шестерёнка справа; строка фильтра — общая (`ListHeader`, широкая:
+  фасеты «Тип», «Сервер», «Источник» кнопками); группы — дни (`GroupHeader`: «Сегодня», «Вчера,
+  10 ноября», дата). Строка записи: точка непрочитанного `h-1.5 w-1.5 bg-accent` (место держится и
+  без неё), значок тона 14 (`alert`/`check`/`info` в `danger`/`ok`/`accent`), текст `line-clamp-3`
+  (щелчок — целиком, `whitespace-pre-wrap`), под ним «сервер · источник · окно N» `text-meta
+  text-muted`; справа время `tabular-nums`, копирование по наведению (`invisible` →
+  `group-hover:visible`) и счётчик `×N` — у ошибки `border-danger text-danger`, иначе
+  `border-edge`. Непрочитанное при открытии строка подсвечивает `bg-edge/40`. Подвал `border-t`:
+  срок хранения и число записей, «Копировать показанные» (`CopyButton`). Пусто — `EmptyState`
+  со значком журнала (`JOURNAL_ICON`); ничего по фильтру — `FilteredEmpty`. Список — один компонент
+  [JournalList](../src/lib/notifications/JournalList.svelte): в шапке окна — только заголовок и
+  шестерёнка, «⋯» очистки стоит в строке фильтра.
+- **Полоса сбоя опроса** ([PollFailStrip](../src/lib/ui/PollFailStrip.svelte)) — под шапкой панели
+  Docker и k8s: `border-b border-edge bg-bad/10 px-2 py-1 text-meta`, `alert` 12 `text-bad`,
+  «Не обновляется с HH:MM:SS» `text-bad`, ошибка `text-muted truncate` (целиком — в подсказке),
+  «×N» `tabular-nums`, текстовая кнопка «Повторить» `text-accent hover:bg-edge`.
+- **«Настройки → Журнал»** ([JournalSettings](../src/lib/notifications/JournalSettings.svelte)) — последняя
+  группа: заголовок раздела с булавкой справа (как в «Утилитах»: `pin` 14 в `rounded p-1`,
+  `text-muted`, у закреплённого `text-accent`), под ним `text-meta text-muted` со значком журнала —
+  есть ли кнопка журнала на панели; хранение и «Очистить журнал…»; ниже тот же список в рамке
+  `h-[26rem] rounded border border-edge bg-panel-alt`.
 - **Доступ к сохранению в редакторе** — компактная текстовая метка рядом с «Сохранить»;
   «Нужны права» служит кнопкой проверки sudo. Ошибка сохранения раскрывает привязанную к этой
   же строке карточку с коротким сообщением и действиями sudo/локальной копии; иконки и цвета
@@ -615,7 +644,9 @@ items-center gap-1`). Какие кнопки и в каком порядке �
   остаётся на месте — `cursor-not-allowed opacity-40`. REC — точка `h-2.5 w-2.5 rounded-full`
   и три буквы `text-xs` в `px-2 py-1`, во время записи `text-danger`, точка `animate-pulse
   bg-danger`. Включённый синхронный ввод — `text-accent`. У заметок — точка-индикатор
-  `h-1.5 w-1.5 bg-accent` в углу. Инструмент «Утилит» — его иконка из реестра инструментов;
+  `h-1.5 w-1.5 bg-accent` в углу. У кнопки журнала (книга `book` — `JOURNAL_ICON`, перед шестерёнкой) — точка
+  `h-1.5 w-1.5 bg-danger` в том же углу, пока есть непрочитанная ошибка; открытый журнал
+  держит кнопку `bg-edge text-text`. Инструмент «Утилит» — его иконка из реестра инструментов;
   двух одинаковых там нет.
 - **«⋯»** — та же кнопка с иконкой `dots` (`strokeWidth=3`), последняя в ряду; есть, только
   когда что-то не поместилось. Меню под ней — общий `ContextMenu` со строками-действиями.

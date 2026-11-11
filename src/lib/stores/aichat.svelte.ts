@@ -551,7 +551,7 @@ export async function runCommand(
     await writeToTerminal(sessionId, encoder.encode(toTerminalInput(block)));
     // Best-effort audit — a no-op unless the session is recording.
     annotateRecording(sessionId, `AI ran: ${auditLabel(block)}`).catch(() => {});
-    notifySuccess(t("ai.exec.sent"));
+    notifySuccess(t("ai.exec.sent"), { source: "ai" });
   } catch {
     c.executed[key] = false; // let the user retry on failure
   }

@@ -29,11 +29,12 @@ describe("TopbarSettings", () => {
 
   it("Utilities and Settings are ticked and cannot be unticked", () => {
     render(TopbarSettings);
-    for (const id of ["utilities", "settings"]) {
+    const anchors: string[] = ["utilities", "settings"];
+    for (const id of anchors) {
       expect(box(id).checked, id).toBe(true);
       expect(box(id).disabled, id).toBe(true);
     }
-    for (const id of BUILTIN_ACTIONS.filter((x) => x !== "settings" && x !== "utilities")) {
+    for (const id of BUILTIN_ACTIONS.filter((x) => !anchors.includes(x))) {
       expect(box(id).disabled, id).toBe(false);
     }
   });
@@ -83,16 +84,16 @@ describe("TopbarSettings — the order (v1.35)", () => {
     await fireEvent.click(screen.getByTestId("topbar-right-broadcast"));
     expect(settings.topbar.slice(0, 2)).toEqual(["notes", "broadcast"]);
     await fireEvent.click(screen.getByTestId("topbar-left-settings"));
-    expect(settings.topbar.slice(-2)).toEqual(["settings", "utilities"]);
+    expect(settings.topbar.slice(-2)).toEqual(["settings", "journal"]);
   });
 
   it("reaches a tool put on the bar, wherever the bar would draw it", async () => {
     pinAction("util:cidr");
     flushSync();
     render(TopbarSettings);
-    // A new button stands before Settings: one step left of it.
+    // A new button stands before Settings: one step left of it is past the journal.
     await fireEvent.click(screen.getByTestId("topbar-left-util:cidr"));
-    expect(settings.topbar.indexOf("util:cidr")).toBe(settings.topbar.indexOf("recordings") + 1);
+    expect(settings.topbar.indexOf("util:cidr")).toBe(settings.topbar.indexOf("utilities") + 1);
     unpinAction("util:cidr");
   });
 });

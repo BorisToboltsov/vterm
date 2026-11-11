@@ -49,7 +49,7 @@
     try {
       status = await serverToolsStatus(sessionId);
     } catch (e) {
-      notifyError(String(e));
+      notifyError(String(e), { source: "editor", sessionId: sessionId });
       status = null;
     } finally {
       loading = false;

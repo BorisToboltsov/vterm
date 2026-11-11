@@ -34,9 +34,9 @@
       newUrl = "";
       newUser = "";
       newPass = "";
-      notifySuccess(t("docker.registrySaved"));
+      notifySuccess(t("docker.registrySaved"), { source: "docker" });
     } catch (e) {
-      notifyError(String(e));
+      notifyError(String(e), { source: "docker" });
     } finally {
       busy = false;
     }
@@ -48,7 +48,7 @@
       await deleteRegistrySecret(reg.url);
       settings.dockerRegistries = settings.dockerRegistries.filter((r) => r.url !== reg.url);
     } catch (e) {
-      notifyError(String(e));
+      notifyError(String(e), { source: "docker" });
     } finally {
       busy = false;
     }

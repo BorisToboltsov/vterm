@@ -73,10 +73,10 @@
     try {
       await runToolInstall(sessionId, command, needsSudo ? sudoPw : undefined);
       done = true;
-      notifySuccess(t("servertools.installDone", { name: tool?.name ?? "" }));
+      notifySuccess(t("servertools.installDone", { name: tool?.name ?? "" }), { source: "editor", sessionId: sessionId });
       onInstalled?.();
     } catch (e) {
-      notifyError(String(e));
+      notifyError(String(e), { source: "editor", sessionId: sessionId });
     } finally {
       unlisten();
       installing = false;

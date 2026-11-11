@@ -417,22 +417,22 @@
 
   async function copyText(text: string) {
     await writeClipboard(text);
-    notifySuccess(t("git.copied"));
+    notifySuccess(t("git.copied"), { source: "git" });
   }
   const copySha = (c: GitCommit) => copyText(c.hash);
   async function copyMsg(c: GitCommit) {
     await writeClipboard(c.subject);
-    notifySuccess(t("git.copied"));
+    notifySuccess(t("git.copied"), { source: "git" });
   }
   async function copyLink(c: GitCommit) {
     const res = await runQuery(remoteUrlArgs());
     const url = res.exitCode === 0 ? commitWebUrl(res.stdout.trim(), c.hash) : null;
     if (!url) {
-      notifyError(t("git.noRemoteLink"));
+      notifyError(t("git.noRemoteLink"), { source: "git" });
       return;
     }
     await writeClipboard(url);
-    notifySuccess(t("git.copied"));
+    notifySuccess(t("git.copied"), { source: "git" });
   }
   async function compareWorking(c: GitCommit) {
     const res = await runQuery(diffCommitWorkingArgs(c.hash));

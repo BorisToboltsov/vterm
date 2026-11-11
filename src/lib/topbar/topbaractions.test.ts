@@ -17,6 +17,8 @@ import {
   sameSlot,
   sanitizeTopbar,
   SESSION_ACTIONS,
+  knownBuiltins,
+  LATER_BUILTINS,
   shownTopbar,
   TOPBAR_SIZES,
   topbarRoom,
@@ -49,6 +51,7 @@ describe("the buttons there are", () => {
       "record",
       "recordings",
       "utilities",
+      "journal",
       "settings",
     ]);
   });
@@ -81,9 +84,10 @@ describe("the buttons there are", () => {
     expect([...ANCHORS]).toEqual(["utilities", "settings"]);
   });
 
-  it("every built-in button is either an anchor or a session action — nothing in between", () => {
-    // What can be taken off the bar is what the Utilities window still lists.
-    expect([...SESSION_ACTIONS].sort()).toEqual(BUILTIN_ACTIONS.filter(canUnpin).sort());
+  it("every built-in button is an anchor, a session action or the journal — nothing in between", () => {
+    // What can be taken off the bar is still found: a session action in the
+    // Utilities window, the journal in Settings → Journal (and both in ⌘K).
+    expect([...SESSION_ACTIONS, "journal"].sort()).toEqual(BUILTIN_ACTIONS.filter(canUnpin).sort());
     expect(new Set(SESSION_ACTIONS).size).toBe(SESSION_ACTIONS.length);
   });
 });
@@ -103,12 +107,12 @@ describe("sanitizeTopbar", () => {
     expect(sanitizeTopbar(["util:cidr", "nope", "record", "util:cidr", 4, null, "settings", "util:gone"])).toEqual([
       "util:cidr",
       "record",
-      "settings",
       "utilities",
+      "settings",
     ]);
   });
 
-  it("puts an anchor back when it is missing — at the end, Utilities before Settings", () => {
+  it("puts an anchor back when it is missing — where a new button goes: before a closing gear, else at the end", () => {
     expect(sanitizeTopbar(["record", "util:jwt"])).toEqual(["record", "util:jwt", "utilities", "settings"]);
     expect(sanitizeTopbar(["record", "utilities"])).toEqual(["record", "utilities", "settings"]);
   });
@@ -117,12 +121,25 @@ describe("sanitizeTopbar", () => {
     expect(sanitizeTopbar(["settings", "record", "utilities"])).toEqual(["settings", "record", "utilities"]);
   });
 
-  it("whatever it is given, the result is a list of known buttons, each once, with both anchors", () => {
+  it("gives a bar stored before a later button existed that button once — and leaves it off once taken off", () => {
+    const old: TopbarId[] = ["broadcast", "monitoring", "utilities", "settings"];
+    // Stored before anyone kept count: it knew all but the later buttons.
+    expect(knownBuiltins(undefined)).not.toContain("journal");
+    expect(sanitizeTopbar(old, knownBuiltins(undefined))).toEqual(["broadcast", "monitoring", "utilities", "journal", "settings"]);
+    // Stored by a build that offered the bell: the user took it off, and it stays off.
+    expect(sanitizeTopbar(old, knownBuiltins([...BUILTIN_ACTIONS]))).toEqual(old);
+    // Read without a word on what it knew: nothing is added.
+    expect(sanitizeTopbar(old)).toEqual(old);
+    // What a stored "known" says is taken at its word, and only its built-ins.
+    expect(knownBuiltins(["settings", "nope", 3, "journal"])).toEqual(["journal", "settings"]);
+    expect(LATER_BUILTINS.every((id) => (BUILTIN_ACTIONS as readonly string[]).includes(id))).toBe(true);
+  });
+
+  it("whatever it is given, the result is a list of known buttons, each once, with every anchor", () => {
     fc.assert(
       fc.property(fc.anything(), (raw) => {
         const out = sanitizeTopbar(raw);
-        expect(out).toContain("settings");
-        expect(out).toContain("utilities");
+        for (const anchor of ANCHORS) expect(out).toContain(anchor);
         expect(out.every(isTopbarId)).toBe(true);
         expect(new Set(out).size).toBe(out.length);
         // Clean once, clean for good.
@@ -469,7 +486,7 @@ describe("⌘K commands on the bar (v1.35)", () => {
   });
 
   it("keeps a pinned command on the bar through sanitizing, with what it is called", () => {
-    expect(sanitizeTopbar(["cmd:act:help", "settings"])).toEqual(["cmd:act:help", "settings", "utilities"]);
+    expect(sanitizeTopbar(["cmd:act:help", "settings"])).toEqual(["cmd:act:help", "utilities", "settings"]);
     expect(
       sanitizePinnedCommands({
         "cmd:act:help": { title: "Help", icon: "info" },

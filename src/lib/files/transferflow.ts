@@ -107,7 +107,7 @@ export async function startTransfer(req: TransferRequest): Promise<string | null
       destDir: req.destDir,
     });
   } catch (e) {
-    notifyError(String(e));
+    notifyError(String(e), { source: "transfer" });
     return null;
   }
 }
@@ -122,7 +122,7 @@ export async function resumeTransfer(id: string): Promise<void> {
   try {
     await transferResume(id);
   } catch (e) {
-    notifyError(String(e));
+    notifyError(String(e), { source: "transfer" });
   }
 }
 
@@ -132,6 +132,6 @@ export async function forgetTransfer(id: string): Promise<void> {
   try {
     await transferForget(id);
   } catch (e) {
-    notifyError(String(e));
+    notifyError(String(e), { source: "transfer" });
   }
 }

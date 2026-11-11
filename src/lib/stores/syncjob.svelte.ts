@@ -220,7 +220,7 @@ export async function compare(sessionId: string): Promise<void> {
     );
     job.skipped = { local: local.skipped, remote: rem.skipped };
     job.phase = "idle";
-    if (!job.dialogOpen) notifyInfo(t("sync.compareReadyBg", { n: job.plan.length }));
+    if (!job.dialogOpen) notifyInfo(t("sync.compareReadyBg", { n: job.plan.length }), { source: "sync", sessionId });
   } catch (e) {
     // One side failed: the other would only burn time for a plan nobody gets.
     cancelCompareIds(id);
@@ -228,7 +228,7 @@ export async function compare(sessionId: string): Promise<void> {
     job.error = errorText(String(e));
     job.plan = null;
     job.facts = null;
-    if (!job.dialogOpen) notifyError(job.error);
+    if (!job.dialogOpen) notifyError(job.error, { source: "sync", sessionId });
   } finally {
     if (job.compareId === id) {
       job.comparing = false;
@@ -270,10 +270,10 @@ export async function apply(sessionId: string): Promise<void> {
       // Refused before it started (a run in another window holds the slot): the
       // plan is untouched, so this is not a stopped run.
       job.phase = "idle";
-      notifyError(t("sync.otherRunning"));
+      notifyError(t("sync.otherRunning"), { source: "sync" });
     } else {
       job.phase = "stopped";
-      notifyError(err);
+      notifyError(err, { source: "sync" });
     }
   }
 }
@@ -310,19 +310,23 @@ export function runHeard(view: SyncRunView): void {
         done: stats.uploaded + stats.downloaded + stats.deleted,
         total: job.runTotal,
       }),
+      { source: "sync", sessionId: view.sessionId },
     );
     return;
   }
   if (view.state === "failed") {
     job.phase = "stopped";
-    notifyError(view.error ?? "");
+    notifyError(view.error ?? "", { source: "sync", sessionId: view.sessionId });
     return;
   }
   // Drop the finished plan: re-opening would otherwise redraw every row of it.
   job.plan = null;
   job.facts = null;
   job.phase = "done";
-  notifySuccess(t("sync.applied", { up: stats.uploaded, down: stats.downloaded, del: stats.deleted }));
+  notifySuccess(t("sync.applied", { up: stats.uploaded, down: stats.downloaded, del: stats.deleted }), {
+    source: "sync",
+    sessionId: view.sessionId,
+  });
 }
 
 /** Another session's run is going on and holds the (single) progress feed. */

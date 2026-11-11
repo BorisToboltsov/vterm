@@ -136,14 +136,14 @@
       const res = await runQuery(stagedDiffArgs());
       const diff = res.stdout.trim();
       if (!diff) {
-        notifyError(t("git.aiNoStaged"));
+        notifyError(t("git.aiNoStaged"), { source: "git" });
         return;
       }
       const ctx = buildRawContext(diff, "Staged diff");
       if (!ctx.text) return;
       draftConsent = ctx;
     } catch {
-      notifyError(t("git.aiFailed"));
+      notifyError(t("git.aiFailed"), { source: "git" });
     } finally {
       drafting = false;
     }
@@ -171,7 +171,7 @@
       },
       onError: (msg) => {
         drafting = false;
-        notifyError(msg);
+        notifyError(msg, { source: "git" });
       },
     });
   }
@@ -304,7 +304,7 @@
 
   async function copyPath(path: string, absolute: boolean) {
     await writeClipboard(absolute ? absPath(path) : path);
-    notifySuccess(t("git.copied"));
+    notifySuccess(t("git.copied"), { source: "git" });
   }
 
   async function commit(push: boolean) {

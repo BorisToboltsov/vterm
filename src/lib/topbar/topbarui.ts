@@ -7,6 +7,7 @@ import type { IconName } from "../ui/icons";
 import type { MenuAction, MenuItem } from "../ui/ctxmenu";
 import { t } from "../i18n";
 import { UTILITIES } from "../utilities/utilities";
+import { JOURNAL_ICON } from "../notifications/journal";
 import {
   actionCommand,
   actionUtility,
@@ -26,6 +27,7 @@ const BUILTIN_ICON: Record<BuiltinAction, IconName> = {
   record: "play",
   recordings: "activity",
   utilities: "wrench",
+  journal: JOURNAL_ICON,
   settings: "settings",
 };
 
@@ -43,6 +45,8 @@ function builtinLabel(id: BuiltinAction): string {
       return t("recordings.title");
     case "utilities":
       return t("util.title");
+    case "journal":
+      return t("journal.title");
     case "settings":
       return t("topbar.settings");
   }

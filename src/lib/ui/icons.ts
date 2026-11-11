@@ -14,6 +14,8 @@ export const ICONS = {
     '<path d="M14 3v4a1 1 0 0 0 1 1h4"/><path d="M5 3h9l5 5v11a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1z"/><path d="M11.5 11.5v5M9 14h5"/>',
   symlink:
     '<path d="M14 3v4a1 1 0 0 0 1 1h4"/><path d="M5 3h9l5 5v11a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1z"/><path d="M9 17l5-5M14 16v-4h-4"/>',
+  // The journal (ADR 0062) — a closed book with a bookmark ribbon: a logbook.
+  book: '<path d="M5 19.5v-15A1.5 1.5 0 0 1 6.5 3H19v18H6.5A1.5 1.5 0 0 1 5 19.5z"/><path d="M5 19.5A1.5 1.5 0 0 1 6.5 18H19"/><path d="M10 3v6l2-1.5L14 9V3"/>',
   // Server notes — a document with text lines.
   note: '<path d="M14 3v4a1 1 0 0 0 1 1h4"/><path d="M5 3h9l5 5v11a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1z"/><path d="M8 12h8M8 16h5"/>',
   server:

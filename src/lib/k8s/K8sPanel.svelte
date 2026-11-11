@@ -43,6 +43,8 @@
   import { listOrder, setListOrder, type ListId } from "../stores/listview.svelte";
   import PanelDivider from "../ui/PanelDivider.svelte";
   import AttentionStrip from "../ui/AttentionStrip.svelte";
+  import PollFailStrip from "../ui/PollFailStrip.svelte";
+  import { pollFailed, singleFlight, type PollFailure } from "../ui/poll";
   import { hideableFields } from "../ui/colfit";
   import { hiddenFields, toggleField } from "../stores/colwidths.svelte";
   import { partWidth } from "../stores/panelsplit.svelte";
@@ -223,6 +225,8 @@
   // False until the first data load after a positive probe completes — drives the
   // skeleton so the panel never flashes "No pods" before the first `get`.
   let firstLoadDone = $state(false);
+  /** The reads failing in a row, if they are (ADR 0062): drawn as a strip, not toasts. */
+  let pollFailure = $state<PollFailure | null>(null);
 
   let podList = $state<K8sPod[]>([]);
   // The objects of the same answer, as kubectl gave them: «Overview» of the pod
@@ -461,15 +465,15 @@
     try {
       const res = await kubectlRun(sessionId, objArgs(bare, namespace), 120, true);
       if (res.exitCode !== 0) {
-        notifyError(res.stderr.trim() || res.stdout.trim() || t("k8s.opFailed"));
+        notifyError(res.stderr.trim() || res.stdout.trim() || t("k8s.opFailed"), { source: "k8s", sessionId: sessionId });
         await refresh();
         return false;
       }
-      if (opts.successKey) notifySuccess(t(opts.successKey as MessageKey));
+      if (opts.successKey) notifySuccess(t(opts.successKey as MessageKey), { source: "k8s", sessionId: sessionId });
       await refresh();
       return true;
     } catch (e) {
-      notifyError(String(e));
+      notifyError(String(e), { source: "k8s", sessionId: sessionId });
       return false;
     } finally {
       busy = false;
@@ -491,7 +495,7 @@
       name: pod.name,
       container: container ?? undefined,
     });
-    notifySuccess(t("k8s.logsFollowOpened", { name: pod.name }));
+    notifySuccess(t("k8s.logsFollowOpened", { name: pod.name }), { source: "k8s", sessionId: sessionId });
   }
 
   // ── Data loading ───────────────────────────────────────────────────────────
@@ -546,7 +550,7 @@
   }
 
   /** Reload the active sub-tab's data (+ pod metrics). */
-  async function refresh() {
+  async function readNow() {
     if (!sessionReady || !availability?.ok) return;
     try {
       if (activeSub === "pods") {
@@ -651,11 +655,26 @@
           claimUsers = pods.exitCode === 0 ? usersOfClaims(listItems(pods.stdout)) : null;
         } else claimUsers = null;
       }
+      pollFailure = null;
     } catch (e) {
-      notifyError(String(e));
+      failedRead(String(e));
     } finally {
       firstLoadDone = true;
     }
+  }
+
+  /**
+   * Reload the view — one read at a time (ADR 0062): a tick while a read is out
+   * asks for one more after it, instead of a pile of reads waiting on a dead link
+   * that fail all at once.
+   */
+  const refresh = singleFlight(readNow);
+
+  /** A read failed: a strip in the panel, and — once per streak — a quiet note in the journal. */
+  function failedRead(text: string) {
+    const { failure, news } = pollFailed(pollFailure, text, Date.now());
+    pollFailure = failure;
+    if (news) notifyError(text, { source: "k8s", sessionId, quiet: true });
   }
 
   /** Probe + first load against the current scope (from mount, retry, or scope change). */
@@ -755,7 +774,7 @@
   /** Open `kubectl port-forward` in a real terminal tab (process lives in the PTY). */
   function portForward(target: string, namespace: string, port: number) {
     onOpenShell?.(portForwardArgv(prog, target, namespace, port, port, scope));
-    notifySuccess(t("k8s.portForwardStarted", { target }));
+    notifySuccess(t("k8s.portForwardStarted", { target }), { source: "k8s", sessionId: sessionId });
   }
 
   // ── Detail modal live sync ───────────────────────────────────────────────────
@@ -1166,6 +1185,8 @@
         {/each}
       </div>
     </div>
+
+    <PollFailStrip failure={pollFailure} onretry={() => void refresh()} testid="k8s-poll-fail" />
 
     <!-- Active sub-view -->
     <!-- In a wide panel describe/YAML and a pod's details open beside the

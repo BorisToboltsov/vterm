@@ -124,7 +124,7 @@
 
   function copyRow(e: JsonLogEntry) {
     writeClipboard(e.format === "json" ? JSON.stringify(e.raw, null, 2) : e.source);
-    notifySuccess(t("jsonlog.copied"));
+    notifySuccess(t("jsonlog.copied"), { source: "terminal" });
   }
 
   function onScroll() {

@@ -280,9 +280,9 @@
     try {
       await forgetSecrets(editId);
       onforgotten(editId);
-      notifySuccess(t("page.savedSecretRemoved"));
+      notifySuccess(t("page.savedSecretRemoved"), { source: "servers" });
     } catch (e) {
-      notifyError(String(e));
+      notifyError(String(e), { source: "servers" });
     }
   }
 
@@ -344,6 +344,7 @@
         savedMode === "edit"
           ? t("page.serverUpdated", { alias: saved.alias })
           : t("page.serverAdded", { alias: saved.alias }),
+        { source: "servers" },
       );
       // Secrets need the persisted id. A keychain error is reported separately,
       // and its updated profile replaces the first row when it succeeds.
@@ -351,7 +352,7 @@
         try {
           onsaved(await saveServerSecret(saved.id, serverSecret), "edit");
         } catch (e) {
-          notifyError(t("page.secretNotSaved", { error: String(e) }));
+          notifyError(t("page.secretNotSaved", { error: String(e) }), { source: "servers" });
         }
       }
       // Store a just-typed proxy secret in the keychain — the jump host's
@@ -361,7 +362,7 @@
         await saveProxySecret(saved.id, proxySecretToSave);
       }
     } catch (e) {
-      notifyError(String(e));
+      notifyError(String(e), { source: "servers" });
     }
   }
 </script>

@@ -20,6 +20,7 @@ describe("what a button is called and drawn as", () => {
       "Recording (REC)",
       "Recordings",
       "Utilities",
+      "Journal",
       "Settings",
     ]);
     expect(labels.every((l) => l.trim().length > 0)).toBe(true);
@@ -79,12 +80,13 @@ describe("the bar's menu", () => {
 
   it("Utilities and Settings are shown ticked and are not offered", () => {
     const items = topbarMenu([...DEFAULT_TOPBAR], null, on());
-    for (const label of ["Utilities", "Settings"]) {
+    const anchors = ["Utilities", "Settings"];
+    for (const label of anchors) {
       expect(row(items, label).checked, label).toBe(true);
       expect(row(items, label).disabled, label).toBe(true);
     }
     // Every other row can be used.
-    const rest = actions(items).filter((a) => a.label !== "Settings" && a.label !== "Utilities");
+    const rest = actions(items).filter((a) => !anchors.includes(a.label));
     expect(rest.every((a) => !a.disabled)).toBe(true);
   });
 

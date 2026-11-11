@@ -19,7 +19,7 @@ let question = $state<LinkQuestion | null>(null);
 export const currentLinkQuestion = (): LinkQuestion | null => question;
 
 function open(href: string): void {
-  openUrl(href).catch((e) => notifyError(t("link.openFailed", { error: String(e) })));
+  openUrl(href).catch((e) => notifyError(t("link.openFailed", { error: String(e) }), { source: "terminal" }));
 }
 
 /**
@@ -61,6 +61,6 @@ export function answerLink(answer: LinkAnswer, silence = false): void {
     if (silence && asked.canSilence) settings.terminalLinks = "direct";
     open(asked.target.href);
   } else if (answer === "copy") {
-    void writeClipboard(asked.target.href).then(() => notifySuccess(t("link.copied")));
+    void writeClipboard(asked.target.href).then(() => notifySuccess(t("link.copied"), { source: "terminal" }));
   }
 }

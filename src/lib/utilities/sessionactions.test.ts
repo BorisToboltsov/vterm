@@ -32,7 +32,8 @@ const NOTHING: SessionActionState = {
 describe("the session actions the Utilities window lists", () => {
   it("is every built-in button that can be taken off the top bar — none is left with no place", () => {
     const listed = SESSION_ACTION_DEFS.map((a) => a.id);
-    expect([...listed].sort()).toEqual(BUILTIN_ACTIONS.filter(canUnpin).sort());
+    // The journal's button has its place in Settings → Journal (journal.guard), not here.
+    expect([...listed, "journal"].sort()).toEqual(BUILTIN_ACTIONS.filter(canUnpin).sort());
     expect(listed).toEqual([...SESSION_ACTIONS]);
   });
 

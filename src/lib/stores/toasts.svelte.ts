@@ -1,7 +1,19 @@
 // Toast notifications store (Svelte 5 runes): a small queue of non-blocking
 // messages shown over the UI. Replaces inline error banners — any operation can
 // surface a failure (or a status) without stealing focus or blocking the view.
-// Pure bookkeeping + auto-dismiss timers; the visual is in Toast.svelte.
+//
+// Every message is a note in the journal first (ADR 0062): the journal
+// is one for all the windows and outlives the toast, so what flew by can be
+// read later — masked on the way, for it is kept on disk. A toast is how this
+// window shows it now: the same message said again counts up on its toast
+// instead of standing a second one under it, and a `quiet` note is the
+// journal's alone (a poll that failed again, a reconnect attempt).
+// Bookkeeping + auto-dismiss timers; the visual is in Toast.svelte.
+
+import { redactSecrets } from "../ai/redact";
+import { serverOf, toastKey, type JournalSource } from "../notifications/journal";
+import { findTab } from "./tabs.svelte";
+import { noteJournal } from "./journal.svelte";
 
 export type ToastKind = "error" | "success" | "info";
 
@@ -9,6 +21,25 @@ export interface Toast {
   id: string;
   kind: ToastKind;
   message: string;
+  /** How many times it was said while it stood. */
+  count: number;
+  source?: JournalSource;
+  /** The server it is about, by name. */
+  server?: string;
+  /** What makes it the same toast (`toastKey`). */
+  key: string;
+}
+
+/** What a message says besides its words. */
+export interface NotifyOptions {
+  /** Auto-dismiss delay, ms: the kind's default when omitted, `0` — until dismissed. */
+  ttl?: number;
+  /** The part of the app that says it. */
+  source?: JournalSource;
+  /** The session it is about: its server is named in the toast and the journal. */
+  sessionId?: string | null;
+  /** The journal's alone: no toast. */
+  quiet?: boolean;
 }
 
 /** Default auto-dismiss delay (ms) per kind; errors linger a bit longer. */
@@ -33,29 +64,46 @@ export function dismissToast(id: string): void {
   toastsState.list = toastsState.list.filter((x) => x.id !== id);
 }
 
+function arm(id: string, delay: number): void {
+  const t = timers.get(id);
+  if (t !== undefined) clearTimeout(t);
+  timers.delete(id);
+  if (delay > 0) timers.set(id, setTimeout(() => dismissToast(id), delay));
+}
+
 /**
- * Push a toast and return its id. Auto-dismisses after `ttl` ms (per-kind
- * default when omitted; pass `0` to keep it until dismissed manually).
+ * Note a message in the journal and show it as a toast; returns the toast's id
+ * ("" for a quiet note). The same message said again while its toast stands
+ * counts up on it and keeps it up for another full delay.
  */
-export function notify(message: string, kind: ToastKind = "info", ttl?: number): string {
-  const id = crypto.randomUUID();
-  toastsState.list = [...toastsState.list, { id, kind, message }];
-  const delay = ttl ?? TOAST_TTL[kind];
-  if (delay > 0) {
-    timers.set(
-      id,
-      setTimeout(() => dismissToast(id), delay),
-    );
+export function notify(message: string, kind: ToastKind = "info", opts: NotifyOptions = {}): string {
+  const { serverId, server } = serverOf(opts.sessionId ? findTab(opts.sessionId) : null);
+  noteJournal({ kind, text: redactSecrets(message).text, source: opts.source, serverId, server });
+  if (opts.quiet) return "";
+  const key = toastKey(kind, message, opts.source, serverId);
+  const delay = opts.ttl ?? TOAST_TTL[kind];
+  const standing = toastsState.list.find((x) => x.key === key);
+  if (standing) {
+    // Said again: one toast, counted, and the newest again.
+    toastsState.list = [
+      ...toastsState.list.filter((x) => x.id !== standing.id),
+      { ...standing, count: standing.count + 1 },
+    ];
+    arm(standing.id, delay);
+    return standing.id;
   }
+  const id = crypto.randomUUID();
+  toastsState.list = [...toastsState.list, { id, kind, message, count: 1, source: opts.source, server, key }];
+  arm(id, delay);
   return id;
 }
 
-export const notifyError = (message: string, ttl?: number): string =>
-  notify(message, "error", ttl);
-export const notifySuccess = (message: string, ttl?: number): string =>
-  notify(message, "success", ttl);
-export const notifyInfo = (message: string, ttl?: number): string =>
-  notify(message, "info", ttl);
+export const notifyError = (message: string, opts?: NotifyOptions): string =>
+  notify(message, "error", opts);
+export const notifySuccess = (message: string, opts?: NotifyOptions): string =>
+  notify(message, "success", opts);
+export const notifyInfo = (message: string, opts?: NotifyOptions): string =>
+  notify(message, "info", opts);
 
 /** Remove every toast and cancel all pending timers. */
 export function clearToasts(): void {

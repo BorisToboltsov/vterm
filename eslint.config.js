@@ -174,6 +174,22 @@ export default defineConfig(
               },
             ]),
           ),
+          // The journal of notifications (ADR 0062): one for all the windows, the backend's.
+          ...Object.fromEntries(
+            ["journalNote", "journalList", "journalSummary", "journalMarkRead", "journalRemove", "journalClear", "journalConfigure"].map(
+              (name) => [
+                name,
+                {
+                  owners: ["src/lib/stores/journal.svelte.ts"],
+                  why: "the journal store reads the list only while it is shown and takes every summary in revision order",
+                },
+              ],
+            ),
+          ),
+          noteJournal: {
+            owners: ["src/lib/stores/toasts.svelte.ts"],
+            why: "a message enters the journal through notify, masked on the way — the journal is kept on disk",
+          },
           closeTab: {
             owners: ["src/routes/+page.svelte"],
             why: "a tab closes through closeTabFully, which drops everything kept by its session id",

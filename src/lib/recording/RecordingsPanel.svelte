@@ -211,13 +211,13 @@
       const transcript = extractTranscript(await readRecording(rec.path));
       const ctx = buildRunbookContext(transcript);
       if (!ctx.text) {
-        notifyError(t("recordings.planEmpty"));
+        notifyError(t("recordings.planEmpty"), { source: "recording" });
         return;
       }
       planTitle = rec.title || baseName(rec.path);
       genConsent = { ctx, kind, rec };
     } catch {
-      notifyError(t("recordings.planFailed"));
+      notifyError(t("recordings.planFailed"), { source: "recording" });
     }
   }
 
@@ -288,7 +288,7 @@
       items = await listRecordings();
       now = Date.now() / 1000;
     } catch (e) {
-      notifyError(String(e));
+      notifyError(String(e), { source: "recording" });
     } finally {
       loading = false;
     }
@@ -302,9 +302,9 @@
       const rec = await importRecording(src);
       // Show it immediately without a full reload.
       items = [rec, ...items.filter((r) => r.path !== rec.path)];
-      notifySuccess(t("recordings.uploaded"));
+      notifySuccess(t("recordings.uploaded"), { source: "recording" });
     } catch (e) {
-      notifyError(String(e));
+      notifyError(String(e), { source: "recording" });
     }
   }
 
@@ -327,9 +327,9 @@
     try {
       await setRecordingMeta(rec.path, title, description);
       items = items.map((r) => (r.path === rec.path ? { ...r, title, description } : r));
-      notifySuccess(t("recordings.stopped"));
+      notifySuccess(t("recordings.stopped"), { source: "recording" });
     } catch (e) {
-      notifyError(String(e));
+      notifyError(String(e), { source: "recording" });
     }
   }
 
@@ -343,7 +343,7 @@
         height: rec.height,
       };
     } catch (e) {
-      notifyError(String(e));
+      notifyError(String(e), { source: "recording" });
     }
   }
 
@@ -420,9 +420,9 @@
       const dest = await pickExportSavePath(name);
       if (!dest) return;
       await exportRecording(dest, content);
-      notifySuccess(t("recordings.exported"));
+      notifySuccess(t("recordings.exported"), { source: "recording" });
     } catch (e) {
-      notifyError(String(e));
+      notifyError(String(e), { source: "recording" });
     }
   }
 
@@ -432,7 +432,7 @@
       await deleteRecording(rec.path);
       items = items.filter((r) => r.path !== rec.path);
     } catch (e) {
-      notifyError(String(e));
+      notifyError(String(e), { source: "recording" });
     }
   }
 </script>
@@ -759,7 +759,7 @@
         disabled={!planText}
         onclick={() => {
           writeClipboard(planText);
-          notifySuccess(t("ai.exec.copied"));
+          notifySuccess(t("ai.exec.copied"), { source: "recording" });
         }}
       >
         <Icon name="copy" size={12} />

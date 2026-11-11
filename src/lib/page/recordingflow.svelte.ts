@@ -200,7 +200,7 @@ export function createRecordingFlow(deps: RecordingDeps) {
   /** Start/stop recording a specific tab (single-session flow, no broadcast). */
   async function toggleRecordingFor(tab: Tab) {
     if (!isLive(tab.status)) {
-      notifyError(t("recordings.needsSession"));
+      notifyError(t("recordings.needsSession"), { source: "recording" });
       return;
     }
     const id = tab.sessionId;
@@ -210,13 +210,13 @@ export function createRecordingFlow(deps: RecordingDeps) {
         clearRecording(id);
         // Prompt to name/describe (or discard) the just-saved recording.
         if (path) saveRec = { path, defaultTitle: titleOf(tab) };
-        else notifySuccess(t("recordings.stopped"));
+        else notifySuccess(t("recordings.stopped"), { source: "recording" });
       } else {
         await startSessionRecording(tab);
-        notifySuccess(t("recordings.started"));
+        notifySuccess(t("recordings.started"), { source: "recording" });
       }
     } catch (e) {
-      notifyError(String(e));
+      notifyError(String(e), { source: "recording" });
     }
   }
 
@@ -290,19 +290,19 @@ export function createRecordingFlow(deps: RecordingDeps) {
             const res = await stopGroupRecording();
             // Offer to name (or discard) the bundle, like the single-recording flow.
             if (res && res.paths.length > 0) saveBatch = { batchId: res.batchId, paths: res.paths };
-            else notifySuccess(t("recordings.groupStopped"));
+            else notifySuccess(t("recordings.groupStopped"), { source: "recording" });
           } else {
             await startGroupRecording();
-            notifySuccess(t("recordings.groupStarted", { count: groupSize }));
+            notifySuccess(t("recordings.groupStarted", { count: groupSize }), { source: "recording" });
           }
         } catch (e) {
-          notifyError(String(e));
+          notifyError(String(e), { source: "recording" });
         }
         return;
       }
       const tab = deps.activeTab();
       if (!tab || !isLive(tab.status)) {
-        notifyError(t("recordings.needsSession"));
+        notifyError(t("recordings.needsSession"), { source: "recording" });
         return;
       }
       await toggleRecordingFor(tab);
@@ -318,9 +318,9 @@ export function createRecordingFlow(deps: RecordingDeps) {
       if (!deps.servers().find((s) => s.id === tab.serverId)?.autoRecord) return;
       try {
         await startSessionRecording(tab);
-        notifyInfo(t("recordings.autoStarted", { alias: titleOf(tab) }));
+        notifyInfo(t("recordings.autoStarted", { alias: titleOf(tab) }), { source: "recording" });
       } catch (e) {
-        notifyError(String(e));
+        notifyError(String(e), { source: "recording" });
       }
     },
 
@@ -352,9 +352,9 @@ export function createRecordingFlow(deps: RecordingDeps) {
       if (!rec) return;
       try {
         await setRecordingMeta(rec.path, title, description);
-        notifySuccess(t("recordings.stopped"));
+        notifySuccess(t("recordings.stopped"), { source: "recording" });
       } catch (e) {
-        notifyError(String(e));
+        notifyError(String(e), { source: "recording" });
       }
     },
 
@@ -365,9 +365,9 @@ export function createRecordingFlow(deps: RecordingDeps) {
       if (!rec) return;
       try {
         await deleteRecording(rec.path);
-        notifyInfo(t("recordings.discarded"));
+        notifyInfo(t("recordings.discarded"), { source: "recording" });
       } catch (e) {
-        notifyError(String(e));
+        notifyError(String(e), { source: "recording" });
       }
     },
 
@@ -382,9 +382,9 @@ export function createRecordingFlow(deps: RecordingDeps) {
       if (!b) return;
       try {
         if (title) await setBatchLabel(b.batchId, title);
-        notifySuccess(t("recordings.groupStopped"));
+        notifySuccess(t("recordings.groupStopped"), { source: "recording" });
       } catch (e) {
-        notifyError(String(e));
+        notifyError(String(e), { source: "recording" });
       }
     },
 
@@ -400,7 +400,7 @@ export function createRecordingFlow(deps: RecordingDeps) {
           /* keep going; avoid a toast storm on partial failure */
         }
       }
-      notifyInfo(t("recordings.discarded"));
+      notifyInfo(t("recordings.discarded"), { source: "recording" });
     },
 
     closeBatchPrompt() {

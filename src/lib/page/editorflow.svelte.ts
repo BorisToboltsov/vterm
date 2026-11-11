@@ -132,7 +132,7 @@ export function createEditorFlow(deps: EditorDeps) {
         sudo = { kind: "open", sid, path, name, gotoLine: opts.gotoLine, gotoColumn: opts.gotoColumn };
         return;
       }
-      notifyError(String(e));
+      notifyError(String(e), { source: "editor" });
       return;
     }
     if (nginxSetP) lang = editorLangWithIncludes(path, await nginxSetP);
@@ -177,7 +177,7 @@ export function createEditorFlow(deps: EditorDeps) {
     try {
       file = await readLocalText(path, maxBytes());
     } catch (e) {
-      notifyError(String(e));
+      notifyError(String(e), { source: "editor" });
       return;
     }
     const id = addEditor(sid, path, name, editorLangOrPlain(path), "local", {
@@ -210,7 +210,7 @@ export function createEditorFlow(deps: EditorDeps) {
             });
       const stat = lineDiffStat(before, doc.content);
       markSaved(sid, doc.id, res);
-      notifySuccess(t("editor.saved", { name: doc.name }));
+      notifySuccess(t("editor.saved", { name: doc.name }), { source: "editor" });
       // Audit trail (Phase 11 tie-in): record the edit if the session is recording.
       if (isRecording(sid)) {
         void annotateRecording(sid, t("editor.auditEdit", { path: doc.path, added: stat.added, removed: stat.removed }));
@@ -226,7 +226,7 @@ export function createEditorFlow(deps: EditorDeps) {
               : await sftpReadText(sid, doc.path, maxBytes(), doc.sudo, doc.sudoPassword);
           conflict = { sid, doc, serverText: cur.content };
         } catch {
-          notifyError(t("editor.conflict", { name: doc.name }));
+          notifyError(t("editor.conflict", { name: doc.name }), { source: "editor" });
         }
       } else if (!doc.sudo && doc.source === "sftp" && isPermissionError(e)) {
         // Keep the buffer and offer explicit recovery next to Save.
@@ -235,10 +235,10 @@ export function createEditorFlow(deps: EditorDeps) {
         // The save was abandoned with the file untouched — say that plainly, or
         // the user reads it as "save failed" and cannot tell what state the
         // server is in. The cause is carried along; the way out is in the hint.
-        notifyError(t("editor.backupFailed", { name: doc.name, detail: String(e) }));
+        notifyError(t("editor.backupFailed", { name: doc.name, detail: String(e) }), { source: "editor" });
         setEditorSaveIssue(sid, doc.id, "other");
       } else {
-        notifyError(String(e));
+        notifyError(String(e), { source: "editor" });
         setEditorSaveIssue(sid, doc.id, "other");
       }
       return false;
@@ -295,7 +295,7 @@ export function createEditorFlow(deps: EditorDeps) {
         current = ""; // no .gitignore yet → create it
       }
       if (current.split(/\r?\n/).some((l) => l.trim() === pattern)) {
-        notifyInfo(t("git.alreadyIgnored"));
+        notifyInfo(t("git.alreadyIgnored"), { source: "editor" });
         return;
       }
       const sep = current && !current.endsWith("\n") ? "\n" : "";
@@ -303,9 +303,9 @@ export function createEditorFlow(deps: EditorDeps) {
       try {
         if (ssh) await sftpWriteText(sid, gitignorePath, next, "lf", null);
         else await writeLocalText(gitignorePath, next, "lf", null);
-        notifySuccess(t("git.ignored", { pattern }));
+        notifySuccess(t("git.ignored", { pattern }), { source: "editor" });
       } catch (e) {
-        notifyError(String(e));
+        notifyError(String(e), { source: "editor" });
       }
     },
 
@@ -337,9 +337,9 @@ export function createEditorFlow(deps: EditorDeps) {
       if (!path) return;
       try {
         await saveEditorCopy(path, doc.content, doc.eol, doc.encoding);
-        notifySuccess(t("editor.copySaved", { name: path.split(/[\\/]/).pop() ?? path }));
+        notifySuccess(t("editor.copySaved", { name: path.split(/[\\/]/).pop() ?? path }), { source: "editor" });
       } catch (e) {
-        notifyError(String(e).includes("dest-exists") ? t("editor.copyExists") : String(e));
+        notifyError(String(e).includes("dest-exists") ? t("editor.copyExists") : String(e), { source: "editor" });
       }
     },
 
@@ -371,7 +371,7 @@ export function createEditorFlow(deps: EditorDeps) {
         if (p.kind === "check" && updated && isDirty(updated)) {
           setEditorSaveIssue(p.sid, updated.id, "sudo");
         } else {
-          notifyError(t("editor.sudoUnavailable"));
+          notifyError(t("editor.sudoUnavailable"), { source: "editor" });
         }
         return;
       }

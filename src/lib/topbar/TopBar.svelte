@@ -8,7 +8,8 @@
   //    Utilities panel, ⌘K and Settings), and dragged along the bar to reorder —
   //    the neighbours slide apart, the list changes once, on release;
   //  - a tool of the Utilities panel can stand here as a button of its own;
-  //  - Utilities and Settings always stay; REC and the broadcast button are
+  //  - Utilities and Settings always stay; the journal's button can go, and the
+  //    journal stays in Settings → Journal and ⌘K; REC and the broadcast button are
   //    shown while a recording or a broadcast is on even if they were taken off;
   //  - what does not fit goes under «⋯», so the breadcrumb is never pushed out.
   //
@@ -39,6 +40,10 @@
   import { actionIcon, actionLabel, topbarMenu } from "./topbarui";
   import { pinAction, resetTopbar, unpinAction } from "../stores/topbarpins.svelte";
   import { beginTopbarDrag, consumeTopbarClick, topbarDrag } from "../stores/topbardrag.svelte";
+  import { closeJournal, journalState, toggleJournal } from "../stores/journal.svelte";
+  import JournalPanel from "../notifications/JournalPanel.svelte";
+  import { JOURNAL_ICON } from "../notifications/journal";
+  import { windowLabel } from "../windows/appwindow";
   import { t } from "../i18n";
 
   let {
@@ -51,6 +56,7 @@
     onOpenRecordings,
     onOpenMonitoring,
     onOpenSettings,
+    onOpenJournalSettings,
     onOpenUtilities,
     commands = [],
     canBroadcast = false,
@@ -74,6 +80,8 @@
     onOpenRecordings: () => void;
     onOpenMonitoring: () => void;
     onOpenSettings: () => void;
+    /** The journal's «⋯» → its section of Settings. */
+    onOpenJournalSettings?: () => void;
     /** Open the Utilities panel (keygen, CIDR, codecs, …) — on one tool, when named. */
     onOpenUtilities?: (utility?: string) => void;
     /** The ⌘K commands there are now — what a pinned command button runs (v1.35). */
@@ -159,6 +167,8 @@
         return { run: onOpenRecordings, disabled: false, label: t("recordings.title") };
       case "utilities":
         return { run: () => onOpenUtilities?.(), disabled: false, label: t("util.open") };
+      case "journal":
+        return { run: toggleJournal, disabled: false, label: t("journal.title") };
       default:
         return { run: onOpenSettings, disabled: false, label: t("topbar.settings") };
     }
@@ -174,6 +184,8 @@
   }
 
   let menu = $state<OpenMenu | null>(null);
+  /** The bell — what the journal stands under. */
+  let bell = $state<HTMLButtonElement | undefined>();
 
   /** The bar's own menu: what is on it and what could be. */
   function openMenu(e: MouseEvent) {
@@ -244,6 +256,28 @@
         <span
           class="absolute right-1 top-1 h-1.5 w-1.5 rounded-full bg-accent"
           data-testid="topbar-notes-dot"
+        ></span>
+      {/if}
+    </button>
+  {:else if id === "journal"}
+    <!-- The journal: a dot while an error waits unread. -->
+    <button
+      bind:this={bell}
+      class="relative flex items-center rounded p-1.5 {journalState.open
+        ? 'bg-edge text-text'
+        : 'text-muted hover:bg-edge hover:text-text'}"
+      use:tooltip={a.label}
+      aria-label={a.label}
+      aria-haspopup="dialog"
+      aria-expanded={journalState.open}
+      data-testid="topbar-journal"
+      onclick={a.run}
+    >
+      <Icon name={JOURNAL_ICON} size={15} />
+      {#if journalState.summary.unreadErrors}
+        <span
+          class="absolute right-1 top-1 h-1.5 w-1.5 rounded-full bg-danger"
+          data-testid="topbar-journal-dot"
         ></span>
       {/if}
     </button>
@@ -384,3 +418,14 @@
 {/if}
 
 <ContextMenu {menu} onclose={() => (menu = null)} />
+
+{#if journalState.open}
+  <JournalPanel
+    anchor={bell ?? null}
+    here={windowLabel}
+    onsettings={() => {
+      closeJournal();
+      onOpenJournalSettings?.();
+    }}
+  />
+{/if}

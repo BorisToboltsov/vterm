@@ -86,6 +86,8 @@ describe("tab teardown guard", () => {
       "clearRecording",
       // The recording flow's idle timer and group membership (page/recordingflow).
       "recFlow.forget",
+      // Its count of reconnects and an attempt waiting for its pause (page/reconnectflow).
+      "reconnectFlow.forget",
       // The editor flow's list of the configs nginx loads (page/editorflow).
       "editors.forget",
       "delete termSelection",

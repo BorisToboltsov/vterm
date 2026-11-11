@@ -143,7 +143,7 @@ export function createPathSyncFlow(deps: PathSyncDeps) {
       try {
         deps.serverSaved(await setServerPathSync(tab.serverId, storedPathSync(mode)));
       } catch (e) {
-        notifyError(t("pathSync.saveFailed", { error: String(e) }));
+        notifyError(t("pathSync.saveFailed", { error: String(e) }), { source: "terminal" });
       }
     },
 

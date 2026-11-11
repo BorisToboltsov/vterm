@@ -101,7 +101,7 @@
     try {
       dest = entry.isDir ? await pickSaveDir() : await pickSavePath(entry.name);
     } catch (e) {
-      notifyError(String(e));
+      notifyError(String(e), { source: "files", sessionId: sessionId });
       return;
     }
     if (!dest) return;
@@ -188,7 +188,7 @@
       await sftpOpenOwn(sessionId);
       fileUserChanged();
     } catch (e) {
-      notifyError(String(e));
+      notifyError(String(e), { source: "files", sessionId: sessionId });
     }
   }
 

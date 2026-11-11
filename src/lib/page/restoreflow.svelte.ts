@@ -234,7 +234,7 @@ export function createRestoreFlow(deps: RestoreDeps) {
       return null;
     }
     const back = restoreSaved(slots.main, slots.others, (id) => deps.servers().some((s) => s.id === id));
-    if (back.missing > 0) notifyInfo(t("restore.serversGone", { n: back.missing }));
+    if (back.missing > 0) notifyInfo(t("restore.serversGone", { n: back.missing }), { source: "connection" });
     const everyTab = [...back.tabs, ...back.windows.flatMap((w) => w.window.tabs)];
     // What a tab that did not come back held goes; so does all of it when it is not kept.
     void tabContentKeepOnly(settings.restoreOutput ? everyTab.map((tab) => tab.id) : []).catch(() => {});
@@ -305,7 +305,7 @@ export function createRestoreFlow(deps: RestoreDeps) {
         }
         reconnectTab(sessionId);
       } catch (e) {
-        notifyError(String(e));
+        notifyError(String(e), { source: "connection" });
       }
     },
 

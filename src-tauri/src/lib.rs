@@ -12,6 +12,7 @@ mod exec;
 mod fileuser;
 mod folders;
 mod git;
+mod journal;
 mod kbdauth;
 mod keygen;
 mod kube;
@@ -315,6 +316,9 @@ pub fn run() {
         .manage(kbdauth::PendingPrompts::default())
         .manage(appwin::Windows::default())
         .manage(transfers::Jobs::default())
+        // Read before any window asks: a journal that does not parse is
+        // quarantined in time for the main window to be told.
+        .manage(journal::Journal::load())
         .invoke_handler(tauri::generate_handler![
             kbdauth::answer_auth_prompt,
             servers::list_servers,
@@ -377,6 +381,13 @@ pub fn run() {
             store::list_known_hosts,
             store::remove_known_host,
             store::take_store_warnings,
+            journal::journal_note,
+            journal::journal_list,
+            journal::journal_summary,
+            journal::journal_mark_read,
+            journal::journal_remove,
+            journal::journal_clear,
+            journal::journal_configure,
             localfile::local_home,
             localfile::local_list,
             localfile::local_kinds,
@@ -464,6 +475,13 @@ pub fn run() {
         .expect("error while building tauri application");
 
     app.run(move |app_handle, event| {
+        // Whichever way out, the journal's last change is written first: it is
+        // written behind the notes, a moment after the last one.
+        if let tauri::RunEvent::Exit = &event {
+            if let Some(journal) = app_handle.try_state::<journal::Journal>() {
+                journal.flush();
+            }
+        }
         // Any other way out the OS offers (the Dock's Quit, logout): a user
         // request carries no exit code — `quit_app`'s own `exit(0)` does, and
         // disarms the guard first anyway.

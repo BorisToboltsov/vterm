@@ -14,7 +14,7 @@ export function createUiScaleFlow() {
     step(step: 1 | -1 | 0): void {
       settings.uiScale = steppedUiScale(settings.uiScale, step);
       if (said) dismissToast(said);
-      said = notifyInfo(t("settings.uiScaleNow", { n: settings.uiScale }));
+      said = notifyInfo(t("settings.uiScaleNow", { n: settings.uiScale }), { source: "settings" });
     },
   };
 }

@@ -572,7 +572,7 @@
     // a row with several matches collapses to one, which is fine for context).
     const i = search.index >= 0 ? Math.min(search.index, rows.length - 1) : 0;
     writeClipboard(contextSnippet(lines, rows[i], 5));
-    notifySuccess(t("search.copied"));
+    notifySuccess(t("search.copied"), { source: "terminal", sessionId: sessionId });
   }
 
   function copySelection() {
@@ -686,7 +686,7 @@
   async function openSelected(text: string, row: number) {
     const target = await fileLinks?.targetOf(text, row);
     if (target) onfilelink?.(target);
-    else notifyInfo(t("filelink.notFound", { name: text.trim() }));
+    else notifyInfo(t("filelink.notFound", { name: text.trim() }), { source: "terminal", sessionId: sessionId });
   }
 
   /**
@@ -1039,7 +1039,7 @@
         );
         // The session is up; only the keychain save failed — say so, keep the shell.
         if (outcome?.rememberFailed) {
-          notifyError(t("page.rememberFailed", { reason: outcome.rememberFailed }));
+          notifyError(t("page.rememberFailed", { reason: outcome.rememberFailed }), { source: "terminal", sessionId: sessionId });
         }
       }
       live = true;
