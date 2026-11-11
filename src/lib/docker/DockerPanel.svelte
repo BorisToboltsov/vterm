@@ -287,9 +287,23 @@
   // details are rebuilt across the width threshold and when the tab comes back.
   const detailLog = untrack(() => logView(sessionId, "docker"));
 
+  function refreshPanel() {
+    void refresh();
+    if (activeSub !== "containers") void loadDisk();
+  }
+
+  let listControls = $state<{ contextItems(): MenuItem[] }>();
+
   function showMenu(e: MouseEvent, items: MenuItem[]) {
     e.preventDefault();
-    menu = { x: e.clientX, y: e.clientY, items };
+    e.stopPropagation();
+    if (!firstLoadDone) return;
+    menu = { x: e.clientX, y: e.clientY, items: [
+      ...items,
+      ...(items.length ? [{ kind: "separator" as const }] : []),
+      ...(listControls?.contextItems() ?? []),
+      { icon: "refresh", label: t("docker.refresh"), disabled: busy, onSelect: refreshPanel },
+    ] };
   }
 
   // The view of the open details — the panel's, not the details' own: a dialog
@@ -936,7 +950,7 @@
             <Icon name="key" size={14} />
           </button>
         {/if}
-        <button class="rounded p-1 text-muted hover:bg-edge hover:text-text disabled:opacity-40" disabled={busy} use:tooltip={t("docker.refresh")} aria-label={t("docker.refresh")} onclick={() => { void refresh(); if (activeSub !== "containers") void loadDisk(); }}>
+        <button class="rounded p-1 text-muted hover:bg-edge hover:text-text disabled:opacity-40" disabled={busy} use:tooltip={t("docker.refresh")} aria-label={t("docker.refresh")} onclick={refreshPanel}>
           <Icon name="refresh" size={14} />
         </button>
       </div>
@@ -966,6 +980,8 @@
       class="@container min-h-0 min-w-0 {sideOpen ? 'shrink-0' : 'flex-1'}"
       style:width={sideOpen ? partWidth("docker", rowWidth) : null}
       use:wideWhen={(w) => (listWide = w)}
+      role="presentation"
+      oncontextmenu={(e) => showMenu(e, [])}
       data-testid="docker-list-part"
       data-list-wide={listWide}
       data-morph
@@ -988,6 +1004,7 @@
           <div class="flex h-full min-h-0 flex-col">
           <AttentionStrip items={attention} bind:open={attentionOpen} onpick={pickAttention} testid="docker-attention" />
           <ListHeader
+            bind:this={listControls}
             items={containers}
             schema={CONTAINERS}
             filter={containerFilter}
@@ -1063,6 +1080,7 @@
         {:else}
           <div class="flex min-h-0 flex-1 flex-col">
             <ListHeader
+              bind:this={listControls}
               items={images}
               schema={IMAGES}
               filter={imageFilter}
@@ -1112,6 +1130,7 @@
         </div>
       {:else}
         <DockerNetworks
+          bind:this={listControls}
           {networks}
           {volumes}
           usage={diskDetail}

@@ -18,6 +18,31 @@ function resize(el: HTMLElement, width: number, height: number) {
 }
 
 describe("context menu expansion", () => {
+  it("keeps a nested group's parent open, replaces its sibling and closes on a leaf", async () => {
+    const onclose = vi.fn();
+    const pick = vi.fn();
+    render(ContextMenu, { menu: { x: 0, y: 0, items: [
+      { kind: "submenu", key: "view", label: "View", items: [
+        { kind: "submenu", key: "sort", label: "Sort", items: [{ label: "Name", checked: true, onSelect: pick }] },
+        { kind: "submenu", key: "columns", label: "Columns", items: [
+          { kind: "separator" }, { label: "IP", checked: false, onSelect: pick },
+        ] },
+      ] },
+    ] }, onclose });
+    await fireEvent.click(screen.getByRole("menuitem", { name: "View" }));
+    await fireEvent.click(screen.getByRole("menuitem", { name: "Sort" }));
+    expect(screen.getByRole("menuitemcheckbox", { name: "Name" })).toHaveAttribute("aria-checked", "true");
+    await fireEvent.click(screen.getByRole("menuitem", { name: "Columns" }));
+    expect(screen.queryByRole("menuitemcheckbox", { name: "Name" })).toBeNull();
+    expect(screen.getByRole("menuitem", { name: "View" })).toHaveAttribute("aria-expanded", "true");
+    await fireEvent.click(screen.getByRole("menuitem", { name: "Columns" }));
+    expect(screen.queryByRole("menuitemcheckbox")).toBeNull();
+    await fireEvent.click(screen.getByRole("menuitem", { name: "Sort" }));
+    await fireEvent.click(screen.getByRole("menuitemcheckbox", { name: "Name" }));
+    expect(onclose).toHaveBeenCalledOnce();
+    expect(pick).toHaveBeenCalledOnce();
+  });
+
   it("opens only one group and resets it for a new menu", async () => {
     const { rerender } = render(ContextMenu, { menu: menu(), onclose: vi.fn() });
     await fireEvent.click(screen.getByRole("menuitem", { name: "View" }));

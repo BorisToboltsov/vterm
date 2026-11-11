@@ -97,6 +97,22 @@
   const shownEvents = $derived(eventView.groups[0].items.slice(0, 100));
   const folded = (key: string) => collapsed.includes(key);
 
+  let eventHeader = $state<{ contextItems(): MenuItem[] }>();
+
+  export function contextItems(): MenuItem[] {
+    return [
+      { kind: "submenu", key: "cluster-view", icon: "eye", label: t("list.view"), items: [
+        ...(["nodes", "claims", "events"] as const).map((key) => ({
+          label: t(key === "nodes" ? "k8s.nodes" : key === "claims" ? "k8s.claims" : "k8s.events"),
+          checked: !folded(key), onSelect: () => ontoggle(key),
+        })),
+      ] },
+      ...(eventHeader && !folded("events") ? [{
+        kind: "submenu" as const, key: "cluster-events", label: t("k8s.events"), items: eventHeader.contextItems(),
+      }] : []),
+    ];
+  }
+
   function copy(text: string) {
     void navigator.clipboard?.writeText(text);
   }
@@ -212,6 +228,7 @@
   {#if !folded("events")}
   {#if events.length > 0}
     <ListHeader
+      bind:this={eventHeader}
       items={events}
       schema={EVENT_SCHEMA}
       filter={eventFilter}

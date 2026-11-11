@@ -24,6 +24,7 @@
     facetMenu,
     facetValueMenu,
     isFiltered,
+    NO_FILTER,
     viewMenu,
     type ListFilter,
     type ListOrder,
@@ -81,6 +82,22 @@
 
   export function focusFilter() {
     field?.focus();
+  }
+
+  /** The same controls as the header, grouped for a panel's right-click menu. */
+  export function contextItems(): MenuItem[] {
+    return [
+      ...(view.length ? [{ kind: "submenu" as const, key: "list-view", icon: "eye" as const, label: t("list.view"), items: view }] : []),
+      {
+        kind: "submenu", key: "list-filters", icon: "filter", label: t("list.filters"),
+        items: [
+          { icon: "search", label: t("list.find"), onSelect: focusFilter },
+          ...facetMenu(items, schema, filter, text, onfilter),
+          { kind: "separator" },
+          { icon: "close", label: t("list.resetAll"), disabled: !narrowed, onSelect: () => onfilter(NO_FILTER) },
+        ],
+      },
+    ];
   }
 
   function open(e: MouseEvent, menu: MenuItem[]) {

@@ -405,9 +405,18 @@
     confirmResolve = null;
   }
 
+  let listControls = $state<{ contextItems(): MenuItem[] }>();
+
   function showMenu(e: MouseEvent, items: MenuItem[]) {
     e.preventDefault();
-    menu = { x: e.clientX, y: e.clientY, items };
+    e.stopPropagation();
+    if (!firstLoadDone) return;
+    menu = { x: e.clientX, y: e.clientY, items: [
+      ...items,
+      ...(items.length ? [{ kind: "separator" as const }] : []),
+      ...(listControls?.contextItems() ?? []),
+      { icon: "refresh", label: t("k8s.refresh"), disabled: busy, onSelect: () => void refresh() },
+    ] };
   }
 
   // ── Execution helpers ────────────────────────────────────────────────────────
@@ -1162,6 +1171,8 @@
       class="@container min-h-0 min-w-0 {sideOpen ? 'shrink-0' : 'flex-1'}"
       style:width={sideOpen ? partWidth("k8s", rowWidth) : null}
       use:wideWhen={(w) => (listWide = w)}
+      role="presentation"
+      oncontextmenu={(e) => showMenu(e, [])}
       data-testid="k8s-list-part"
       data-list-wide={listWide}
       data-morph
@@ -1182,6 +1193,7 @@
           <div class="flex h-full min-h-0 flex-col">
             <AttentionStrip items={attention} bind:open={attentionOpen} onpick={pickAttention} testid="k8s-attention" />
             <ListHeader
+              bind:this={listControls}
               items={podList}
               schema={PODS}
               filter={podFilter}
@@ -1232,6 +1244,7 @@
         {:else}
           <div class="flex h-full min-h-0 flex-col">
             <ListHeader
+              bind:this={listControls}
               items={workloads}
               schema={WORKLOAD_SCHEMA}
               filter={workloadFilter}
@@ -1275,6 +1288,7 @@
         {/if}
       {:else if activeSub === "network"}
         <K8sNetwork
+          bind:this={listControls}
           {services}
           {ingresses}
           view={netView}
@@ -1300,6 +1314,7 @@
         {:else}
           <div class="flex h-full min-h-0 flex-col">
             <ListHeader
+              bind:this={listControls}
               items={configs}
               schema={CONFIG_SCHEMA}
               filter={configFilter}
@@ -1348,6 +1363,7 @@
         <EmptyState icon="server" title={t("k8s.noNodes")} hint={t("k8s.noNodesHint")} />
       {:else}
         <K8sCluster
+          bind:this={listControls}
           {nodes}
           {events}
           {busy}
