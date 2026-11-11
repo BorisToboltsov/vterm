@@ -12,7 +12,10 @@
 //     the Node and pnpm of the action (`versionDrift`);
 //   - the publishing release.yml asks nothing for a cache, and the actions cache
 //     only when asked (`cachesIn`, `inputDefault`);
-//   - one scanner per concern (`scannerOverlaps`).
+//   - one scanner per concern (`scannerOverlaps`);
+//   - the working tree is LF on every OS (`lineEndViolations`): the gates scan
+//     sources for "\n"-ended markers, and a Windows checkout's CRLF hid them
+//     four times, failing Rust (Windows) alone.
 //
 // Comment lines are dropped before matching: a comment that still names a step
 // would pass a file whose step was deleted. Every check is a function over text
@@ -193,6 +196,43 @@ describe("one Rust, Node and pnpm for CI and the Linux box", () => {
     ]);
     expect(versionDrift({ ...files, dockerfile: files.dockerfile.replace("pnpm@", "pnpm@1") })).toHaveLength(1);
     expect(versionDrift({ ...files, setupRust: files.setupRust.replace('install "$channel"', "install stable") })).toHaveLength(1);
+  });
+});
+
+/**
+ * What keeps a checkout from being LF everywhere: no .gitattributes, no
+ * `* text=auto eol=lf`, or a pattern that asks for CRLF or opts text out of it.
+ */
+function lineEndViolations(attributes: string | null): string[] {
+  if (attributes === null) return [".gitattributes is missing: a Windows checkout gets CRLF"];
+  const lines = attributes
+    .split(/\r?\n/)
+    .map((l) => l.trim())
+    .filter((l) => l !== "" && !l.startsWith("#"));
+  const out: string[] = [];
+  if (!lines.includes("* text=auto eol=lf")) out.push(".gitattributes does not make every checkout LF (* text=auto eol=lf)");
+  for (const l of lines) {
+    if (/\beol=crlf\b|\s-?text=?\s*$|\s-eol\b/.test(l) && l !== "* text=auto eol=lf") out.push(`.gitattributes takes some files out of LF: ${l}`);
+  }
+  return out;
+}
+
+describe("every checkout is LF, Windows too", () => {
+  const attributes = existsSync(join(ROOT, ".gitattributes")) ? read(".gitattributes") : null;
+
+  it(".gitattributes makes the tree LF on every OS", () => {
+    expect(lineEndViolations(attributes)).toEqual([]);
+  });
+
+  it("catches its own violations", () => {
+    expect(lineEndViolations(null)).toEqual([".gitattributes is missing: a Windows checkout gets CRLF"]);
+    expect(lineEndViolations("# * text=auto eol=lf\n* text=auto")).toEqual([
+      ".gitattributes does not make every checkout LF (* text=auto eol=lf)",
+    ]);
+    expect(lineEndViolations("* text=auto eol=lf\n*.rs eol=crlf")).toEqual([
+      ".gitattributes takes some files out of LF: *.rs eol=crlf",
+    ]);
+    expect(lineEndViolations("* text=auto eol=lf\n*.ts -text")).toEqual([".gitattributes takes some files out of LF: *.ts -text"]);
   });
 });
 

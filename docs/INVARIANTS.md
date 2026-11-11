@@ -1210,7 +1210,7 @@ Git, Docker, k8s, сетевые пробы и метрики — **один к�
 | `releasetrain.guard` | Версию меняет только выпуск; поезд — раз в неделю по «Готовится»; тег — на коммит выпуска; ключ App — в окружении `release` |
 | `releaseassets.guard` · `dependabot.guard` | Релиз — по тегу версии и после всех гейтов, экшены по SHA, `--frozen-lockfile`; группы Dependabot с выдержкой, `windows-core` — только вместе с `windows` |
 | `cidoc.guard` | Схемы CI — то, что выдаёт `scripts/ci-diagrams.mjs` из самих workflow, а `docs/CI.md` называет каждый workflow и каждую джобу |
-| `ci.guard` | Общие шаги CI — только экшены `.github/actions/`; Rust, Node и pnpm одни у CI и Linux-контейнера (`rust-toolchain.toml`); релиз без кэша; у каждой заботы один сканер, `unsafe` — у clippy; подавленное `nosemgrep` в Security не едет |
+| `ci.guard` | Общие шаги CI — только экшены `.github/actions/`; Rust, Node и pnpm одни у CI и Linux-контейнера (`rust-toolchain.toml`); релиз без кэша; у каждой заботы один сканер, `unsafe` — у clippy; подавленное `nosemgrep` в Security не едет; рабочее дерево — LF на всех ОС (`.gitattributes`) |
 | `untrusted.fuzz.test.ts` · `textenc::props` | Свойства недоверенного входа на произвольных данных: markdown не даёт исполняемого, декодер не паникует |
 | `version.guard` · `webview2runtime.test.ts` · `updater.guard` | Версия только в `package.json`; формат хвоста WebView2 один в Rust и CI; границы обновления |
 | `no_file_attributes_built_from_a_template` (Rust) | `FileAttributes` не строится из шаблона |
