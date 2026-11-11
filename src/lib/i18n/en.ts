@@ -1838,6 +1838,7 @@ export const en = {
   "k8s.namespace": "Namespace",
   "k8s.allNamespaces": "All namespaces",
   "k8s.defaultNamespace": "(context default)",
+  "k8s.contextNamespace": "{namespace} (context default)",
   "k8s.noPods": "No pods",
   "k8s.noPodsHint": "Nothing to show in this namespace.",
   "k8s.noWorkloads": "No workloads",

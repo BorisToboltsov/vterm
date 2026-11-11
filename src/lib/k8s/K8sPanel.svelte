@@ -104,6 +104,7 @@
     parseWorkloads,
     parseNamespaces,
     parseContexts,
+    contextNamespace,
     parseTopPods,
     parseServices,
     parseIngress,
@@ -132,6 +133,7 @@
     podRestartBaseline,
     type PodAttentionReason,
     type K8sScope,
+    type K8sContext,
     type K8sAvailability,
     type K8sWorkload,
     type K8sRevision,
@@ -210,8 +212,11 @@
     allNamespaces: scopeAll,
   });
 
-  let contexts = $state<string[]>([]);
+  let contexts = $state.raw<K8sContext[]>([]);
   let namespaces = $state<string[]>([]);
+  // What "(context default)" stands for: the namespace the chosen context sets,
+  // so a list read from `default` does not pass for the whole cluster.
+  const ownNamespace = $derived(contextNamespace(contexts, scopeContext));
 
   let availability = $state<K8sAvailability | null>(null); // null = checking
   let busy = $state(false);
@@ -679,7 +684,7 @@
     // `--context` into every argv, and every command would fail with it — fall
     // back to the cluster's current one instead of failing quietly under a scope
     // the selector still shows as chosen.
-    if (scopeContext && contexts.length > 0 && !contexts.includes(scopeContext)) {
+    if (scopeContext && contexts.length > 0 && !contexts.some((c) => c.name === scopeContext)) {
       scopeContext = current || null;
       scopeNamespace = null;
     }
@@ -1115,8 +1120,8 @@
             use:tooltip={t("k8s.context")}
             onchange={(e) => pickContext(e.currentTarget.value)}
           >
-            {#each contexts as c (c)}
-              <option value={c}>{c}</option>
+            {#each contexts as c (c.name)}
+              <option value={c.name}>{c.name}</option>
             {/each}
           </select>
         {/if}
@@ -1128,7 +1133,9 @@
           use:tooltip={t("k8s.namespace")}
           onchange={(e) => pickNamespace(e.currentTarget.value)}
         >
-          <option value="">{t("k8s.defaultNamespace")}</option>
+          <option value="" data-testid="k8s-namespace-own">
+            {ownNamespace === null ? t("k8s.defaultNamespace") : t("k8s.contextNamespace", { namespace: ownNamespace })}
+          </option>
           {#each namespaces as ns (ns)}
             <option value={ns}>{ns}</option>
           {/each}
