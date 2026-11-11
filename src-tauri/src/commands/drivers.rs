@@ -58,6 +58,22 @@ async fn run_driver(
     call: DriverCall<'_>,
 ) -> AppResult<exec::ExecOutput> {
     let timeout = call.timeout_secs.max(1);
+    let started = std::time::Instant::now();
+    // A probe's argv carries header values and request bodies, a registry
+    // login its user: neither is written (ADR 0063).
+    let label = call.label;
+    let command = exec::writes_argv(label).then(|| call.remote.clone());
+    let ran = |transport: &str, out: &exec::ExecOutput| {
+        tracing::debug!(
+            source = exec::source_of(label),
+            sid = session_id,
+            command = command.as_deref().unwrap_or("(not written)"),
+            exit = out.exit_code,
+            ms = started.elapsed().as_millis() as u64,
+            transport,
+            "{label} ran"
+        );
+    };
     if let Ok(session) = session_arc(state, session_id).await {
         let outcome = match call.local.stdin {
             Some(input) => {
@@ -68,6 +84,7 @@ async fn run_driver(
             None => session.exec_captured(&call.remote, timeout).await?,
         };
         let out = exec::from_remote(outcome, call.label, timeout);
+        ran("ssh", &out);
         if let Some((tag, command)) = &call.audit {
             session.record_output(exec::mirror(tag, command, &out).as_bytes());
         }
@@ -75,9 +92,15 @@ async fn run_driver(
     }
     if let Some(pty) = state.local_pty(session_id) {
         if let Some(why) = call.local_refusal {
+            tracing::warn!(
+                source = exec::source_of(call.label),
+                program = call.local.program,
+                "local run refused: {why}"
+            );
             return Err(AppError::Message(why));
         }
         let out = exec::run_local(call.local, timeout).await?;
+        ran("local", &out);
         if let Some((tag, command)) = &call.audit {
             pty.record_output(exec::mirror(tag, command, &out).as_bytes());
         }
@@ -104,7 +127,7 @@ pub async fn git_run(
     timeout_secs: u64,
     mirror: bool,
 ) -> AppResult<exec::ExecOutput> {
-    git::check_args(&args)?;
+    exec::policy("git", &args, git::check_args(&args))?;
     let local_args = git::local_args(&cwd, &args);
     let call = DriverCall {
         label: "git",
@@ -159,6 +182,7 @@ pub async fn netcheck_run(
             })?),
         };
     let cancel = register_cancel(&state, &cancel_id);
+    let started = std::time::Instant::now();
     let res = netcheck_exec(
         &state,
         &session_id,
@@ -171,6 +195,24 @@ pub async fn netcheck_run(
     )
     .await;
     state.cancels.locked().remove(&cancel_id);
+    let ms = started.elapsed().as_millis() as u64;
+    match &res {
+        Ok(out) => tracing::info!(
+            source = "netcheck",
+            sid = %session_id,
+            targets = targets.len(),
+            tool = ?local_tool,
+            exit = out.exit_code,
+            ms,
+            "access check ended"
+        ),
+        Err(AppError::Cancelled) => {
+            tracing::info!(source = "netcheck", sid = %session_id, ms, "access check stopped")
+        }
+        Err(e) => {
+            tracing::warn!(source = "netcheck", sid = %session_id, ms, "access check failed: {e}")
+        }
+    }
     res
 }
 
@@ -282,7 +324,7 @@ pub async fn container_run(
     timeout_secs: u64,
     mirror: bool,
 ) -> AppResult<exec::ExecOutput> {
-    container::check_args(&args)?;
+    exec::policy("docker", &args, container::check_args(&args))?;
     // A compose command that names a directory or files reads a definition from
     // them: they must be the ones the stack was brought up with, by its
     // containers' own labels — asked here, over the same transport (v1.33).
@@ -393,7 +435,7 @@ pub async fn kubectl_run(
     timeout_secs: u64,
     mirror: bool,
 ) -> AppResult<exec::ExecOutput> {
-    kube::check_args(&args)?;
+    exec::policy("kubectl", &args, kube::check_args(&args))?;
     let call = DriverCall {
         label: "kubectl",
         remote: exec::remote_command(&args),

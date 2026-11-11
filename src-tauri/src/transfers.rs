@@ -1026,6 +1026,14 @@ pub async fn run(
     resumed: Option<Left>,
 ) -> JobView {
     let started = std::time::Instant::now();
+    tracing::info!(
+        source = "transfer",
+        job = %spec.id,
+        items = spec.items.len(),
+        resumed = resumed.is_some(),
+        "transfer started: {}",
+        audit_op(&spec, true)
+    );
     let last_told = AtomicU64::new(0);
     let tell = |view: &JobView, minor: bool| {
         app.state::<Jobs>().put(view);
@@ -1093,6 +1101,7 @@ pub async fn run(
         }
     }
     send(app, &done, &origin);
+    note_end(&spec, &done, started.elapsed().as_millis() as u64);
 
     let mut body = audit_body(&spec, &done);
     if resumed.is_some() {
@@ -1109,6 +1118,47 @@ pub async fn run(
         }
     }
     done
+}
+
+/// How a job's end is written: a failure the user must look at is a warning,
+/// a stop of theirs or a finished job information.
+fn end_verdict(done: &JobView) -> (crate::diag::Level, &'static str) {
+    use crate::diag::Level;
+    match done.state {
+        State::Done if done.failed == 0 => (Level::Info, "transfer done"),
+        State::Done | State::Failed => (Level::Warn, "transfer ended with failed files"),
+        State::Interrupted => (Level::Warn, "transfer cut off by its session"),
+        State::Cancelled => (Level::Info, "transfer stopped"),
+        State::Queued | State::Running => (Level::Warn, "transfer ended unfinished"),
+    }
+}
+
+/// The end of a job, as the diagnostics keep it.
+fn note_end(spec: &Spec, done: &JobView, ms: u64) {
+    let (level, what) = end_verdict(done);
+    let error = done.error.as_deref().unwrap_or("");
+    match level {
+        crate::diag::Level::Warn => tracing::warn!(
+            source = "transfer",
+            job = %spec.id,
+            bytes = done.transferred,
+            files = done.file_count,
+            failed = done.failed,
+            skipped = done.skipped,
+            resumable = done.resumable,
+            ms,
+            "{what}: {error}"
+        ),
+        _ => tracing::info!(
+            source = "transfer",
+            job = %spec.id,
+            bytes = done.transferred,
+            files = done.file_count,
+            skipped = done.skipped,
+            ms,
+            "{what}"
+        ),
+    }
 }
 
 /// A kept job is dropped: its partial copies are taken off its destination,
@@ -1142,6 +1192,43 @@ pub async fn forget_session(app: &AppHandle, session_id: &str) {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn a_jobs_end_is_a_warning_only_when_the_user_must_look() {
+        use super::{end_verdict, JobView, State};
+        use crate::diag::Level;
+        let spec = super::Spec {
+            id: "j1".into(),
+            src: super::Side {
+                session: None,
+                local: true,
+                label: String::new(),
+            },
+            dst: super::Side {
+                session: Some("s".into()),
+                local: false,
+                label: String::new(),
+            },
+            items: Vec::new(),
+            dest_dir: "/srv".into(),
+        };
+        let at = |state: State, failed: u32| JobView {
+            state,
+            failed,
+            ..JobView::start(&spec)
+        };
+        assert_eq!(end_verdict(&at(State::Done, 0)).0, Level::Info);
+        assert_eq!(end_verdict(&at(State::Done, 2)).0, Level::Warn);
+        assert_eq!(end_verdict(&at(State::Failed, 1)).0, Level::Warn);
+        assert_eq!(end_verdict(&at(State::Interrupted, 0)).0, Level::Warn);
+        assert_eq!(end_verdict(&at(State::Cancelled, 0)).0, Level::Info);
+        let (_, events) =
+            crate::diag::capture(|| super::note_end(&spec, &at(State::Failed, 1), 1200));
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].source.as_deref(), Some("transfer"));
+        assert_eq!(events[0].fields["failed"], 1);
+        assert_eq!(events[0].fields["ms"], 1200);
+    }
+
     use super::*;
 
     /// A job carried out as `run` ends it: stopped by the user, it leaves no

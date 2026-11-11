@@ -99,6 +99,14 @@ pub async fn sftp_open_as(
 ) -> AppResult<()> {
     let session = session_arc(&state, &session_id).await?;
     let res = session.sftp_as(&user, sudo_secret(password)).await;
+    match &res {
+        Ok(()) => {
+            tracing::info!(source = "files", sid = %session_id, user = %user, "file panel works as another user")
+        }
+        Err(e) => {
+            tracing::info!(source = "files", sid = %session_id, user = %user, "file panel stays as it was: {e}")
+        }
+    }
     record_sftp(&session, &format!("as {}", git::shell_quote(&user)), &res);
     res
 }
@@ -286,6 +294,17 @@ pub async fn sftp_write_text(
     } else {
         sftp::write_text(&sftp, &req).await
     };
+    if let Ok(written) = &res {
+        tracing::info!(
+            source = "editor",
+            sid = %session_id,
+            path = %path,
+            bytes = content.len(),
+            sudo = sudo == Some(true),
+            size = written.size,
+            "file saved"
+        );
+    }
     // Audit the edit as a byte-sized save (the content itself is never recorded).
     record_sftp(
         &session,
@@ -522,7 +541,25 @@ pub async fn sftp_sync_start(
         let _slot = slot;
         let op = sync::sync_mirror_op(&local_root, &remote_root, actions.len());
         let body = sync::sync_mirror_body(&actions);
+        let started = std::time::Instant::now();
+        tracing::info!(source = "sync", sid = %session_id, "sync run started: {op}");
         let res = sync::apply(&sink, &sftp, &local_root, &remote_root, actions, cancel).await;
+        let ms = started.elapsed().as_millis() as u64;
+        match &res {
+            Ok(s) => tracing::info!(
+                source = "sync",
+                sid = %session_id,
+                uploaded = s.uploaded,
+                downloaded = s.downloaded,
+                deleted = s.deleted,
+                stopped = s.stopped,
+                ms,
+                "sync run ended"
+            ),
+            Err(e) => {
+                tracing::warn!(source = "sync", sid = %session_id, ms, "sync run failed: {e}")
+            }
+        }
         let state = app.state::<AppState>();
         state.cancels.locked().remove(&running.run_id);
         let (code, detail) = match &res {

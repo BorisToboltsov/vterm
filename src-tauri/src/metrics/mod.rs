@@ -420,6 +420,21 @@ fn rate_from(
 }
 
 /// Probe the active session for OS info and resource usage (status bar).
+/// The core readings a probe of a Linux host always gives, that the parser
+/// did not find.
+fn unread_core(m: &Metrics) -> Vec<&'static str> {
+    [
+        ("os", m.os.is_empty()),
+        ("mem_total", m.mem_total.is_none()),
+        ("disk_total", m.disk_total.is_none()),
+        ("uptime", m.uptime_secs.is_none()),
+        ("cpu_count", m.cpu_count.is_none()),
+    ]
+    .into_iter()
+    .filter_map(|(name, missing)| missing.then_some(name))
+    .collect()
+}
+
 #[tauri::command]
 pub async fn fetch_metrics(state: State<'_, AppState>, session_id: String) -> AppResult<Metrics> {
     let session = match state.sessions.lock().await.get(&session_id).cloned() {
@@ -429,6 +444,17 @@ pub async fn fetch_metrics(state: State<'_, AppState>, session_id: String) -> Ap
     };
     let raw = session.run_command(METRICS_SCRIPT).await?;
     let mut m = parse_metrics(&raw);
+    // What the probe gave that the parser did not read: a host that answers in
+    // a form we do not know (an old procps, a BSD) shows «—», and this is why.
+    let missing = unread_core(&m);
+    if !missing.is_empty() {
+        tracing::debug!(
+            source = "monitoring",
+            sid = %session_id,
+            missing = %missing.join(", "),
+            "probe readings not recognized"
+        );
+    }
 
     // CPU% needs two samples; the first poll for a session has no prior reading.
     if let Some((idle, total)) = parse_cpustat(&raw) {
@@ -2230,6 +2256,24 @@ pub async fn fetch_process_detail(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn a_probe_answer_the_parser_did_not_read_is_named() {
+        let empty = super::Metrics::default();
+        assert_eq!(
+            super::unread_core(&empty),
+            ["os", "mem_total", "disk_total", "uptime", "cpu_count"]
+        );
+        let read = super::Metrics {
+            os: "linux".into(),
+            mem_total: Some(1),
+            disk_total: Some(1),
+            uptime_secs: Some(1),
+            cpu_count: Some(2),
+            ..super::Metrics::default()
+        };
+        assert!(super::unread_core(&read).is_empty());
+    }
+
     use super::*;
 
     // ── parse_metrics ─────────────────────────────────────────────────────────

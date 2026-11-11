@@ -94,6 +94,13 @@ impl OutAnswer {
         why: None,
     };
     fn declined(why: Declined) -> Self {
+        // The system not taking it (dropped back on the app) is the user's
+        // gesture; anything else is a reason the drag was refused.
+        if why == Declined::NotTaken {
+            tracing::debug!(source = "files", "drag out: the system did not take it");
+        } else {
+            tracing::info!(source = "files", why = ?why, "drag out refused");
+        }
         Self {
             taken: false,
             why: Some(why),
@@ -566,6 +573,7 @@ pub async fn drag_out_begin(
     app.run_on_main_thread(move || begin(&handle, &source, spec, answer))
         .map_err(|e| crate::error::AppError::Message(format!("drag out: {e}")))?;
     Ok(if began.await.unwrap_or(false) {
+        tracing::info!(source = "files", "drag out: files handed to the system");
         OutAnswer::TAKEN
     } else {
         OutAnswer::declined(Declined::NotTaken)

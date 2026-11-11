@@ -793,7 +793,11 @@ pub async fn write_local_text(
     expected_sha256: Option<String>,
 ) -> AppResult<WriteResult> {
     let encoding = encoding.unwrap_or_else(|| crate::textenc::default_encoding().into());
-    write_text(&path, &content, &eol, &encoding, expected_sha256.as_deref()).await
+    let res = write_text(&path, &content, &eol, &encoding, expected_sha256.as_deref()).await;
+    if res.is_ok() {
+        tracing::info!(source = "editor", path = %path, bytes = content.len(), "local file saved");
+    }
+    res
 }
 
 /// Save a copy of an unsaved editor buffer without replacing any existing file.
@@ -804,7 +808,11 @@ pub async fn save_editor_copy(
     eol: String,
     encoding: String,
 ) -> AppResult<()> {
-    write_editor_copy(&path, &content, &eol, &encoding).await
+    let res = write_editor_copy(&path, &content, &eol, &encoding).await;
+    if res.is_ok() {
+        tracing::info!(source = "editor", path = %path, bytes = content.len(), "a copy of the edit saved");
+    }
+    res
 }
 
 #[tauri::command]

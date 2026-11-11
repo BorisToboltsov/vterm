@@ -155,8 +155,56 @@ pub async fn run_local(cmd: Local<'_>, timeout_secs: u64) -> AppResult<ExecOutpu
     })
 }
 
+/// The diagnostics' source of a driver, by its label.
+pub fn source_of(label: &str) -> &'static str {
+    match label {
+        "git" => "git",
+        "kubectl" => "k8s",
+        "probe" | "netcheck" => "netcheck",
+        _ => "docker",
+    }
+}
+
+/// Whether a driver's argv may be written: a probe's carries header values and
+/// request bodies, a registry login its user — neither is written (ADR 0063).
+pub fn writes_argv(label: &str) -> bool {
+    !matches!(label, "probe" | "docker login")
+}
+
+/// An argv the driver's policy refused (ADR 0036): a warning — the frontend
+/// does not build such an argv, so one arriving is a defect or something worse.
+/// The argv is written openly, masked like every line.
+pub fn policy(label: &'static str, args: &[String], verdict: Result<(), String>) -> AppResult<()> {
+    verdict.map_err(|why| {
+        tracing::warn!(
+            source = source_of(label),
+            argv = %args.join(" "),
+            "{label} argv refused by its policy: {why}"
+        );
+        crate::error::AppError::Message(why)
+    })
+}
+
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn an_argv_a_policy_refuses_is_a_warning_and_a_probes_is_never_written() {
+        let args = vec!["push".to_owned(), "--force".to_owned()];
+        let (res, events) = crate::diag::capture(|| {
+            super::policy("git", &args, Err("git push --force is not allowed".into()))
+        });
+        assert!(res.is_err());
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].level, crate::diag::Level::Warn);
+        assert_eq!(events[0].source.as_deref(), Some("git"));
+        assert_eq!(events[0].fields["argv"], "push --force");
+        let (ok, events) = crate::diag::capture(|| super::policy("kubectl", &args, Ok(())));
+        assert!(ok.is_ok() && events.is_empty());
+        assert!(!super::writes_argv("probe") && !super::writes_argv("docker login"));
+        assert!(super::writes_argv("git") && super::writes_argv("kubectl"));
+        assert_eq!(super::source_of("kubectl"), "k8s");
+    }
+
     use super::*;
 
     fn local<'a>(program: &'a str, args: &'a [String], missing: Missing) -> Local<'a> {
