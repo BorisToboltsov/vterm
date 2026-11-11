@@ -345,7 +345,7 @@
     try {
       search.outcome = await adapter.search(asked.dir, asked.query, !asked.caseSensitive, !asked.regex, asked.limit);
     } catch (e) {
-      notifyError(String(e));
+      notifyError(String(e), { source: "files", sessionId: sessionKey });
       // The call itself failed: that is a search that did not run.
       search.outcome = { matches: [], truncated: false, failed: true };
     } finally {
@@ -597,9 +597,9 @@
       mkdirName = "";
       showMkdir = false;
       await refresh();
-      notifySuccess(t("sftp.folderCreated", { name }));
+      notifySuccess(t("sftp.folderCreated", { name }), { source: "files", sessionId: sessionKey });
     } catch (e) {
-      notifyError(String(e));
+      notifyError(String(e), { source: "files", sessionId: sessionKey });
     }
   }
 
@@ -611,9 +611,9 @@
       mkfileName = "";
       showMkfile = false;
       await refresh();
-      notifySuccess(t("sftp.fileCreated", { name }));
+      notifySuccess(t("sftp.fileCreated", { name }), { source: "files", sessionId: sessionKey });
     } catch (e) {
-      notifyError(String(e));
+      notifyError(String(e), { source: "files", sessionId: sessionKey });
     }
   }
 
@@ -630,9 +630,9 @@
       }
     }
     await refresh();
-    if (targets.length === 1 && !failed) notifySuccess(t("sftp.deleted", { name: lastName }));
-    else if (!failed) notifySuccess(t("sftp.deleted", { name: `${targets.length}` }));
-    if (failed) notifyError(failed);
+    if (targets.length === 1 && !failed) notifySuccess(t("sftp.deleted", { name: lastName }), { source: "files", sessionId: sessionKey });
+    else if (!failed) notifySuccess(t("sftp.deleted", { name: `${targets.length}` }), { source: "files", sessionId: sessionKey });
+    if (failed) notifyError(failed, { source: "files", sessionId: sessionKey });
   }
 
   // ── Multi-select + drag-to-move ────────────────────────────────────────────
@@ -867,7 +867,7 @@
     const paths = selectedEntries().map((e) => e.path);
     if (!paths.length) return;
     await writeClipboard(paths.join("\n"));
-    notifySuccess(t("sftp.pathCopied", { count: paths.length }));
+    notifySuccess(t("sftp.pathCopied", { count: paths.length }), { source: "files", sessionId: sessionKey });
   }
 
   // ── Right-click menus ───────────────────────────────────────────────────────
@@ -1010,10 +1010,10 @@
     if (cb.mode === "cut") clipboard = null; // sources moved away
     const okKey = cb.mode === "cut" ? "sftp.moved" : "sftp.copied";
     const okKeyMulti = cb.mode === "cut" ? "sftp.movedMulti" : "sftp.copiedMulti";
-    if (done === 1) notifySuccess(t(okKey, { name: lastName, dest: cwd }));
-    else if (done > 1) notifySuccess(t(okKeyMulti, { count: done, dest: cwd }));
-    if (skipped) notifyError(t("sftp.moveSkipped", { count: skipped }));
-    if (hardError) notifyError(t("sftp.moveFailed", { name: lastName, error: hardError }));
+    if (done === 1) notifySuccess(t(okKey, { name: lastName, dest: cwd }), { source: "files", sessionId: sessionKey });
+    else if (done > 1) notifySuccess(t(okKeyMulti, { count: done, dest: cwd }), { source: "files", sessionId: sessionKey });
+    if (skipped) notifyError(t("sftp.moveSkipped", { count: skipped }), { source: "files", sessionId: sessionKey });
+    if (hardError) notifyError(t("sftp.moveFailed", { name: lastName, error: hardError }), { source: "files", sessionId: sessionKey });
   }
 
   function startRename(entry: FileEntry) {
@@ -1032,11 +1032,11 @@
     try {
       await adapter.rename(target.path, joinPath(cwd, name));
       await refresh();
-      notifySuccess(t("sftp.renamed", { name }));
+      notifySuccess(t("sftp.renamed", { name }), { source: "files", sessionId: sessionKey });
     } catch (e) {
       const msg = String(e);
-      if (isDestExists(msg)) notifyError(t("sftp.moveConflict", { name, dest: cwd }));
-      else notifyError(String(e));
+      if (isDestExists(msg)) notifyError(t("sftp.moveConflict", { name, dest: cwd }), { source: "files", sessionId: sessionKey });
+      else notifyError(String(e), { source: "files", sessionId: sessionKey });
     }
   }
 
@@ -1130,10 +1130,10 @@
       }
     }
     await refresh();
-    if (moved === 1) notifySuccess(t("sftp.moved", { name: lastName, dest: m.destDir }));
-    else if (moved > 1) notifySuccess(t("sftp.movedMulti", { count: moved, dest: m.destDir }));
-    if (skipped) notifyError(t("sftp.moveSkipped", { count: skipped }));
-    if (hardError) notifyError(t("sftp.moveFailed", { name: lastName, error: hardError }));
+    if (moved === 1) notifySuccess(t("sftp.moved", { name: lastName, dest: m.destDir }), { source: "files", sessionId: sessionKey });
+    else if (moved > 1) notifySuccess(t("sftp.movedMulti", { count: moved, dest: m.destDir }), { source: "files", sessionId: sessionKey });
+    if (skipped) notifyError(t("sftp.moveSkipped", { count: skipped }), { source: "files", sessionId: sessionKey });
+    if (hardError) notifyError(t("sftp.moveFailed", { name: lastName, error: hardError }), { source: "files", sessionId: sessionKey });
   }
 
   // No refresh here: the adapter reports the batch to the dock store, and the

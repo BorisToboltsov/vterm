@@ -30,6 +30,38 @@ use zeroize::Zeroizing;
 /// (so dead links — sleeping server, lost Wi-Fi — are detected).
 const KEEPALIVE_MAX: usize = 3;
 
+/// How long one step of opening a channel may take — the channel itself, the
+/// command or subsystem it is asked for, the SFTP handshake. On a live link it
+/// is a round trip; on a dead one russh waits until keepalive gives up (up to a
+/// minute), and every command, poll and file call behind it waited with it: a
+/// dropped link used to end in a burst of the same error from all of them.
+pub const CHANNEL_STEP_TIMEOUT: Duration = Duration::from_secs(10);
+
+/// A step of opening a channel, or an error named `what`: its own, or that the
+/// server did not answer within [`CHANNEL_STEP_TIMEOUT`]. Every channel the app
+/// opens goes through it (`every_channel_open_is_answered_in_time`).
+pub(crate) async fn answered<T, E: std::fmt::Display>(
+    step: impl std::future::Future<Output = Result<T, E>>,
+    what: &str,
+) -> AppResult<T> {
+    answered_within(CHANNEL_STEP_TIMEOUT, step, what).await
+}
+
+async fn answered_within<T, E: std::fmt::Display>(
+    limit: Duration,
+    step: impl std::future::Future<Output = Result<T, E>>,
+    what: &str,
+) -> AppResult<T> {
+    match timeout(limit, step).await {
+        Ok(Ok(value)) => Ok(value),
+        Ok(Err(e)) => Err(AppError::Message(format!("{what}: {e}"))),
+        Err(_) => Err(AppError::Message(format!(
+            "{what}: the server did not answer in {} s",
+            limit.as_secs()
+        ))),
+    }
+}
+
 /// How vterm decides whether to trust a server's host key.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum HostKeyPolicy {
@@ -206,18 +238,17 @@ impl SshSession {
         if let Some(s) = guard.as_ref() {
             return Ok(s.clone());
         }
-        let channel = self
-            .handle
-            .channel_open_session()
-            .await
-            .map_err(|e| format!("could not open SFTP channel: {e}"))?;
-        channel
-            .request_subsystem(true, "sftp")
-            .await
-            .map_err(|e| format!("SFTP subsystem request failed: {e}"))?;
-        let session = SftpSession::new(channel.into_stream())
-            .await
-            .map_err(|e| format!("SFTP init failed: {e}"))?;
+        let channel = answered(
+            self.handle.channel_open_session(),
+            "could not open SFTP channel",
+        )
+        .await?;
+        answered(
+            channel.request_subsystem(true, "sftp"),
+            "SFTP subsystem request failed",
+        )
+        .await?;
+        let session = answered(SftpSession::new(channel.into_stream()), "SFTP init failed").await?;
         let arc = Arc::new(session);
         *guard = Some(arc.clone());
         Ok(arc)
@@ -318,15 +349,9 @@ impl SshSession {
         stdin: &[u8],
         mut on_data: impl FnMut(&[u8]),
     ) -> AppResult<()> {
-        let mut channel = self
-            .handle
-            .channel_open_session()
-            .await
-            .map_err(|e| format!("exec channel failed: {e}"))?;
-        channel
-            .exec(true, command.as_bytes())
-            .await
-            .map_err(|e| format!("exec failed: {e}"))?;
+        let mut channel =
+            answered(self.handle.channel_open_session(), "exec channel failed").await?;
+        answered(channel.exec(true, command.as_bytes()), "exec failed").await?;
         if !stdin.is_empty() {
             channel
                 .data(stdin)
@@ -348,15 +373,9 @@ impl SshSession {
     /// first (then EOF). Used to feed a `sudo -S` password without it appearing in
     /// the process list. Only stdout is collected.
     pub async fn run_command_stdin(&self, command: &str, stdin: &[u8]) -> AppResult<String> {
-        let mut channel = self
-            .handle
-            .channel_open_session()
-            .await
-            .map_err(|e| format!("exec channel failed: {e}"))?;
-        channel
-            .exec(true, command.as_bytes())
-            .await
-            .map_err(|e| format!("exec failed: {e}"))?;
+        let mut channel =
+            answered(self.handle.channel_open_session(), "exec channel failed").await?;
+        answered(channel.exec(true, command.as_bytes()), "exec failed").await?;
         if !stdin.is_empty() {
             channel
                 .data(stdin)
@@ -386,15 +405,9 @@ impl SshSession {
         stdin: &[u8],
         mut on_chunk: F,
     ) -> AppResult<String> {
-        let mut channel = self
-            .handle
-            .channel_open_session()
-            .await
-            .map_err(|e| format!("exec channel failed: {e}"))?;
-        channel
-            .exec(true, command.as_bytes())
-            .await
-            .map_err(|e| format!("exec failed: {e}"))?;
+        let mut channel =
+            answered(self.handle.channel_open_session(), "exec channel failed").await?;
+        answered(channel.exec(true, command.as_bytes()), "exec failed").await?;
         if !stdin.is_empty() {
             channel
                 .data(stdin)
@@ -472,14 +485,8 @@ pub(crate) async fn exec_on<H: client::Handler>(
     timeout_secs: u64,
     cancel: Option<&std::sync::atomic::AtomicBool>,
 ) -> AppResult<ExecOutcome> {
-    let mut channel = handle
-        .channel_open_session()
-        .await
-        .map_err(|e| format!("exec channel failed: {e}"))?;
-    channel
-        .exec(true, command.as_bytes())
-        .await
-        .map_err(|e| format!("exec failed: {e}"))?;
+    let mut channel = answered(handle.channel_open_session(), "exec channel failed").await?;
+    answered(channel.exec(true, command.as_bytes()), "exec failed").await?;
     if !stdin.is_empty() {
         channel
             .data(stdin)
@@ -1142,18 +1149,13 @@ pub async fn connect(
 
     // Phase 3: open the session channel, request a PTY and start the shell.
     let _ = app.emit(&phase_event(&session_id), "session");
-    let channel = handle
-        .channel_open_session()
-        .await
-        .map_err(|e| format!("could not open channel: {e}"))?;
-    channel
-        .request_pty(true, &opts.term_type, opts.cols, opts.rows, 0, 0, &[])
-        .await
-        .map_err(|e| format!("pty request failed: {e}"))?;
-    channel
-        .request_shell(true)
-        .await
-        .map_err(|e| format!("shell request failed: {e}"))?;
+    let channel = answered(handle.channel_open_session(), "could not open channel").await?;
+    answered(
+        channel.request_pty(true, &opts.term_type, opts.cols, opts.rows, 0, 0, &[]),
+        "pty request failed",
+    )
+    .await?;
+    answered(channel.request_shell(true), "shell request failed").await?;
 
     let (mut read, write) = channel.split();
 
@@ -1198,6 +1200,64 @@ pub async fn connect(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn a_channel_step_the_server_never_answers_ends_in_a_named_error() {
+        let silent = std::future::pending::<Result<(), String>>();
+        let err = answered_within(Duration::from_millis(20), silent, "exec channel failed")
+            .await
+            .unwrap_err()
+            .to_string();
+        assert!(
+            err.starts_with("exec channel failed: the server did not answer in"),
+            "{err}"
+        );
+        assert_eq!(CHANNEL_STEP_TIMEOUT, Duration::from_secs(10));
+        let refused = async { Err::<(), _>("administratively prohibited") };
+        let err = answered(refused, "exec channel failed")
+            .await
+            .unwrap_err()
+            .to_string();
+        assert_eq!(err, "exec channel failed: administratively prohibited");
+        let fine = async { Ok::<_, String>(7) };
+        assert_eq!(answered(fine, "x").await.unwrap(), 7);
+    }
+
+    /// How many `channel_open_session()` calls in `src` — outside its tests —
+    /// are not inside an `answered(…)`.
+    fn unanswered_opens(src: &str) -> usize {
+        let code = src.split("#[cfg(test)]").next().unwrap_or(src);
+        code.match_indices("channel_open_session()")
+            .filter(|(at, _)| {
+                let before = &code[at.saturating_sub(60)..*at];
+                !before.contains("answered(")
+            })
+            .count()
+    }
+
+    #[test]
+    fn every_channel_open_is_answered_in_time() {
+        // Gate: a channel the app opens on a dead link fails within
+        // CHANNEL_STEP_TIMEOUT instead of waiting out the keepalive, with every
+        // poll and file call queued behind it.
+        // A Windows checkout carries CRLF (core.autocrlf); the window below counts LF.
+        for (name, src) in [
+            ("ssh.rs", include_str!("ssh.rs")),
+            ("fileuser.rs", include_str!("fileuser.rs")),
+            ("sftp.rs", include_str!("sftp.rs")),
+        ] {
+            assert_eq!(
+                unanswered_opens(&src.replace("\r\n", "\n")),
+                0,
+                "{name} opens a channel without a deadline"
+            );
+        }
+        // …and the check sees an open without one.
+        let bare = "let ch = handle\n        .channel_open_session()\n        .await?;";
+        assert_eq!(unanswered_opens(bare), 1);
+        let held = "let ch = answered(handle.channel_open_session(), \"x\").await?;";
+        assert_eq!(unanswered_opens(held), 0);
+    }
     use russh::keys::ssh_key::{certificate, Algorithm, PrivateKey};
 
     #[test]

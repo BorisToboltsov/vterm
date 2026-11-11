@@ -160,7 +160,7 @@ function onUp(): void {
   } else if (removing) {
     unpinAction(id);
     // Said where it can come back from: the bar's own menu has every button.
-    notifyInfo(t("topbar.removed", { name: actionLabel(id, settings.topbarCommands) }));
+    notifyInfo(t("topbar.removed", { name: actionLabel(id, settings.topbarCommands) }), { source: "settings" });
   }
 }
 

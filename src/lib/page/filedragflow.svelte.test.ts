@@ -225,7 +225,7 @@ describe("file drag flow: other windows and the system", () => {
     expect(await host.out(files("a", ["/srv/site"]))).toBe(false);
     host.release(files("a", ["/srv/site"]));
     await settled();
-    expect(stores.notifyInfo).toHaveBeenCalledWith(t("dragout.whyFolderLink"));
+    expect(stores.notifyInfo).toHaveBeenCalledWith(t("dragout.whyFolderLink"), { source: "files" });
     cleanup();
   });
 

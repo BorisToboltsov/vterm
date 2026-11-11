@@ -273,7 +273,7 @@
     // store would pop up later, out of the blue, once the blocker cleared.
     const block = askBlocker({ ready, noAi });
     if (block) {
-      notifyInfo(t(ASK_BLOCK_MESSAGE[block]));
+      notifyInfo(t(ASK_BLOCK_MESSAGE[block]), { source: "ai", sessionId: sessionId });
       return;
     }
     chat.attachment = req;
@@ -353,7 +353,7 @@
   function doSend(question: string, context: string): boolean {
     // A dialog step can start between opening the consent dialog and confirming it.
     if (chatBusy(chat)) {
-      notifyInfo(t("ai.ask.busy"));
+      notifyInfo(t("ai.ask.busy"), { source: "ai", sessionId: sessionId });
       return false;
     }
     input = "";
@@ -391,7 +391,7 @@
 
   function copyBlock(block: string) {
     writeClipboard(block);
-    notifySuccess(t("ai.exec.copied"));
+    notifySuccess(t("ai.exec.copied"), { source: "ai", sessionId: sessionId });
   }
 
   function onKey(e: KeyboardEvent) {

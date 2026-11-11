@@ -195,6 +195,9 @@ const CASES: Record<string, { bad: [string, string][]; good: [string, string][] 
       ["src/lib/monitoring/MonitoringOverlay.svelte", svelte(`import { fetchProcessDetail } from "../api";\nvoid fetchProcessDetail;`)],
       // A second poller of the basic metrics — the status bar asking on its own timer.
       ["src/lib/monitoring/StatusBar.svelte", svelte(`import { fetchMetrics } from "../api";\nvoid fetchMetrics;`)],
+      // A message slipped into the journal unmasked, or the list read past the store.
+      ["src/lib/docker/DockerPanel.svelte", svelte(`import { noteJournal } from "../stores/journal.svelte";\nvoid noteJournal;`)],
+      ["src/lib/notifications/JournalPanel.svelte", svelte(`import { journalList } from "../api/journal";\nvoid journalList;`)],
     ],
     good: [
       ["src/lib/stores/metricsfeed.svelte.ts", `import { fetchMetrics } from "../api";\nexport const x = fetchMetrics;`],
@@ -204,6 +207,8 @@ const CASES: Record<string, { bad: [string, string][]; good: [string, string][] 
       ["src/lib/files/transferflow.ts", `import { transferStart } from "../api";\nexport const x = transferStart;`],
       ["src/lib/files/FileUserDialog.svelte", svelte(`import { sftpOpenAs } from "../api";\nvoid sftpOpenAs;`)],
       ["src/lib/ui/ZzProbe.svelte", svelte(`import { setServerNotes } from "../api";\nvoid setServerNotes;`)],
+      ["src/lib/stores/toasts.svelte.ts", `import { noteJournal } from "./journal.svelte";\nexport const x = noteJournal;`],
+      ["src/lib/stores/journal.svelte.ts", `import { journalList } from "../api/journal";\nexport const x = journalList;`],
     ],
   },
   "owned-writes": {

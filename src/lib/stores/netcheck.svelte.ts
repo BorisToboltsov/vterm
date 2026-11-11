@@ -337,7 +337,7 @@ export async function startWaiting(home: string): Promise<void> {
     if (!still()) return;
     if (Date.now() >= w.until) {
       delete netcheckState.waiting[home];
-      notifyInfo(t("util.netcheck.waitExpired", { n: WAIT_FOR_SECS / 60 }));
+      notifyInfo(t("util.netcheck.waitExpired", { n: WAIT_FOR_SECS / 60 }), { source: "netcheck" });
       return;
     }
     w.attempts += 1;
@@ -350,7 +350,7 @@ export async function startWaiting(home: string): Promise<void> {
     }
     if (retryChecks(cur) === 0) {
       delete netcheckState.waiting[home];
-      notifySuccess(t("util.netcheck.waitOpened"));
+      notifySuccess(t("util.netcheck.waitOpened"), { source: "netcheck" });
       return;
     }
     w.next = Date.now() + WAIT_EVERY_SECS * 1000;

@@ -17,6 +17,8 @@
   import AppearanceSettings from "../appearance/AppearanceSettings.svelte";
   import SmartLogsSettings from "../terminal/SmartLogsSettings.svelte";
   import StatusBarSettings from "../monitoring/StatusBarSettings.svelte";
+  import JournalSettings from "../notifications/JournalSettings.svelte";
+  import { windowLabel } from "../windows/appwindow";
   import IdleSettings from "../screensaver/IdleSettings.svelte";
   import PanelsSettings from "../layout/PanelsSettings.svelte";
   import TopbarSettings from "../topbar/TopbarSettings.svelte";
@@ -46,6 +48,7 @@
     docker: "settings.groupDocker",
     k8s: "settings.groupK8s",
     assistant: "settings.groupAssistant",
+    journal: "settings.groupJournal",
   };
 
   let {
@@ -624,6 +627,11 @@
         {#if show("ai")}
         <!-- AI assistant (Phase 17, opt-in) — heading + intro live inside the section. -->
         <AiSettingsSection />
+        {/if}
+
+        {#if show("journal")}
+        <!-- The journal (ADR 0062): the list its button opens, and how it is kept. -->
+        <JournalSettings here={windowLabel} />
         {/if}
         </div>
       </div>

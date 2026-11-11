@@ -222,6 +222,7 @@
   import type { MenuAction, MenuItem, OpenMenu } from "#lib/ui/ctxmenu.ts";
   import PathSyncDialog from "#lib/pathsync/PathSyncDialog.svelte";
   import { createPathSyncFlow } from "#lib/page/pathsyncflow.svelte.ts";
+  import { createReconnectFlow } from "#lib/page/reconnectflow.svelte.ts";
   import { cdCommand, type CdShell } from "#lib/pathsync/cdterminal.ts";
   import { renderArgv, renderSessionCommand } from "#lib/terminal/termcmd.ts";
   import { attachIcon, attachRows, attachTitle, type AttachTarget } from "#lib/tabs/tabattach.ts";
@@ -244,6 +245,8 @@
   import { createCopyFlow } from "#lib/page/copyflow.svelte.ts";
   import type { CommandItem } from "#lib/app/command.ts";
   import { notifyError, notifySuccess, notifyInfo } from "#lib/stores/toasts.svelte.ts";
+  import { configureJournal, openJournal, startJournal } from "#lib/stores/journal.svelte.ts";
+  import { JOURNAL_ICON } from "#lib/notifications/journal.ts";
   import {
     applyJob,
     applyProgress,
@@ -362,7 +365,7 @@
   async function confirmUpdate() {
     showQuit = false;
     try { await installUpdate(updateVersion); }
-    catch (e) { notifyError(t(updateError(e))); }
+    catch (e) { notifyError(t(updateError(e)), { source: "update" }); }
     finally { quitForUpdate = false; }
   }
   // What the other windows would lose — asked for when the main window's dialog
@@ -709,7 +712,7 @@
    */
   function splitWithNewTerminal(edge: Edge) {
     if (!canSplitFocused(edge)) {
-      if (activeTab) notifyInfo(t("split.noRoom"));
+      if (activeTab) notifyInfo(t("split.noRoom"), { source: "terminal" });
       return;
     }
     const anchor = center.focus;
@@ -737,7 +740,7 @@
     const grid = gridPage(ids, fit.panes, page, tabsState.activeId);
     const shown = grid.shown;
     if (grid.pages > 1 && bcGrid === null) {
-      notifyInfo(t("split.gridPartial", { shown: fit.panes, total: ids.length }));
+      notifyInfo(t("split.gridPartial", { shown: fit.panes, total: ids.length }), { source: "terminal" });
     }
     bcGrid = grid.pages > 1 ? { ...grid, total: ids.length } : null;
     // In tab order, whoever was picked.
@@ -849,7 +852,7 @@
       monitoringSection = section;
       showMonitoring = true;
     } else {
-      notifyError(t("page.monitoringNeedsSession"));
+      notifyError(t("page.monitoringNeedsSession"), { source: "monitoring" });
     }
   }
 
@@ -965,7 +968,7 @@
     const shell = findTab(id)?.kind === "local" ? (localShellKind[id] ?? "posix") : "posix";
     const cmd = renderArgv(argv, shell);
     if (!cmd) {
-      notifyError(t("page.commandUnquotable"));
+      notifyError(t("page.commandUnquotable"), { source: "terminal" });
       return;
     }
     void writeToTerminal(id, new TextEncoder().encode(submitLine(cmd))).catch(() => {});
@@ -1201,6 +1204,9 @@
       keywords: "settings preferences параметры настройки", run: () => openSettings() },
     { id: "act:utilities", title: t("palette.utilities"), icon: "wrench", group: t("palette.groupActions"),
       keywords: "utilities tools keygen cidr subnet base64 jwt cron password timestamp known hosts tls http утилиты инструменты", run: () => openUtilities() },
+    { id: "act:journal", title: t("palette.journal"), icon: JOURNAL_ICON, group: t("palette.groupActions"),
+      keywords: "notifications journal log history errors missed toasts уведомления журнал история ошибки пропущенные",
+      run: openJournal },
     { id: "act:monitoring", title: t("palette.monitoring"), icon: "barChart", group: t("palette.groupActions"),
       keywords: "monitoring metrics метрики мониторинг cpu ram disk графики", run: () => openMonitoring() },
     { id: "act:record",
@@ -1476,8 +1482,8 @@
     }).then((u) => unlisteners.push(u));
     listenHere("update://resume", () => { updateFreeze = false; }).then((u) => unlisteners.push(u));
     if (isMainWindow) void updateStartup().then((status) => {
-      if (status === "updated") notifySuccess(t("updates.updated"));
-      else if (status) notifyError(t(updateError(status)));
+      if (status === "updated") notifySuccess(t("updates.updated"), { source: "update" });
+      else if (status) notifyError(t(updateError(status)), { source: "update" });
     }).catch(() => {});
     listenHere("menu://monitoring", () => openMonitoring()).then((u) => unlisteners.push(u));
     // Close confirmation: the main window is asked about quitting, any other one
@@ -1517,6 +1523,9 @@
     // the app's, not a window's: each window keeps a copy and re-reads it when
     // another one changes it.
     listen(CATALOG_EVENT, () => void refresh()).then((u) => unlisteners.push(u));
+    // The journal of notifications is one for all the windows (ADR 0062): each
+    // hears it changed, for the bell's dot and its open list.
+    unlisteners.push(startJournal());
     listen<SettingsBroadcast>(SETTINGS_EVENT, (e) => applySettingsFrom(e.payload)).then((u) =>
       unlisteners.push(u),
     );
@@ -1557,7 +1566,7 @@
       void takeStoreWarnings().then((warnings) => {
         for (const w of warnings) {
           const m = storeWarningMessage(w);
-          notifyError(t(m.key, m.params), 0);
+          notifyError(t(m.key, m.params), { ttl: 0, source: "settings" });
         }
       });
       // "Open with vterm": files asked for at launch (drained now) and while
@@ -1753,7 +1762,7 @@
       const updated = await setServerGroup(id, groupPath);
       servers = servers.map((s) => (s.id === updated.id ? updated : s));
     } catch (e) {
-      notifyError(String(e));
+      notifyError(String(e), { source: "servers" });
     }
   }
   async function moveFolderAndRefresh(path: string, parent: string | null) {
@@ -1761,7 +1770,7 @@
       await moveFolder(path, parent);
       [servers, folders] = await Promise.all([listServers(), listFolders()]);
     } catch (e) {
-      notifyError(String(e));
+      notifyError(String(e), { source: "servers" });
     }
   }
 
@@ -1777,8 +1786,8 @@
     const notice = jobNotice(job);
     if (!notice) return;
     const text = t(notice.key, notice.vars);
-    if (notice.kind === "error") notifyError(text);
-    else notifyInfo(text);
+    if (notice.kind === "error") notifyError(text, { source: "transfer" });
+    else notifyInfo(text, { source: "transfer" });
   }
 
   /** The jobs of this window's sessions that are under way right now. */
@@ -1797,6 +1806,13 @@
   }
 
   // ── Copy to another session (page/copyflow.svelte.ts) ─────────────────────
+  // A dropped SSH session reconnects by itself under `autoReconnect` — after a
+  // growing pause, a limited number of times (ADR 0062, page/reconnectflow).
+  const reconnectFlow = createReconnectFlow({
+    auto: () => settings.autoReconnect,
+    exists: (id) => !!findTab(id),
+    reconnect: (id) => reconnectTabStore(id),
+  });
   const pathSync = createPathSyncFlow({
     findTab,
     servers: () => servers,
@@ -1865,6 +1881,13 @@
   });
   // Where each shell is goes into the slot with its tab (v1.36, ADR 0057).
   provideShellCwd((sid) => terminalCwd[sid] ?? null);
+  // Whether the journal of notifications outlives the app, and for how long, is
+  // told to the backend by the main window (the settings are one for all).
+  $effect(() => {
+    const keep = settings.journalKeep;
+    const days = settings.journalDays;
+    if (isMainWindow) untrack(() => configureJournal(keep, days));
+  });
   // What the tabs printed is kept only under the setting; turned off, it goes.
   $effect(() => {
     void settings.restoreOutput;
@@ -1883,7 +1906,7 @@
       const sessionId = openTabStore(server.id, server.alias, null, false);
       place?.(sessionId);
     } catch (e) {
-      notifyError(String(e));
+      notifyError(String(e), { source: "connection" });
     }
   }
 
@@ -1973,6 +1996,8 @@
     // this window would go on pausing it as "not on screen here".
     clearRecording(sessionId);
     recFlow.forget(sessionId);
+    // Its count of reconnects and an attempt waiting for its pause (page/reconnectflow).
+    reconnectFlow.forget(sessionId);
     delete followSeen[sessionId];
     pathSync.forget(sessionId);
     delete terminalCwd[sessionId];
@@ -2214,7 +2239,7 @@
   function openGeneratedScript(name: string, content: string) {
     const sid = tabsState.activeId;
     if (!sid || (activeTab?.kind !== "ssh" && activeTab?.kind !== "local")) {
-      notifyError(t("recordings.scriptNeedsSession"));
+      notifyError(t("recordings.scriptNeedsSession"), { source: "recording" });
       return;
     }
     const source = activeTab.kind === "ssh" ? "sftp" : "local";
@@ -2248,9 +2273,9 @@
       const status = await serverToolsStatus(sid);
       const tool = status.tools.find((t) => t.name === toolName || t.id === toolName);
       if (tool) installTool = { sessionId: sid, tool };
-      else notifyError(t("servertools.notFound", { tool: toolName }));
+      else notifyError(t("servertools.notFound", { tool: toolName }), { source: "editor" });
     } catch {
-      notifyError(t("servertools.statusFailed"));
+      notifyError(t("servertools.statusFailed"), { source: "editor" });
     }
   }
 
@@ -2342,7 +2367,7 @@
     // otherwise keep covering the terminal the command was just typed into.
     showUtilities = false;
     void writeToTerminal(sid, new TextEncoder().encode(command));
-    notifyInfo(t("servertools.typed"));
+    notifyInfo(t("servertools.typed"), { source: "editor" });
   }
 
   /** Lint reported a missing tool: fetch its install command and offer to install. */
@@ -2510,9 +2535,9 @@
       void announceServersDeleted({ from: windowLabel, ids: [id] }).catch(() => {});
       servers = servers.filter((s) => s.id !== id);
       if (selectedId === id) selectedId = servers[0]?.id ?? null;
-      notifySuccess(t("page.serverDeleted", { alias }));
+      notifySuccess(t("page.serverDeleted", { alias }), { source: "servers" });
     } catch (e) {
-      notifyError(String(e));
+      notifyError(String(e), { source: "servers" });
     }
   }
 
@@ -2529,9 +2554,9 @@
       servers = servers.filter((s) => !removed.has(s.id));
       folders = await listFolders();
       if (selectedId && removed.has(selectedId)) selectedId = servers[0]?.id ?? null;
-      notifySuccess(t("page.folderServersDeleted", { name: nameOf(path) }));
+      notifySuccess(t("page.folderServersDeleted", { name: nameOf(path) }), { source: "servers" });
     } catch (e) {
-      notifyError(String(e));
+      notifyError(String(e), { source: "servers" });
     }
   }
 </script>
@@ -2842,6 +2867,7 @@
     onOpenRecordings={() => runSessionAction("recordings")}
     onOpenMonitoring={() => runSessionAction("monitoring")}
     onOpenSettings={() => openSettings("servertools")}
+    onOpenJournalSettings={() => openSettings("journal")}
     onOpenUtilities={(utility) => openUtilities(utility ?? null)}
     commands={paletteCommands}
     canBroadcast={sessionActions.canBroadcast}
@@ -3363,7 +3389,7 @@
                           ? renderSessionCommand(argv, shell)
                           : renderArgv(argv, shell);
                         if (!cmd) {
-                          notifyError(t("page.commandUnquotable"));
+                          notifyError(t("page.commandUnquotable"), { source: "terminal", sessionId: tab.sessionId });
                         } else {
                           // Small delay so the login shell prompt is ready first.
                           setTimeout(() => {
@@ -3396,14 +3422,12 @@
                       }
                       if (st === "connected") recFlow.maybeAutoRecord(tab);
                       if (st === "connected") pathSync.connected(tab, runs);
-                      // Auth failures now keep the tab and show the error overlay
-                      // (the user re-enters the secret via its button), so we no
-                      // longer auto-close/re-prompt here.
-                      if (st === "closed" && settings.autoReconnect && tab.kind === "ssh" && !attach) {
-                        setTimeout(() => {
-                          if (findTab(tab.sessionId)) reconnectTabStore(tab.sessionId);
-                        }, 1000);
-                      }
+                      // Auth failures keep the tab and show the error overlay (the
+                      // user re-enters the secret via its button). A drop — and an
+                      // attempt of its own that failed — is the reconnect flow's: a
+                      // growing pause, a limited count, the journal told quietly. A
+                      // container tab's end is its session ending, not a drop.
+                      if (tab.kind === "ssh" && !attach) reconnectFlow.status(tab.sessionId, st, d);
                     }}
                   />
                 {/key}

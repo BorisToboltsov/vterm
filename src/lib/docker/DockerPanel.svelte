@@ -44,6 +44,8 @@
   import { listOrder, setListOrder, type ListId } from "../stores/listview.svelte";
   import PanelDivider from "../ui/PanelDivider.svelte";
   import AttentionStrip from "../ui/AttentionStrip.svelte";
+  import PollFailStrip from "../ui/PollFailStrip.svelte";
+  import { pollFailed, singleFlight, type PollFailure } from "../ui/poll";
   import type { LogTailSize } from "../ui/loglines";
   import { hideableFields } from "../ui/colfit";
   import { keepPresent } from "../ui/listselect";
@@ -174,6 +176,8 @@
   // False until the first data load after a positive probe completes — drives the
   // skeleton so the panel never flashes "No containers" before the first `ps`.
   let firstLoadDone = $state(false);
+  /** The reads failing in a row, if they are (ADR 0062): drawn as a strip, not toasts. */
+  let pollFailure = $state<PollFailure | null>(null);
 
   let statsById = $state<Map<string, DockerStat>>(new Map());
   // CPU history per container id, fed by the poll that already runs (Phase 42).
@@ -455,11 +459,11 @@
     try {
       const res = await containerRun(sessionId, args, 120, true);
       if (res.exitCode !== 0) {
-        notifyError(res.stderr.trim() || res.stdout.trim() || t("docker.opFailed"));
+        notifyError(res.stderr.trim() || res.stdout.trim() || t("docker.opFailed"), { source: "docker", sessionId: sessionId });
         await refresh();
         return false;
       }
-      if (opts.successKey) notifySuccess(t(opts.successKey as MessageKey));
+      if (opts.successKey) notifySuccess(t(opts.successKey as MessageKey), { source: "docker", sessionId: sessionId });
       await refresh();
       // A removal or a prune changes what the disk holds and who uses what.
       const removes = ["rm", "rmi", "prune"].some((w) => args.slice(1, 3).includes(w));
@@ -467,7 +471,7 @@
       if (removes && treeShown) void loadTree();
       return true;
     } catch (e) {
-      notifyError(String(e));
+      notifyError(String(e), { source: "docker", sessionId: sessionId });
       return false;
     } finally {
       busy = false;
@@ -612,7 +616,7 @@
   }
 
   /** Reload the active sub-tab's data (+ stats for containers, + live modal). */
-  async function refresh() {
+  async function readNow() {
     if (!sessionReady || !availability?.ok) return;
     try {
       if (activeSub === "containers") {
@@ -663,24 +667,39 @@
         const res = await runQuery(modalArgs, 30);
         modalText = res.stdout + (res.stderr.trim() ? `\n${res.stderr}` : "");
       }
+      pollFailure = null;
     } catch (e) {
-      notifyError(String(e));
+      failedRead(String(e));
     } finally {
       firstLoadDone = true;
     }
+  }
+
+  /**
+   * Reload the view — one read at a time (ADR 0062): a tick while a read is out
+   * asks for one more after it, instead of a pile of reads waiting on a dead link
+   * that fail all at once.
+   */
+  const refresh = singleFlight(readNow);
+
+  /** A read failed: a strip in the panel, and — once per streak — a quiet note in the journal. */
+  function failedRead(text: string) {
+    const { failure, news } = pollFailed(pollFailure, text, Date.now());
+    pollFailure = failure;
+    if (news) notifyError(text, { source: "docker", sessionId, quiet: true });
   }
 
   // ── Actions ────────────────────────────────────────────────────────────────
 
   function openShell(c: DockerContainer) {
     onOpenShell?.(execShellArgv(c.id), { kind: "container", name: c.name, image: c.image });
-    notifySuccess(t("docker.shellOpened", { name: c.name }));
+    notifySuccess(t("docker.shellOpened", { name: c.name }), { source: "docker", sessionId: sessionId });
   }
 
   /** Follow a container's log live in a terminal tab (`docker logs -f`). */
   function followLogs(c: DockerContainer, tail: number) {
     onOpenShell?.(followLogsArgv(c.id, tail), { kind: "container", name: c.name, image: c.image });
-    notifySuccess(t("docker.logsFollowOpened", { name: c.name }));
+    notifySuccess(t("docker.logsFollowOpened", { name: c.name }), { source: "docker", sessionId: sessionId });
   }
 
   async function openText(title: string, args: string[], live: boolean) {
@@ -741,12 +760,12 @@
     try {
       const res = await dockerLogin(sessionId, reg.url, loginArgs(reg.url, reg.username));
       if (res.exitCode !== 0) {
-        notifyError(res.stderr.trim() || res.stdout.trim() || t("docker.loginFailed"));
+        notifyError(res.stderr.trim() || res.stdout.trim() || t("docker.loginFailed"), { source: "docker", sessionId: sessionId });
       } else {
-        notifySuccess(t("docker.loginOk", { registry: registryLabel(reg.url) }));
+        notifySuccess(t("docker.loginOk", { registry: registryLabel(reg.url) }), { source: "docker", sessionId: sessionId });
       }
     } catch (e) {
-      notifyError(String(e));
+      notifyError(String(e), { source: "docker", sessionId: sessionId });
     } finally {
       busy = false;
     }
@@ -969,6 +988,8 @@
         {/each}
       </div>
     </div>
+
+    <PollFailStrip failure={pollFailure} onretry={() => void refresh()} testid="docker-poll-fail" />
 
     <!-- Active sub-view; in a wide panel logs, inspect and a container's
          details open beside it (below), not over it. -->

@@ -3,6 +3,7 @@
 // Kept DOM-free so it is unit-tested directly (architecture invariant).
 import { matchesQuery } from "../ui/util";
 import type { IconName } from "../ui/icons";
+import { JOURNAL_ICON } from "../notifications/journal";
 
 export interface SettingsSection {
   id: string;
@@ -41,6 +42,7 @@ export const SETTINGS_SECTIONS: SettingsSection[] = [
   { id: "idle", keywords: "Screensaver idle inactivity timeout matrix parallax words weak signal server card no signal burn-in burn in OLED drift shift pixel заставка простой бездействие таймаут матрица параллакс слова слабый сигнал карточка сервера скринсейвер хранитель экрана выгорание сдвиг пиксели OLED" },
   { id: "security", keywords: "Security host key known_hosts policy strict trust accept безопасность ключ хоста политика" },
   { id: "backup", keywords: "Backup export import json restore резервная копия бэкап экспорт импорт восстановление" },
+  { id: "journal", keywords: "Journal messages notifications history toasts errors missed bell pin top bar keep clear retention days журнал сообщения уведомления история тосты ошибки пропущенные колокольчик булавка верхняя панель хранить очистить срок дни" },
   { id: "ai", keywords: "AI assistant LLM chat model endpoint api key qwen ollama vllm claude anthropic openai prod ИИ ассистент чат модель эндпоинт ключ помощник нейросеть" },
 ];
 
@@ -55,6 +57,8 @@ export const SETTINGS_GROUPS: SettingsGroup[] = [
   { id: "docker", icon: "container", sections: ["docker"] },
   { id: "k8s", icon: "kubernetes", sections: ["k8s"] },
   { id: "assistant", icon: "aiMark", sections: ["ai"] },
+  // Last: the journal (ADR 0062) — what the app said, and its button.
+  { id: "journal", icon: JOURNAL_ICON, sections: ["journal"] },
 ];
 
 export const DEFAULT_SETTINGS_GROUP = SETTINGS_GROUPS[0].id;

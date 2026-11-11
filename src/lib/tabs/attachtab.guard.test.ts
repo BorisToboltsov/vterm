@@ -49,8 +49,10 @@ describe("container tab guard", () => {
 
   it("never auto-reconnects a container tab or shows NO SIGNAL for it", () => {
     const h = onstatus();
-    const auto = h.slice(h.indexOf("settings.autoReconnect && tab.kind"));
-    expect(auto, "auto-reconnect skips container tabs").toMatch(/^[^{]*!attach/);
+    // A drop is the reconnect flow's (page/reconnectflow) — never for a container tab.
+    const call = h.indexOf("reconnectFlow.status(");
+    expect(call, "the drop goes to the reconnect flow").toBeGreaterThan(-1);
+    expect(h.slice(h.lastIndexOf("if (", call), call), "auto-reconnect skips container tabs").toMatch(/!attach/);
     const noSignal = h.slice(h.lastIndexOf("if (", h.indexOf("showNoSignal(")));
     expect(noSignal.slice(0, noSignal.indexOf("showNoSignal(")), "NO SIGNAL skips them").toMatch(
       /!attach/,

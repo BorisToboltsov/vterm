@@ -21,7 +21,7 @@
 
 use crate::error::{AppError, AppResult};
 use crate::git::shell_quote;
-use crate::ssh::{exec_on, ExecOutcome};
+use crate::ssh::{answered, exec_on, ExecOutcome};
 use russh::client::{self, Handle};
 use russh_sftp::client::SftpSession;
 use serde::Serialize;
@@ -330,23 +330,19 @@ pub(crate) async fn open_as<H: client::Handler>(
     if !server.starts_with('/') {
         return Err(AppError::SftpServerMissing);
     }
-    let channel = handle
-        .channel_open_session()
-        .await
-        .map_err(|e| format!("could not open SFTP channel: {e}"))?;
-    channel
-        .exec(true, server_command(user, with_password, server).as_bytes())
-        .await
-        .map_err(|e| format!("could not start sftp-server: {e}"))?;
+    let channel = answered(handle.channel_open_session(), "could not open SFTP channel").await?;
+    answered(
+        channel.exec(true, server_command(user, with_password, server).as_bytes()),
+        "could not start sftp-server",
+    )
+    .await?;
     if !stdin.is_empty() {
         channel
             .data(stdin)
             .await
             .map_err(|e| format!("could not start sftp-server: {e}"))?;
     }
-    SftpSession::new(channel.into_stream())
-        .await
-        .map_err(|e| AppError::Message(format!("SFTP init failed: {e}")))
+    answered(SftpSession::new(channel.into_stream()), "SFTP init failed").await
 }
 
 /// Whom a session's file panel works as, when it is not the login user.

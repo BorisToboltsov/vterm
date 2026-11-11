@@ -203,7 +203,7 @@
     mdSeen = new Set();
     mdHasRemote = false;
     void loadPreviewImages(doc.content);
-    notifySuccess(t("editor.previewReloaded"));
+    notifySuccess(t("editor.previewReloaded"), { source: "editor", sessionId: sessionId });
   }
 
   // Config snippets/templates relevant to this file's language (from settings).
@@ -234,15 +234,15 @@
       });
       if (!res.found) {
         lintMessages = null;
-        notifyError(t("editor.lintMissing", { tool: res.tool || doc.lang.label }));
+        notifyError(t("editor.lintMissing", { tool: res.tool || doc.lang.label }), { source: "editor", sessionId: sessionId });
         if (res.tool) onLintMissing?.(res.tool);
         return;
       }
       const msgs = parseLint(res.output, res.format);
       lintMessages = msgs;
-      if (msgs.length === 0) notifySuccess(t("editor.lintClean", { tool: res.tool }));
+      if (msgs.length === 0) notifySuccess(t("editor.lintClean", { tool: res.tool }), { source: "editor", sessionId: sessionId });
     } catch (e) {
-      notifyError(String(e));
+      notifyError(String(e), { source: "editor", sessionId: sessionId });
     } finally {
       linting = false;
     }

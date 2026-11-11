@@ -69,10 +69,10 @@
     try {
       await addFolder(path);
       showCreate = false;
-      notifySuccess(t("page.folderCreated", { name }));
+      notifySuccess(t("page.folderCreated", { name }), { source: "servers" });
       onchanged();
     } catch (e) {
-      notifyError(String(e));
+      notifyError(String(e), { source: "servers" });
     }
   }
 
@@ -87,7 +87,7 @@
       await renameFolder(toRename, name);
       onchanged();
     } catch (e) {
-      notifyError(String(e));
+      notifyError(String(e), { source: "servers" });
     }
     toRename = null;
   }
@@ -114,10 +114,10 @@
     closeDelete();
     try {
       await deleteFolder(path);
-      notifySuccess(t("page.folderDeleted", { name: nameOf(path) }));
+      notifySuccess(t("page.folderDeleted", { name: nameOf(path) }), { source: "servers" });
       onchanged();
     } catch (e) {
-      notifyError(String(e));
+      notifyError(String(e), { source: "servers" });
     }
   }
 

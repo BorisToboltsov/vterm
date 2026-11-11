@@ -197,3 +197,34 @@ export interface ExecOutput {
   stderr: string;
   exitCode: number;
 }
+
+/** The tone of a message — of its toast, and of its entry in the journal. */
+export type JournalKind = "error" | "success" | "info";
+
+/**
+ * One entry of the journal of notifications (mirror of `journal::Entry`, ADR
+ * 0062): a message the app showed, and the times it was said. `source` is an id
+ * of `notifications/journal.ts`; `server` is the server's name at the time.
+ */
+export interface JournalEntry {
+  id: string;
+  kind: JournalKind;
+  text: string;
+  source: string | null;
+  serverId: string | null;
+  server: string | null;
+  /** The window it was last said in: `main`, `win-2`. */
+  window: string | null;
+  /** Unix ms: the first and the last time it was said. */
+  first: number;
+  last: number;
+  count: number;
+  read: boolean;
+}
+
+/** What every window hears after the journal changed (mirror of `journal::Summary`). */
+export interface JournalSummary {
+  rev: number;
+  total: number;
+  unreadErrors: boolean;
+}

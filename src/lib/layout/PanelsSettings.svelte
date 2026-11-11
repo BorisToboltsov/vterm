@@ -37,7 +37,7 @@
     onclick={() => {
       resetPanelLayout();
       // The settings window covers the docks — say that something happened.
-      notifySuccess(t("settings.panelsResetDone"));
+      notifySuccess(t("settings.panelsResetDone"), { source: "settings" });
     }}
   >
     {t("palette.resetLayout")}

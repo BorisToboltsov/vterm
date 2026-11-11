@@ -37,7 +37,7 @@
       await answerAuthPrompt(sessionId, values);
     } catch (e) {
       // The login already ended (timed out on the server, tab reconnected).
-      notifyError(String(e));
+      notifyError(String(e), { source: "connection", sessionId: sessionId });
     } finally {
       answers = request.prompts.map(() => "");
       busy = false;

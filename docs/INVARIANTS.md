@@ -187,6 +187,12 @@
   Цель решает модель (`paneZone`/`applyDrop`), бесполезная не предлагается, слот — по
   `layoutBox`. Три пути: мышь, меню вкладки, ⌘K. Общие правила перетаскивания — в «UI и
   оформление».
+- **Обрыв переподключается сам только под `autoReconnect`, с паузой и пределом** (ADR 0062):
+  паузы `RECONNECT_DELAYS_MS` растут, попыток не больше их числа; обрыв вскоре после входа —
+  тоже попытка (`STABLE_MS`), ошибки входа не повторяются (`retryable`); своё подключение
+  пользователя сбрасывает счёт. Модель — [reconnect.ts](../src/lib/connect/reconnect.ts),
+  ведёт `page/reconnectflow`, журналу — тихо; ожидающая попытка уходит в `closeTabFully`. Гейт
+  `tabteardown.guard`.
 - **Прод — флаг профиля, а не тег.** `isProdServer` читает `ServerProfile.prod`; для `prod: null`
   (профиль до флага) — точный тег `prod`/`production` (`isLegacyProdTag`, регистронезависимо, с
   trim), иначе обновление молча сняло бы защиту. Форма пишет флаг всегда явно. Legacy-матчинг
@@ -300,6 +306,10 @@ Git, Docker, k8s, сетевые пробы и метрики — **один к�
   `every_local_cli_spawn_hides_the_console_window`.
 - **Код выхода по SSH ждут после EOF** (`ssh::exec_on`, не дольше `EXIT_STATUS_GRACE`): OpenSSH
   шлёт его после EOF. Живые тесты `live_exec`.
+- **Каждый шаг открытия канала SSH — через `ssh::answered`** (не дольше `CHANNEL_STEP_TIMEOUT`):
+  канал, команда или подсистема, рукопожатие SFTP. На мёртвой связи russh ждёт keepalive до
+  минуты, и за таким каналом вставали все опросы и файловые вызовы — и падали разом (ADR 0062).
+  Гейт `every_channel_open_is_answered_in_time`.
 - **Аудит в записи — record-only** (ADR 0041). Мутирующий вызов с флагом `mirror` пишется в
   запись `[тег] $ … / [тег] exit N` (`exec::mirror`, `sftp::sftp_mirror`), в живой терминал — нет;
   чтения и поллинг не мирроятся, секреты — никогда. Сетевые утилиты пишут итог, а не сырьё:
@@ -308,6 +318,10 @@ Git, Docker, k8s, сетевые пробы и метрики — **один к�
   `network_utilities_never_record_raw_argv_or_output`.
 - **Живой вид — снимок раз в N секунд, не поток** (`--no-stream`, `logs --tail` без `-f`);
   поллер живёт, пока панель **видима** (`visible`), возврат во вкладку — один немедленный снимок.
+  Чтение одно в полёте (`singleFlight`, [poll.ts](../src/lib/ui/poll.ts)): тик во время чтения
+  просит ещё одно после него. Сбой опроса — полоса в панели (`PollFailStrip`) и тихая запись
+  журнала раз на серию, не тост: тост на каждый тик заваливал окно при обрыве (ADR 0062). Гейт
+  `journal.guard`.
 - **Эффект не зависит от того, что пишет сам:** инициализация и перезагрузка — под `untrack`,
   зависимости — только названное в эффекте явно; иначе панель k8s перезапускалась на
   собственном ответе — шторм процессов на хосте. Гейт `K8sPanel.test.ts`.
@@ -749,7 +763,7 @@ Git, Docker, k8s, сетевые пробы и метрики — **один к�
 
 Разборы — [ADR 0043](adr/0043-login-and-storage.md).
 
-- **Что где живёт:** профили, папки, known_hosts — JSON в конфиг-каталоге
+- **Что где живёт:** профили, папки, known_hosts, журнал сообщений — JSON в конфиг-каталоге
   ([store.rs](../src-tauri/src/store.rs)); секреты — **только** OS keychain
   ([secrets.rs](../src-tauri/src/secrets.rs)), никогда в файлах и бэкапе; настройки и layout UI —
   `localStorage`. Для e2e — `data-testid`.
@@ -889,9 +903,15 @@ Git, Docker, k8s, сетевые пробы и метрики — **один к�
 - **Фон диалога только затемняет — не закрывает** (кроме палитры ⌘K): первый клик после
   возврата в окно попадал на фон и уносил заполненную форму; окну без кнопки отмены нужен
   `showClose`. Правило `vterm/backdrop-no-close`.
-- **Тосты — единственный канал неблокирующих сообщений** (`notifyError`/`notifySuccess`/
-  `notifyInfo`); пустые состояния — [EmptyState](../src/lib/ui/EmptyState.svelte), загрузка —
-  [Skeleton](../src/lib/ui/Skeleton.svelte).
+- **Каждое сообщение — запись журнала, тост — её показ** (ADR 0062): `notifyError`/
+  `notifySuccess`/`notifyInfo` сперва отмечают его в журнале бэкенда
+  ([journal.rs](../src-tauri/src/journal.rs), один на все окна), маскируя текст (`redactSecrets`:
+  журнал на диске), потом показывают тост; `quiet` — запись без тоста. Источник и сессию называет
+  вызывающий, не догадка. Окно рисует не больше `MAX_TOASTS` (`fitToasts`), остальное — строкой
+  «Ещё в журнале», повтор — счётчиком. Журнал — файл хранилища, в бэкап не входит; его команды
+  зовёт только стор журнала. Пустые состояния — [EmptyState](../src/lib/ui/EmptyState.svelte),
+  загрузка — [Skeleton](../src/lib/ui/Skeleton.svelte). Гейты `journal.guard`,
+  `the_journal_is_written_only_through_the_store`.
 - **Пустое состояние не выходит из своей области:** кружок, линии у него, промежутки и
   отступы — одно число по своей высоте (`badgeFit`, [emptytier.ts](../src/lib/ui/emptytier.ts),
   `use:emptyFit`); не помещается и медальон — значок в строку заголовка, затем одна строка; что
@@ -940,10 +960,12 @@ Git, Docker, k8s, сетевые пробы и метрики — **один к�
 - **Кнопки верхней панели — список пользователя, и трёх вещей он не может** (ADR 0029).
   `settings.topbar` — встроенные действия, `util:<id>` и `cmd:<id>`; модель — [topbaractions.ts](../src/lib/topbar/topbaractions.ts),
   подписи и меню — [topbarui.ts](../src/lib/topbar/topbarui.ts).
-  - «Утилиты» и «Настройки» не убираются (`ANCHORS`, `canUnpin`; `sanitizeTopbar` их возвращает).
+  - «Утилиты» и «Настройки» не убираются (`ANCHORS`, `canUnpin`; `sanitizeTopbar` возвращает
+    пропавший перед шестерёнкой). Кнопку `LATER_BUILTINS` сохранённая панель получает один раз —
+    чего не знала (`settings.topbarKnown`); убранная после не возвращается.
   - Убранная кнопка не уносит действие: каждое из `SESSION_ACTIONS` стоит строкой в «Утилитах»
     с причиной у неактивной кнопки; запуск — через `Record<SessionAction, …>`; у синхронного
-    ввода и заметок есть ⌘K.
+    ввода и заметок есть ⌘K. Журнал без своей кнопки — «Настройки → Журнал» и ⌘K.
   - REC и синхронный ввод показываются, пока включены, на месте своей кнопки (`mustShow`, `shownTopbar`).
   - Строку соединения кнопки не вытесняют: лишнее — под «⋯» по пикселям (`fitTopbar`,
     `topbarRoom`); ширины кнопок — константы модели, снятые с разметки.
@@ -1124,7 +1146,7 @@ Git, Docker, k8s, сетевые пробы и метрики — **один к�
 `overlay-z-index` · `type-scale` · `rem-sizes` · `micro-label` · `motion-duration` · `locale-binding` · `md-links`
 · `backdrop-no-close` · `each-as-t` · `path-sync-mode` · `owned-imports` (вызов, правило которого
 живёт в одном модуле, импортирует только он: `setServerPathSync`, `transferStart`,
-`importBackup`, `transferResume`, `startChat`, `netcheckRun`, `sftpOpenAs`, `fetchMetrics`, `fetchLiveExtras`, `fetchProcessDetail`, сырой `closeTab`) · `forbidden-imports` (стор вкладок
+`importBackup`, `transferResume`, `startChat`, `netcheckRun`, `sftpOpenAs`, `fetchMetrics`, `fetchLiveExtras`, `fetchProcessDetail`, команды журнала, `noteJournal`, сырой `closeTab`) · `forbidden-imports` (стор вкладок
 не знает сторов рабочих пространств и чата, стор пришедшей вкладки знает стор вкладок только
 по типу) · `owned-writes` (`settings.terminalLinks`/`terminalFileLinks` пишут только раздел
 настроек и вопрос, который он отключает) · `theme-colors` · `virtual-scroll` · `paste-caret` ·
@@ -1173,6 +1195,7 @@ Git, Docker, k8s, сетевые пробы и метрики — **один к�
 | `aiturn.guard` · `autonomy.guard` | Один ход на чат; consent, маскирование и прод/`noAi` на исполнении |
 | `backupimport.guard` · `servercreation.guard` | Импорт пишет каталог предпросмотра; профиль публикуется после записи |
 | `quitguard.guard` | Защита закрытия взводится только после подписки на свой вопрос |
+| `journal.guard` | Каждое сообщение — запись журнала, маскированная, до тоста; окно рисует тосты через `fitToasts`; без кнопки журнал — в «Настройки → Журнал» (последняя группа, список и булавка) и ⌘K; опрос Docker и k8s — одно чтение в полёте, сбой — полоса; окна слушают журнал, настройку передаёт главное; событие и пределы одни во фронте и в Rust |
 | `themes.test.ts` · `typography.guard` · `fonts.guard` · `appicon.guard` | Контраст `muted` во всех темах; шкала шрифтов без companion-ов; шрифт через `activeFontFamily()`; кадрирование иконки — по пикселям |
 | `uiscale.guard` | Шкала шрифтов и значки в `rem`, первый кадр берёт масштаб, строки и рельсы — через `uiPx`, терминал — `activeFontSize()` |
 | `clipboardpaste.guard` | Поведение CodeMirror, ради которого стоит `vterm/paste-caret` |
@@ -1187,7 +1210,7 @@ Git, Docker, k8s, сетевые пробы и метрики — **один к�
 | `releasetrain.guard` | Версию меняет только выпуск; поезд — раз в неделю по «Готовится»; тег — на коммит выпуска; ключ App — в окружении `release` |
 | `releaseassets.guard` · `dependabot.guard` | Релиз — по тегу версии и после всех гейтов, экшены по SHA, `--frozen-lockfile`; группы Dependabot с выдержкой, `windows-core` — только вместе с `windows` |
 | `cidoc.guard` | Схемы CI — то, что выдаёт `scripts/ci-diagrams.mjs` из самих workflow, а `docs/CI.md` называет каждый workflow и каждую джобу |
-| `ci.guard` | Общие шаги CI — только экшены `.github/actions/`; Rust, Node и pnpm одни у CI и Linux-контейнера (`rust-toolchain.toml`); релиз без кэша; у каждой заботы один сканер, `unsafe` — у clippy; подавленное `nosemgrep` в Security не едет |
+| `ci.guard` | Общие шаги CI — только экшены `.github/actions/`; Rust, Node и pnpm одни у CI и Linux-контейнера (`rust-toolchain.toml`); релиз без кэша; у каждой заботы один сканер, `unsafe` — у clippy; подавленное `nosemgrep` в Security не едет; рабочее дерево — LF на всех ОС (`.gitattributes`) |
 | `untrusted.fuzz.test.ts` · `textenc::props` | Свойства недоверенного входа на произвольных данных: markdown не даёт исполняемого, декодер не паникует |
 | `version.guard` · `webview2runtime.test.ts` · `updater.guard` | Версия только в `package.json`; формат хвоста WebView2 один в Rust и CI; границы обновления |
 | `no_file_attributes_built_from_a_template` (Rust) | `FileAttributes` не строится из шаблона |
@@ -1204,6 +1227,8 @@ Git, Docker, k8s, сетевые пробы и метрики — **один к�
 | `network_utilities_never_record_raw_argv_or_output` · `a_netcheck_run_can_always_be_stopped` · `a_local_tool_runs_only_its_fixed_argv` (Rust) | Сетевые утилиты пишут итог; проверку доступа можно остановить; локальный инструмент — только со своим argv |
 | `app_originated_sockets_live_only_in_ssh_and_netcheck` (Rust) | Сокеты приложения — только в `ssh.rs` и `netcheck.rs` |
 | `quitting_always_goes_through_the_confirmation` (Rust) | Выход и закрытие окна — через вопрос |
+| `every_channel_open_is_answered_in_time` (Rust) | Каждое открытие канала SSH вне тестов — внутри `answered` с тайм-аутом |
+| `the_journal_is_written_only_through_the_store` (Rust) | Журнал сообщений пишется только `store::save_journal` (атомарно), читается через `read_store` (карантин), в бэкап не входит |
 | `terminal_output_goes_only_through_the_gate` · `a_session_ends_in_one_place_and_only_for_its_owner` (Rust) | Вывод — через затвор; сессия завершается в `end_session` после проверки владельца |
 | `a_failed_handoff_never_closes_a_window_that_was_already_open` (Rust) | Откат передачи закрывает только окно, открытое под неё |
 | `the_floating_label_is_a_picture_and_never_a_window_of_the_app` · `the_window_under_the_pointer_is_asked_of_the_os_never_guessed` (Rust) | Окно-метка без фокуса и мыши; окно под указателем — от ОС |

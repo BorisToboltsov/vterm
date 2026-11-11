@@ -206,7 +206,7 @@
     dirtyArgs = null;
     // The user confirmed this op before it bounced off the dirty tree, and chose
     // how to clear it in the dialog — don't ask a second time.
-    if (args && (await run(args, { confirmed: true }))) notifySuccess(t(successKey as Parameters<typeof t>[0]));
+    if (args && (await run(args, { confirmed: true }))) notifySuccess(t(successKey as Parameters<typeof t>[0]), { source: "git", sessionId: sessionId });
   }
 
   async function stashAndRetry() {
@@ -269,15 +269,15 @@
           dirtyArgs = args;
           return false;
         }
-        notifyError(res.stderr.trim() || res.stdout.trim() || t("git.opFailed"));
+        notifyError(res.stderr.trim() || res.stdout.trim() || t("git.opFailed"), { source: "git", sessionId: sessionId });
         await loadAll();
         return false;
       }
-      if (opts.successKey) notifySuccess(t(opts.successKey as Parameters<typeof t>[0]));
+      if (opts.successKey) notifySuccess(t(opts.successKey as Parameters<typeof t>[0]), { source: "git", sessionId: sessionId });
       await loadAll();
       return true;
     } catch (e) {
-      notifyError(String(e));
+      notifyError(String(e), { source: "git", sessionId: sessionId });
       return false;
     } finally {
       busy = false;
@@ -316,7 +316,7 @@
         syncOp = null;
         if (isRemoteConnectionError(err)) remoteError = err;
         else if (isUncommittedChangesError(err)) dirtyArgs = args;
-        else notifyError(err || t("git.opFailed"));
+        else notifyError(err || t("git.opFailed"), { source: "git", sessionId: sessionId });
         await loadAll();
         return;
       }
@@ -331,7 +331,7 @@
       await loadAll();
     } catch (e) {
       syncOp = null;
-      notifyError(String(e));
+      notifyError(String(e), { source: "git", sessionId: sessionId });
     } finally {
       busy = false;
     }
@@ -415,7 +415,7 @@
       tags = parseTags(tg.stdout);
       stashes = parseStashes(stash.stdout);
     } catch (e) {
-      notifyError(String(e));
+      notifyError(String(e), { source: "git", sessionId: sessionId });
     }
   }
 
@@ -458,7 +458,7 @@
       hasMore = found.length >= limit && logged < LOG_CAP;
       rows = buildGraph(commits, primaryFor(commits, asked));
     } catch (e) {
-      notifyError(String(e));
+      notifyError(String(e), { source: "git", sessionId: sessionId });
     } finally {
       loadingMore = false;
     }
@@ -471,7 +471,7 @@
     try {
       await loadLog(LOG_PAGE);
     } catch (e) {
-      notifyError(String(e));
+      notifyError(String(e), { source: "git", sessionId: sessionId });
       return;
     }
     if (thenReveal) revealShort(thenReveal);

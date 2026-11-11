@@ -373,17 +373,17 @@
 
   async function copyName(name: string) {
     await writeClipboard(name);
-    notifySuccess(t("git.copied"));
+    notifySuccess(t("git.copied"), { source: "git" });
   }
   async function copyBranchLink(b: GitBranch) {
     const res = await runQuery(remoteUrlArgs());
     const url = res.exitCode === 0 ? branchWebUrl(res.stdout.trim(), urlBranch(b)) : null;
     if (!url) {
-      notifyError(t("git.noRemoteLink"));
+      notifyError(t("git.noRemoteLink"), { source: "git" });
       return;
     }
     await writeClipboard(url);
-    notifySuccess(t("git.copied"));
+    notifySuccess(t("git.copied"), { source: "git" });
   }
   async function compareWithCurrent(b: GitBranch) {
     if (!current) return;

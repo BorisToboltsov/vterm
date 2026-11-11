@@ -31,6 +31,7 @@ export const BUILTIN_ACTIONS = [
   "record",
   "recordings",
   "utilities",
+  "journal",
   "settings",
 ] as const;
 
@@ -115,14 +116,37 @@ export function allTopbarIds(): TopbarId[] {
  */
 export const ANCHORS = ["utilities", "settings"] as const satisfies readonly BuiltinAction[];
 
+/**
+ * The built-in buttons that came after the bar became the user's (ADR 0062):
+ * a list stored before one of them existed is given it once, where a new
+ * button goes; taken off since, it stays off. What a stored list knows is kept
+ * beside it (`settings.topbarKnown`).
+ */
+export const LATER_BUILTINS = ["journal"] as const satisfies readonly BuiltinAction[];
+
+/**
+ * The built-in buttons a stored list was made knowing: what it says, when it is
+ * a list; a list stored before anyone kept count knew all but the later ones.
+ */
+export function knownBuiltins(raw: unknown): BuiltinAction[] {
+  if (Array.isArray(raw)) return BUILTIN_ACTIONS.filter((id) => raw.includes(id));
+  return BUILTIN_ACTIONS.filter((id) => !(LATER_BUILTINS as readonly string[]).includes(id));
+}
+
 const isAnchor = (id: TopbarId): boolean => (ANCHORS as readonly string[]).includes(id);
 
-/** Whether a button can be taken off the bar: any but the two anchors. */
+/** Where a button joins `list`: before Settings when Settings closes the bar (the gear stays last), else at the end. */
+const beforeGear = (list: readonly TopbarId[]): number =>
+  list[list.length - 1] === "settings" ? list.length - 1 : list.length;
+
+/** Whether a button can be taken off the bar: any but the anchors. */
 export const canUnpin = (id: TopbarId): boolean => !isAnchor(id);
 
 /**
  * The built-in actions that are about the session in focus, in the order the
  * Utilities window lists them. Each can be taken off the bar and stays there.
+ * The other built-in that can be taken off, the journal (`journal`), is
+ * found in Settings → Journal and in ⌘K.
  */
 export const SESSION_ACTIONS = [
   "monitoring",
@@ -136,15 +160,18 @@ export type SessionAction = (typeof SESSION_ACTIONS)[number];
 
 /**
  * The stored list (`settings.topbar`) made safe to use: known buttons only,
- * each once, the two anchors among them. Storage is user-writable and outlives
+ * each once, the anchors among them, and the later built-ins the list did not
+ * know of (`known`) — each it lacked where a new button goes, before the
+ * closing gear. Storage is user-writable and outlives
  * the build that wrote it. What is not a list at all is the default bar; an
  * empty list is the user's own — a bar with nothing but the anchors.
  */
-export function sanitizeTopbar(raw: unknown): TopbarId[] {
+export function sanitizeTopbar(raw: unknown, known: readonly BuiltinAction[] = BUILTIN_ACTIONS): TopbarId[] {
   if (!Array.isArray(raw)) return [...DEFAULT_TOPBAR];
   const out: TopbarId[] = [];
   for (const id of raw) if (isTopbarId(id) && !out.includes(id)) out.push(id);
-  for (const id of ANCHORS) if (!out.includes(id)) out.push(id);
+  for (const id of LATER_BUILTINS) if (!known.includes(id) && !out.includes(id)) out.splice(beforeGear(out), 0, id);
+  for (const id of ANCHORS) if (!out.includes(id)) out.splice(beforeGear(out), 0, id);
   return out;
 }
 
@@ -157,7 +184,7 @@ export function sanitizeTopbar(raw: unknown): TopbarId[] {
 export function withPinned(list: readonly TopbarId[], id: TopbarId): TopbarId[] {
   if (list.includes(id) || !isTopbarId(id)) return [...list];
   const indicator = (INDICATORS as readonly TopbarId[]).includes(id);
-  const at = indicator ? placeOf(list, id) : list[list.length - 1] === "settings" ? list.length - 1 : list.length;
+  const at = indicator ? placeOf(list, id) : beforeGear(list);
   return [...list.slice(0, at), id, ...list.slice(at)];
 }
 

@@ -299,7 +299,7 @@ describe("TopBar — the user's buttons", () => {
       // The rest are rows that do what the buttons did.
       await userEvent.click(screen.getByTestId("topbar-more"));
       const rows = within(screen.getByRole("menu")).getAllByRole("menuitem").map((r) => r.textContent?.trim());
-      expect(rows).toEqual(["Record session", "Recordings"]);
+      expect(rows).toEqual(["Record session", "Recordings", "Journal"]);
       await fireEvent.click(menuRow("Recordings"));
       expect(onOpenRecordings).toHaveBeenCalledOnce();
     });
@@ -324,7 +324,7 @@ describe("TopBar — the user's buttons", () => {
     it("a wide bar has no «⋯»", async () => {
       render(TopBar, { props: { ...base } });
       setBarWidth(1400);
-      await waitFor(() => expect(drawn()).toHaveLength(6));
+      await waitFor(() => expect(drawn()).toHaveLength(7));
       expect(screen.queryByTestId("topbar-more")).toBeNull();
     });
   });
@@ -353,7 +353,7 @@ describe("TopBar — the user's buttons", () => {
       layOut();
       const before = [...settings.topbar];
       // No notes button without a selected server: the row is
-      // broadcast, monitoring, record, recordings, utilities, settings.
+      // broadcast, monitoring, record, recordings, utilities, notifications, settings.
       await down(item("broadcast"), mid(0));
       await move(mid(0) + 3);
       expect(topbarDrag.id).toBeNull();
@@ -361,7 +361,9 @@ describe("TopBar — the user's buttons", () => {
       await move(mid(2) + 5);
       expect(topbarDrag.id).toBe("broadcast");
       expect(screen.getByTestId("topbar-drag-ghost")).toBeInTheDocument();
-      await waitFor(() => expect(drawn()).toEqual(["monitoring", "record", "broadcast", "recordings", "utilities", "settings"]));
+      await waitFor(() =>
+        expect(drawn()).toEqual(["monitoring", "record", "broadcast", "recordings", "utilities", "journal", "settings"]),
+      );
       // The held button keeps a slot, unseen; the list is untouched.
       expect(item("broadcast").className).toContain("opacity-0");
       expect(settings.topbar).toEqual(before);
@@ -374,6 +376,7 @@ describe("TopBar — the user's buttons", () => {
         "broadcast",
         "recordings",
         "utilities",
+        "journal",
         "settings",
       ]);
       expect(topbarDrag.id).toBeNull();
@@ -538,5 +541,62 @@ describe("TopBar — a ⌘K command on the bar (v1.35)", () => {
     unpinAction("cmd:act:help");
     expect(settings.topbar).not.toContain("cmd:act:help");
     expect(settings.topbarCommands).toEqual({});
+  });
+});
+
+// ── The bell: the journal of notifications ──────────────────────────
+
+import { closeJournal, journalState } from "../stores/journal.svelte";
+
+describe("TopBar — the bell", () => {
+  beforeEach(() => {
+    localStorage.clear();
+    resetSettings();
+    closeJournal();
+    journalState.summary = { rev: 0, total: 0, unreadErrors: false };
+    flushSync();
+  });
+
+  it("stands before the gear and lights a dot while an error waits unread", async () => {
+    render(TopBar, { props: { ...base } });
+    const bar = [...screen.getByTestId("topbar-actions").querySelectorAll<HTMLElement>("[data-topbar-item]")];
+    expect(bar.slice(-2).map((el) => el.dataset.topbarItem)).toEqual(["journal", "settings"]);
+    expect(screen.queryByTestId("topbar-journal-dot")).toBeNull();
+    journalState.summary = { rev: 1, total: 1, unreadErrors: true };
+    flushSync();
+    expect(screen.getByTestId("topbar-journal-dot")).toBeInTheDocument();
+  });
+
+  it("opens the journal under itself and puts it away again", async () => {
+    const onOpenJournalSettings = vi.fn();
+    render(TopBar, { props: { ...base, onOpenJournalSettings } });
+    const bell = screen.getByTestId("topbar-journal");
+    expect(bell).toHaveAttribute("aria-expanded", "false");
+    await userEvent.click(bell);
+    expect(journalState.open).toBe(true);
+    expect(await screen.findByTestId("journal-panel")).toBeInTheDocument();
+    expect(bell).toHaveAttribute("aria-expanded", "true");
+    // Its settings button leaves the journal for its section of Settings.
+    await userEvent.click(screen.getByTestId("journal-settings"));
+    expect(onOpenJournalSettings).toHaveBeenCalledOnce();
+    expect(journalState.open).toBe(false);
+    await userEvent.click(bell);
+    await userEvent.click(bell);
+    expect(journalState.open).toBe(false);
+  });
+
+  it("can be taken off the bar and put back; the journal still opens without it", async () => {
+    render(TopBar, { props: { ...base } });
+    unpinAction("journal");
+    flushSync();
+    await waitFor(() => expect(screen.queryByTestId("topbar-journal")).toBeNull());
+    // ⌘K and a toast's line open it under the bar's corner.
+    journalState.open = true;
+    flushSync();
+    expect(await screen.findByTestId("journal-panel")).toBeInTheDocument();
+    closeJournal();
+    pinAction("journal");
+    flushSync();
+    expect(screen.getByTestId("topbar-journal")).toBeInTheDocument();
   });
 });

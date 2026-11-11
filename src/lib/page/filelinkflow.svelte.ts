@@ -78,7 +78,7 @@ export function createFileLinkFlow(deps: FileLinkDeps) {
       } else if (action.kind === "offerSync") {
         ask = { kind: "sync", sessionId: id, where: where(tab), following: deps.following(id) };
       } else if (action.kind === "notFound") {
-        notifyInfo(t("filelink.notFound", { name: action.name }));
+        notifyInfo(t("filelink.notFound", { name: action.name }), { source: "files" });
       }
     },
 
@@ -93,7 +93,7 @@ export function createFileLinkFlow(deps: FileLinkDeps) {
         // The server's own answer decides whether this asks first (v1.23); once
         // following is on, the shell reports its folder — the last command's too.
         deps.enablePathSync(current.sessionId);
-        if (deps.following(current.sessionId)) notifyInfo(t("filelink.syncThen"));
+        if (deps.following(current.sessionId)) notifyInfo(t("filelink.syncThen"), { source: "files" });
       }
     },
 

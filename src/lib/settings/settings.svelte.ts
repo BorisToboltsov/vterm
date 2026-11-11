@@ -40,12 +40,16 @@ import {
   type FileLinkMode,
 } from "../terminal/termfiles";
 import { DEFAULT_RESTORE_MODE, isRestoreMode, type RestoreMode } from "../tabs/tabrestore";
+import { DEFAULT_JOURNAL_DAYS, sanitizeJournalDays } from "../notifications/journal";
 import { sanitizeDockerRegistries, type DockerRegistry } from "../docker/docker";
 import { sanitizeHiddenPanels, type PanelId } from "../layout/docklayout";
 import {
+  BUILTIN_ACTIONS,
   DEFAULT_TOPBAR,
+  knownBuiltins,
   sanitizePinnedCommands,
   sanitizeTopbar,
+  type BuiltinAction,
   type PinnedCommand,
   type TopbarId,
 } from "../topbar/topbaractions";
@@ -234,6 +238,13 @@ export interface Settings {
    * a production server. Off by default: it is everything that was printed.
    */
   restoreOutput: boolean;
+  /**
+   * The journal of notifications (ADR 0062): kept across launches, in the
+   * settings folder (masked, never in a backup), or only until the app quits.
+   */
+  journalKeep: boolean;
+  /** How many days its entries are kept — one of `JOURNAL_DAYS`. */
+  journalDays: number;
   // Logs & text (Phase 10)
   smartLogs: SmartLogs;
   highlightRules: HighlightRule[];
@@ -281,6 +292,10 @@ export interface Settings {
   // Changed only through `stores/topbarpins.svelte.ts`; read from storage and
   // from a backup through `sanitizeTopbar` (topbaractions.ts).
   topbar: TopbarId[];
+  // The built-in buttons `topbar` was made knowing (ADR 0062): a button added
+  // by a later build joins a stored bar once (`LATER_BUILTINS`) and, taken off
+  // since, stays off. Every built-in of this build once the list is read.
+  topbarKnown: BuiltinAction[];
   // What the bar remembers of each ⌘K command pinned on it (v1.35): its title
   // and icon, for while the palette does not offer it. Written with the list,
   // by `stores/topbarpins.svelte.ts`; read through `sanitizePinnedCommands`.
@@ -415,6 +430,8 @@ const DEFAULTS: Settings = {
   autoReconnect: false,
   restoreTabs: DEFAULT_RESTORE_MODE,
   restoreOutput: false,
+  journalKeep: true,
+  journalDays: DEFAULT_JOURNAL_DAYS,
   smartLogs: {
     enabled: true,
   },
@@ -438,6 +455,7 @@ const DEFAULTS: Settings = {
   gitHighlightCurrent: true,
   hiddenPanels: [],
   topbar: [...DEFAULT_TOPBAR],
+  topbarKnown: [...BUILTIN_ACTIONS],
   topbarCommands: {},
   listOrders: {},
   k8sRefreshSec: 5,
@@ -574,7 +592,8 @@ function load(): Settings {
       gitShowTags: raw.gitShowTags !== false,
       gitHighlightCurrent: raw.gitHighlightCurrent !== false,
       hiddenPanels: sanitizeHiddenPanels(raw.hiddenPanels),
-      topbar: sanitizeTopbar(raw.topbar),
+      topbar: sanitizeTopbar(raw.topbar, knownBuiltins(raw.topbarKnown)),
+      topbarKnown: [...BUILTIN_ACTIONS],
       topbarCommands: sanitizePinnedCommands(raw.topbarCommands),
       listOrders: sanitizeStoredOrders(raw.listOrders),
       k8sRefreshSec: clampK8sRefresh(raw.k8sRefreshSec),
@@ -582,6 +601,8 @@ function load(): Settings {
       prodTint: sanitizeProdTint(raw.prodTint),
       restoreTabs: isRestoreMode(raw.restoreTabs) ? raw.restoreTabs : DEFAULTS.restoreTabs,
       restoreOutput: raw.restoreOutput === true,
+      journalKeep: raw.journalKeep !== false,
+      journalDays: sanitizeJournalDays(raw.journalDays),
     };
   } catch {
     return {
@@ -600,6 +621,7 @@ function load(): Settings {
       gitFavoriteBranches: [...DEFAULT_FAVORITE_BRANCHES],
       hiddenPanels: [],
       topbar: [...DEFAULT_TOPBAR],
+      topbarKnown: [...BUILTIN_ACTIONS],
       topbarCommands: {},
       listOrders: {},
       prodTint: { ...DEFAULT_PROD_TINT },
@@ -656,6 +678,7 @@ export function resetSettings(): void {
     gitFavoriteBranches: [...DEFAULT_FAVORITE_BRANCHES],
     hiddenPanels: [],
     topbar: [...DEFAULT_TOPBAR],
+    topbarKnown: [...BUILTIN_ACTIONS],
     topbarCommands: {},
     listOrders: {},
   });
@@ -685,6 +708,7 @@ export function applyImportedSettings(raw: unknown): void {
     gitFavoriteBranches: [...DEFAULT_FAVORITE_BRANCHES],
     hiddenPanels: [],
     topbar: [...DEFAULT_TOPBAR],
+    topbarKnown: [...BUILTIN_ACTIONS],
     topbarCommands: {},
     listOrders: {},
   };
@@ -731,7 +755,10 @@ export function applyImportedSettings(raw: unknown): void {
   next.dockerRefreshSec = clampDockerRefresh(next.dockerRefreshSec);
   next.dockerRegistries = sanitizeDockerRegistries(r.dockerRegistries);
   next.hiddenPanels = sanitizeHiddenPanels(r.hiddenPanels);
-  next.topbar = sanitizeTopbar(r.topbar);
+  next.topbar = sanitizeTopbar(r.topbar, knownBuiltins(r.topbarKnown));
+  next.topbarKnown = [...BUILTIN_ACTIONS];
+  next.journalKeep = next.journalKeep !== false;
+  next.journalDays = sanitizeJournalDays(next.journalDays);
   next.topbarCommands = sanitizePinnedCommands(r.topbarCommands);
   next.listOrders = sanitizeStoredOrders(r.listOrders);
   next.k8sRefreshSec = clampK8sRefresh(next.k8sRefreshSec);

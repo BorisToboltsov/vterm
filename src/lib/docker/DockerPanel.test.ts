@@ -14,6 +14,7 @@ const calls: string[] = [];
 const crashing = vi.hoisted(() => ({ on: false }));
 // Whether `ps` reports a compose stack (stage 5) — off but in its own test.
 const stacked = vi.hoisted(() => ({ on: false }));
+const failing = vi.hoisted(() => ({ on: false }));
 vi.mock("../api", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../api")>()),
   containerRun: vi.fn(async (_session: string, args: string[]) => {
@@ -24,6 +25,7 @@ vi.mock("../api", async (importOriginal) => ({
     if (args[1] === "ps" && args.includes("--filter")) return ok(["abc123456789", "edge-proxy", "running"].join(US));
     if (args[1] === "compose" && args.includes("ps")) return ok('{"Service":"api","ID":"abc123456789","Name":"shop-api-1","State":"running","Health":"","ExitCode":0}');
     if (args[1] === "compose" && args.includes("--services")) return ok("api\nworker\n");
+    if (args[1] === "ps" && failing.on) throw new Error("exec channel failed: the server did not answer in 10 s");
     if (args[1] === "ps" && stacked.on)
       return ok(["abc123456789", "shop-api-1", "api:1", "running", "Up 2 hours", "", "shop", "api", "/srv/shop", "2026-10-07 10:00:00 +0000 UTC", "2 hours ago", "shop_default", "/srv/shop/compose.yaml", ""].join(US));
     if (args[1] === "ps") return ok(PS.join("\n"));
@@ -519,5 +521,34 @@ describe("DockerPanel — a compose stack's details (stage 5)", () => {
     await waitFor(() => expect(within(dialog).getAllByTestId("docker-stack-service")).toHaveLength(2));
     expect(within(dialog).getAllByTestId("docker-stack-service")[1]).toHaveTextContent("not created");
     stacked.on = false;
+  });
+});
+
+// ── A read that fails (ADR 0062) ─────────────────────────────────────────────
+
+import { toastsState } from "../stores/toasts.svelte";
+
+describe("DockerPanel — a read that fails", () => {
+  beforeEach(() => {
+    failing.on = false;
+    calls.length = 0;
+    resetDockState();
+  });
+
+  it("says so in a strip with since when, not in toasts — and the next good read clears it", async () => {
+    await mount("poll-fail");
+    failing.on = true;
+    const refresh = screen.getByRole("button", { name: "Refresh" });
+    await fireEvent.click(refresh);
+    const strip = await screen.findByTestId("docker-poll-fail");
+    expect(strip).toHaveTextContent("did not answer in 10 s");
+    await fireEvent.click(refresh);
+    await waitFor(() => expect(screen.getByTestId("docker-poll-fail-count")).toHaveTextContent("×2"));
+    // What was read last stays on screen; no toast says the same thing twice.
+    expect(screen.getByText("edge-proxy")).toBeInTheDocument();
+    expect(toastsState.list.filter((t) => t.kind === "error")).toEqual([]);
+    failing.on = false;
+    await fireEvent.click(screen.getByTestId("docker-poll-fail-retry"));
+    await waitFor(() => expect(screen.queryByTestId("docker-poll-fail")).toBeNull());
   });
 });

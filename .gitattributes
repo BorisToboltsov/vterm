@@ -1,0 +1,9 @@
+# Line ends are LF in every checkout — on Windows too, whatever core.autocrlf says.
+#
+# The source-scanning gates (Rust `include_str!` tests, `*.guard.test.ts`) look
+# for markers ending in "\n". A Windows runner checks out with CRLF, and four
+# times a gate that passed on macOS and Linux failed on Rust (Windows) alone
+# (#85, #168, #175, #182) — each fixed by normalising one more test. Here the
+# cause goes: the tree is LF everywhere. Binary files are told apart by git
+# (`text=auto`). Kept by `ci.guard`; the rule is in AGENTS.md.
+* text=auto eol=lf

@@ -80,7 +80,7 @@ describe("ToolInstallDialog", () => {
     });
 
     await userEvent.click(screen.getByText("Install via sudo"));
-    await waitFor(() => expect(notifyError).toHaveBeenCalledWith("boom"));
+    await waitFor(() => expect(notifyError).toHaveBeenCalledWith("boom", expect.objectContaining({ source: "editor" })));
     expect(notifySuccess).not.toHaveBeenCalled();
     // Back to the actionable state (buttons restored).
     expect(screen.getByText("Install via sudo")).toBeInTheDocument();
