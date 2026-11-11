@@ -51,6 +51,7 @@ import {
   parseWorkloads,
   parseNamespaces,
   parseContexts,
+  contextNamespace,
   parseTopPods,
   metricsKey,
   podSchema,
@@ -186,8 +187,6 @@ describe("withScope", () => {
       "kubectl",
       "config",
       "get-contexts",
-      "-o",
-      "name",
     ]);
   });
   it("carries a multi-token program through", () => {
@@ -568,13 +567,66 @@ describe("parseWorkloads", () => {
   });
 });
 
-describe("parseNamespaces / parseContexts", () => {
+describe("parseNamespaces", () => {
   it("parses and sorts namespace names", () => {
     const raw = JSON.stringify({ items: [{ metadata: { name: "web" } }, { metadata: { name: "default" } }] });
     expect(parseNamespaces(raw)).toEqual(["default", "web"]);
   });
-  it("parses and sorts context names from a newline list", () => {
-    expect(parseContexts("prod\nstaging\ndev\n")).toEqual(["dev", "prod", "staging"]);
+});
+
+// `kubectl config get-contexts` as kubectl prints it: a tabwriter table, the
+// columns aligned in code points, an unset namespace an empty cell.
+const CONTEXTS_TABLE = [
+  "CURRENT   NAME             CLUSTER          AUTHINFO         NAMESPACE",
+  "*         staging          staging          admin            shop",
+  "          prod             prod             admin            ",
+  "          docker-desktop   docker-desktop   docker-desktop   kube-system",
+  "",
+].join("\n");
+
+describe("parseContexts / contextNamespace", () => {
+  it("reads each context's name and namespace from the table, sorted by name", () => {
+    expect(parseContexts(CONTEXTS_TABLE)).toEqual([
+      { name: "docker-desktop", namespace: "kube-system" },
+      { name: "prod", namespace: "" },
+      { name: "staging", namespace: "shop" },
+    ]);
+  });
+  it("cuts cells at the heading's column: a name with a space, a row a cell short", () => {
+    const raw = [
+      "CURRENT   NAME        CLUSTER   AUTHINFO   NAMESPACE",
+      "          my ctx      c1        u1         team a",
+      "          bare        c2        u2",
+    ].join("\r\n");
+    expect(parseContexts(raw)).toEqual([
+      { name: "bare", namespace: "" },
+      { name: "my ctx", namespace: "team a" },
+    ]);
+  });
+  it("counts columns in code points, as kubectl aligns them", () => {
+    // Four astral characters: five code points, nine UTF-16 units. Cut in units,
+    // the name would lose its "x" and the namespace take the end of "administrator".
+    const raw = [
+      "CURRENT   " + "NAME    " + "CLUSTER   " + "AUTHINFO        " + "NAMESPACE",
+      "          " + "🚀🚀🚀🚀x   " + "c1        " + "administrator   " + "rocket",
+    ].join("\n");
+    expect(parseContexts(raw)).toEqual([{ name: "🚀🚀🚀🚀x", namespace: "rocket" }]);
+  });
+  it("reads no contexts from output that is not the table", () => {
+    expect(parseContexts("")).toEqual([]);
+    expect(parseContexts("prod\nstaging\n")).toEqual([]);
+    expect(parseContexts("CURRENT   NAME   CLUSTER   AUTHINFO   NAMESPACE\n")).toEqual([]);
+  });
+  it("names the namespace kubectl lists without --namespace: the context's own, else default", () => {
+    const contexts = parseContexts(CONTEXTS_TABLE);
+    expect(contextNamespace(contexts, "staging")).toBe("shop");
+    expect(contextNamespace(contexts, "prod")).toBe("default");
+  });
+  it("does not guess for a context it has not read", () => {
+    const contexts = parseContexts(CONTEXTS_TABLE);
+    expect(contextNamespace(contexts, "gone")).toBeNull();
+    expect(contextNamespace(contexts, null)).toBeNull();
+    expect(contextNamespace([], "staging")).toBeNull();
   });
 });
 

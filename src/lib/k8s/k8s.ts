@@ -95,9 +95,14 @@ export function versionArgs(): string[] {
   return ["version", "-o", "json", "--request-timeout=5s"];
 }
 
-/** All contexts by name (one per line) — feeds the context selector. */
+/**
+ * All contexts as kubectl's table — feeds the context selector, and its NAMESPACE
+ * column names the namespace "(context default)" stands for ({@link parseContexts}).
+ * `-o name` gave the names alone, and the selector then said "by context" without
+ * saying which namespace that was: a list from `default` read as the whole cluster.
+ */
 export function contextsArgs(): string[] {
-  return ["config", "get-contexts", "-o", "name"];
+  return ["config", "get-contexts"];
 }
 
 /** The kubeconfig's current context name (preselects the context dropdown). */
@@ -826,13 +831,49 @@ export function parseNamespaces(raw: string): string[] {
     .sort((a, b) => a.localeCompare(b));
 }
 
-/** Context names from `config get-contexts -o name` (newline list), sorted. */
-export function parseContexts(raw: string): string[] {
-  return raw
-    .split("\n")
-    .map((l) => l.trim())
-    .filter(Boolean)
-    .sort((a, b) => a.localeCompare(b));
+/** A kubeconfig context and the namespace it sets. */
+export interface K8sContext {
+  name: string;
+  /** The context's own namespace; empty when it sets none. */
+  namespace: string;
+}
+
+/**
+ * The table `config get-contexts` prints (CURRENT NAME CLUSTER AUTHINFO
+ * NAMESPACE), sorted by name. A cell is cut at its heading's column, not split on
+ * blanks: an empty NAMESPACE leaves the row a cell short, and a name may hold a
+ * space. kubectl aligns the columns in code points, so the row is cut in code
+ * points too. No NAME and NAMESPACE headings — no contexts read.
+ */
+export function parseContexts(raw: string): K8sContext[] {
+  const lines = raw.split(/\r?\n/);
+  for (let at = 0; at < lines.length; at++) {
+    const heads = [...lines[at].matchAll(/\S+/g)].map((m) => ({ title: m[0], from: m.index ?? 0 }));
+    const name = heads.findIndex((h) => h.title === "NAME");
+    const ns = heads.find((h) => h.title === "NAMESPACE");
+    if (name < 0 || !ns) continue;
+    const nameEnd = heads[name + 1]?.from;
+    const cut = (row: string[], from: number, to?: number) => row.slice(from, to).join("").trim();
+    return lines
+      .slice(at + 1)
+      .map((line) => Array.from(line))
+      .map((row) => ({ name: cut(row, heads[name].from, nameEnd), namespace: cut(row, ns.from) }))
+      .filter((c) => c.name)
+      .sort((a, b) => a.name.localeCompare(b.name));
+  }
+  return [];
+}
+
+/**
+ * The namespace kubectl lists for `context` when the argv names none: the one
+ * the context sets, else `default` — kubectl's own rule. (Run inside a pod, it
+ * would take the pod's namespace instead; the panel runs kubectl on a host over
+ * SSH or on the desktop.) Null — no context chosen, or one the kubeconfig does not
+ * list: then which namespace it is is not known, and the selector does not say.
+ */
+export function contextNamespace(contexts: readonly K8sContext[], context: string | null): string | null {
+  const found = context ? contexts.find((c) => c.name === context) : undefined;
+  return found ? found.namespace || "default" : null;
 }
 
 /**

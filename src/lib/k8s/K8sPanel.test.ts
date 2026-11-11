@@ -33,7 +33,16 @@ vi.mock("../api", async (importOriginal) => ({
         }),
       );
     }
-    if (args.includes("get-contexts")) return ok("prod-eu\nstaging-eu\n");
+    if (args.includes("get-contexts")) {
+      return ok(
+        [
+          "CURRENT   NAME         CLUSTER      AUTHINFO   NAMESPACE",
+          "          prod-eu      prod-eu      admin      ",
+          "*         staging-eu   staging-eu   admin      shop",
+          "",
+        ].join("\n"),
+      );
+    }
     if (args.includes("current-context")) return ok("staging-eu\n");
     if (args.includes("namespaces")) {
       return ok(JSON.stringify({ items: [{ metadata: { name: "shop" } }] }));
@@ -214,6 +223,29 @@ describe("K8sPanel — probing the cluster", () => {
     render(K8sPanel, { props: { sessionId: "k5", visible: true, sessionReady: false } });
     await settle();
     expect(calls).toEqual([]);
+  });
+
+  it("names the namespace the lists come from while none is picked", async () => {
+    // "(context default)" alone read as the whole cluster: a ConfigMap in
+    // kube-system looked missing from a list that came from `default`.
+    render(K8sPanel, { props: { sessionId: "k6", visible: true, sessionReady: true } });
+    await idle();
+    const own = screen.getByTestId("k8s-namespace-own");
+    expect(own).toHaveTextContent("shop (context default)");
+    expect((screen.getByTestId("k8s-namespace") as HTMLSelectElement).value).toBe("");
+    // The lists still name no namespace: kubectl picks it, the selector only says which.
+    expect(calls.find((c) => c.includes("get pods"))).not.toContain("--namespace");
+    // A context that sets none lists `default`, as kubectl does.
+    await fireEvent.change(screen.getByTestId("k8s-context"), { target: { value: "prod-eu" } });
+    await idle();
+    expect(screen.getByTestId("k8s-namespace-own")).toHaveTextContent("default (context default)");
+  });
+
+  it("does not name a namespace it could not read", async () => {
+    answer = (args) => (args.includes("get-contexts") ? { stdout: "", stderr: "no kubeconfig", exitCode: 1 } : undefined);
+    render(K8sPanel, { props: { sessionId: "k7", visible: true, sessionReady: true } });
+    await idle();
+    expect(screen.getByTestId("k8s-namespace-own").textContent?.trim()).toBe("(context default)");
   });
 });
 

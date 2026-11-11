@@ -233,7 +233,7 @@ mod tests {
     fn what_the_k8s_panel_runs_is_allowed() {
         for ok in [
             &["kubectl", "version", "-o", "json", "--request-timeout=5s"][..],
-            &["kubectl", "config", "get-contexts", "-o", "name"],
+            &["kubectl", "config", "get-contexts"],
             &["kubectl", "config", "current-context"],
             &[
                 "kubectl",
@@ -964,7 +964,7 @@ mod live_kube {
 
         // The lists the panel polls.
         ok(&cluster(&["version", "-o", "json", "--request-timeout=5s"])).await;
-        ok(&argv(&["config", "get-contexts", "-o", "name"])).await;
+        ok(&argv(&["config", "get-contexts"])).await;
         ok(&argv(&["config", "current-context"])).await;
         json(&cluster(&["get", "namespaces", "-o", "json"])).await;
         json(&cluster(&["get", "nodes", "-o", "json"])).await;

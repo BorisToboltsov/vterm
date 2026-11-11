@@ -1828,6 +1828,7 @@ export const ru: Record<MessageKey, string> = {
   "k8s.namespace": "Namespace",
   "k8s.allNamespaces": "Все namespace",
   "k8s.defaultNamespace": "(по контексту)",
+  "k8s.contextNamespace": "{namespace} (по контексту)",
   "k8s.noPods": "Нет подов",
   "k8s.noPodsHint": "Здесь пусто — в этом namespace нет подов.",
   "k8s.noWorkloads": "Нет нагрузок",
