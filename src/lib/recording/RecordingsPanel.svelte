@@ -2,6 +2,7 @@
   // Library of saved session recordings (asciicast .cast files). Lists them with
   // metadata and offers: play back, export an AI-friendly transcript, export the
   // raw .cast, or delete. Presentational + thin API; playback in RecordingPlayer.
+  import { writtenByCall } from "../api/call";
   import Modal from "../ui/Modal.svelte";
   import { tooltip } from "../actions/tooltip";
   import ConfirmDialog from "../ui/ConfirmDialog.svelte";
@@ -166,6 +167,7 @@
         await deleteRecording(rec.path);
       } catch {
         /* keep going; report nothing per-file to avoid a toast storm */
+        writtenByCall();
       }
     }
     items = items.filter((r) => r.batchId !== group.batchId);

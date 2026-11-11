@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { swallow, swallowed } from "../api/diag";
   import { onMount } from "svelte";
   import { getName, getVersion, getTauriVersion } from "@tauri-apps/api/app";
   import { openUrl } from "@tauri-apps/plugin-opener";
@@ -55,13 +56,14 @@
       appName = await getName();
       version = await getVersion();
       tauriVersion = await getTauriVersion();
-    } catch {
+    } catch (e) {
       /* not running under Tauri (e.g. plain `pnpm dev`) */
+      swallowed("app", "read the Tauri version", e);
     }
   });
 
   function ext(url: string) {
-    openUrl(url).catch(() => {});
+    openUrl(url).catch(swallow("app", "open a link", "warn"));
   }
 
   // [label message-key, key combo, optional combo message-key]. Key combos that

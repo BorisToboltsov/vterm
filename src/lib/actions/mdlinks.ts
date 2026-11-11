@@ -19,6 +19,7 @@
 // Middle-click and ⌘/Ctrl-click are swallowed too: both open a target bypassing the
 // plain-click path, and "open in new window" for a WebView means a new WebView.
 
+import { swallow, swallowed } from "../api/diag";
 import { openUrl } from "@tauri-apps/plugin-opener";
 
 const HTTP = /^https?:\/\//i;
@@ -46,12 +47,13 @@ function handle(e: MouseEvent) {
         const reduce = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
         target.scrollIntoView({ behavior: reduce ? "auto" : "smooth", block: "start" });
       }
-    } catch {
+    } catch (e) {
       /* not a resolvable anchor — stay inert */
+      swallowed("app", "follow an anchor", e);
     }
     return;
   }
-  if (HTTP.test(href) || MAILTO.test(href)) openUrl(href).catch(() => {});
+  if (HTTP.test(href) || MAILTO.test(href)) openUrl(href).catch(swallow("app", "open a link", "warn"));
   // Anything else (relative repo links in the bundled manual, or a scheme that
   // slipped past render-time validation) is deliberately inert.
 }

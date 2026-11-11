@@ -7,6 +7,7 @@
   // dropdowns reuse the shared <ContextMenu>, and the resize-edge geometry is the
   // pure `windowchrome.ts` (tested there). The bar itself is the drag region
   // (`data-tauri-drag-region`), double-click maximises via Tauri.
+  import { swallow, swallowed } from "../api/diag";
   import { onDestroy, onMount } from "svelte";
   import { getCurrentWindow } from "@tauri-apps/api/window";
   import { isMainWindow } from "./appwindow";
@@ -45,13 +46,13 @@
 
   // Window controls. Wrapped so a non-Tauri context (plain `pnpm dev` in a
   // browser, unit tests) can't throw out of an event handler.
-  const guard = (fn: () => Promise<unknown>) => () => void fn().catch(() => {});
+  const guard = (fn: () => Promise<unknown>) => () => void fn().catch(swallow("windows", "use a window control"));
   const minimize = guard(() => appWindow.minimize());
   const toggleMaximize = guard(() => appWindow.toggleMaximize());
   const close = guard(() => appWindow.close());
 
   function startResize(dir: Parameters<typeof appWindow.startResizeDragging>[0]) {
-    void appWindow.startResizeDragging(dir).catch(() => {});
+    void appWindow.startResizeDragging(dir).catch(swallow("windows", "resize the window"));
   }
 
   // Keep the maximise/restore glyph in sync with the real window state.
@@ -63,12 +64,14 @@
         unResized = await appWindow.onResized(async () => {
           try {
             maximized = await appWindow.isMaximized();
-          } catch {
+          } catch (e) {
             /* window gone */
+            swallowed("windows", "read whether the window is maximized", e);
           }
         });
-      } catch {
+      } catch (e) {
         /* non-Tauri context — controls simply no-op */
+        swallowed("windows", "hear the window's size", e);
       }
     })();
   });

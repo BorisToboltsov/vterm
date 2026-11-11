@@ -802,6 +802,35 @@ const rules = {
     },
   ),
 
+  "no-silent-catch": rule(
+    "An error is handled or written, never dropped in silence",
+    "A swallowed error leaves no trace (ADR 0063): handle it — a branch, a fallback, a message — or write it with swallow()/swallowed() from api/diag.ts (warn when the user lost something, debug when it was expected). An empty catch, or one holding only a comment, is silence.",
+    (_, report) => {
+      /** A handler that does nothing: `() => {}`, `() => undefined`, `() => null`, `() => void 0`. */
+      const silent = (fn) => {
+        if (!fn || (fn.type !== "ArrowFunctionExpression" && fn.type !== "FunctionExpression")) return false;
+        const b = fn.body;
+        if (b.type === "BlockStatement") return b.body.length === 0;
+        return (
+          (b.type === "Identifier" && b.name === "undefined") ||
+          (b.type === "Literal" && b.value === null) ||
+          (b.type === "UnaryExpression" && b.operator === "void" && b.argument.type === "Literal")
+        );
+      };
+      return {
+        CatchClause(node) {
+          if (node.body.body.length === 0) report(node);
+        },
+        CallExpression(node) {
+          const c = node.callee;
+          if (c.type !== "MemberExpression" || c.computed) return;
+          if (c.property.name === "catch" && silent(node.arguments[0])) report(node);
+          if (c.property.name === "then" && silent(node.arguments[1])) report(node);
+        },
+      };
+    },
+  ),
+
   "each-as-t": rule(
     "An each-block variable is not named t",
     "Don't name the {#each} variable `t`: it shadows the translation function t() for the whole block.",

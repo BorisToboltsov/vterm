@@ -82,6 +82,20 @@ const CASES: Record<string, { bad: [string, string][]; good: [string, string][] 
       ["src/lib/ui/zz_probe.ts", `// console.log is what the rule forbids\nexport const x = "console.log";`],
     ],
   },
+  "no-silent-catch": {
+    bad: [
+      ["src/lib/ui/zz_probe.ts", `export const x = (f: () => void) => {\n  try {\n    f();\n  } catch {\n    /* ignore */\n  }\n};`],
+      ["src/lib/ui/zz_probe.ts", `export const x = (p: Promise<void>) => p.catch(() => {});`],
+      ["src/lib/ui/zz_probe.ts", `export const x = (p: Promise<void>) => p.catch(() => undefined);`],
+      ["src/lib/ui/zz_probe.ts", `export const x = (p: Promise<number>) => p.catch(() => null);`],
+      ["src/lib/ui/zz_probe.ts", `export const x = (p: Promise<number>) => p.then((n) => n, () => {});`],
+    ],
+    good: [
+      ["src/lib/ui/zz_probe.ts", `export const x = (f: () => number) => {\n  try {\n    return f();\n  } catch {\n    return 0;\n  }\n};`],
+      ["src/lib/ui/zz_probe.svelte.ts", `import { swallow } from "../api/diag";\nexport const x = (p: Promise<void>) => p.catch(swallow("app", "do it"));`],
+      ["src/lib/ui/zz_probe.ts", `export const x = (p: Promise<string>) => p.catch(() => "");`],
+    ],
+  },
   "diag-no-secret": {
     bad: [
       ["src/lib/ui/zz_probe.svelte.ts", `import { diag } from "../api/diag";\nexport const x = (password: string) => diag.warn("connection", "login", { password });`],

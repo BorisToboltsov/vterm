@@ -9,6 +9,7 @@
 // AiChat is just a reactive view: it renders the active session's slot and calls
 // startChat / runCommand.
 
+import { writtenByCall } from "../api/call";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { aiChat, cancelAiChat, aiExec, writeToTerminal, annotateRecording } from "../api";
 import { buildChatRequest, type AiSettings, type AiExecMode, type AiUsage } from "../ai/ai";
@@ -550,7 +551,7 @@ export async function runCommand(
   try {
     await writeToTerminal(sessionId, encoder.encode(toTerminalInput(block)));
     // Best-effort audit — a no-op unless the session is recording.
-    annotateRecording(sessionId, `AI ran: ${auditLabel(block)}`).catch(() => {});
+    annotateRecording(sessionId, `AI ran: ${auditLabel(block)}`).catch(writtenByCall);
     notifySuccess(t("ai.exec.sent"), { source: "ai" });
   } catch {
     c.executed[key] = false; // let the user retry on failure

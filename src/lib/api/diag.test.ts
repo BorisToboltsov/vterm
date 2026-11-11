@@ -4,8 +4,19 @@ const invoke = vi.fn();
 vi.mock("@tauri-apps/api/core", () => ({ invoke: (...a: unknown[]) => invoke(...a) }));
 vi.mock("@tauri-apps/plugin-dialog", () => ({ save: async () => "/home/me/diag.jsonl" }));
 
-import { captureDiag, diag, diagEvent, diagExport, flushDiag, pickDiagExportPath, setDiagThreshold } from "./diag";
-import { call } from "./call";
+import {
+  captureDiag,
+  diag,
+  diagEvent,
+  diagExport,
+  flushDiag,
+  orNull,
+  pickDiagExportPath,
+  setDiagThreshold,
+  swallow,
+  swallowed,
+} from "./diag";
+import { call, nullWrittenByCall, writtenByCall } from "./call";
 
 describe("the diagnostics facade", () => {
   beforeEach(() => {
@@ -103,6 +114,31 @@ describe("call(): the one door to the backend", () => {
     invoke.mockRejectedValueOnce("writer gone");
     await expect(call("diag_write", { events: [] })).rejects.toBe("writer gone");
     expect(c.events()).toEqual([]);
+    c.stop();
+  });
+});
+
+describe("nothing is dropped in silence", () => {
+  it("writes a swallowed error: debug when expected, warn when the user lost something", async () => {
+    const c = captureDiag();
+    setDiagThreshold("debug");
+    swallowed("settings", "save the settings", new Error("quota exceeded"), "warn");
+    await Promise.reject(new Error("window gone")).catch(swallow("windows", "end the drag"));
+    expect(await Promise.reject("refused").catch(orNull("files", "tell the window"))).toBeNull();
+    expect(c.events().map((e) => [e.level, e.source, e.text])).toEqual([
+      ["warn", "settings", "save the settings: quota exceeded"],
+      ["debug", "windows", "end the drag: window gone"],
+      ["debug", "files", "tell the window: refused"],
+    ]);
+    c.stop();
+  });
+
+  it("a rejection of call() needs nothing more: call() wrote it", async () => {
+    const c = captureDiag();
+    invoke.mockRejectedValueOnce("gone").mockRejectedValueOnce("gone again");
+    await call("disconnect", { sessionId: "s" }).catch(writtenByCall);
+    expect(await call("local_cwd", { sessionId: "s" }).catch(nullWrittenByCall)).toBeNull();
+    expect(c.events().map((e) => e.text)).toEqual(["command disconnect failed: gone", "command local_cwd failed: gone again"]);
     c.stop();
   });
 });

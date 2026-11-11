@@ -1,4 +1,6 @@
 <script lang="ts">
+  import { writtenByCall } from "../api/call";
+  import { swallow, swallowed } from "../api/diag";
   import { onDestroy, onMount } from "svelte";
   import { tooltip } from "../actions/tooltip";
   import { Terminal, type IDisposable, type IMarker } from "@xterm/xterm";
@@ -336,7 +338,7 @@
    *  type it, leaving the cursor at the end for review — never auto-runs. */
   function acceptHistory(command: string) {
     history.open = false;
-    writeToTerminal(sessionId, encoder.encode(`\x01\x0b${command}`)).catch(() => {});
+    writeToTerminal(sessionId, encoder.encode(`\x01\x0b${command}`)).catch(writtenByCall);
     term?.focus();
   }
 
@@ -832,8 +834,9 @@
         });
         term.loadAddon(addon);
         webgl = addon;
-      } catch {
+      } catch (e) {
         /* no WebGL — xterm keeps its default renderer */
+        swallowed("terminal", "turn on WebGL", e);
       }
     }
 
@@ -841,7 +844,7 @@
     term.onData((d) => {
       onactivity?.();
       if (historyEnabled) recordTyped(d);
-      writeToTerminal(sessionId, encoder.encode(d)).catch(() => {});
+      writeToTerminal(sessionId, encoder.encode(d)).catch(writtenByCall);
     });
 
     // Copy-on-select (optional) and bell handling.
@@ -957,8 +960,9 @@
       try {
         fit.fit();
         onresize?.(term.cols, term.rows);
-      } catch {
+      } catch (e) {
         /* container not measurable yet */
+        swallowed("terminal", "fit the terminal", e);
       }
       const time = new Date(replay.savedAt).toLocaleString(settings.language);
       term.write(separatorLine(t("restore.previousOutput", { time })));
@@ -1001,10 +1005,11 @@
     const refit = debounce(() => {
       try {
         fit.fit();
-        resizePty(sessionId, term.cols, term.rows).catch(() => {});
+        resizePty(sessionId, term.cols, term.rows).catch(writtenByCall);
         onresize?.(term.cols, term.rows);
-      } catch {
+      } catch (e) {
         /* container not measurable yet */
+        swallowed("terminal", "fit the terminal", e);
       }
     }, 80);
     observer = new ResizeObserver(() => refit());
@@ -1088,8 +1093,9 @@
       osc.start();
       osc.stop(ctx.currentTime + 0.08);
       osc.onended = () => ctx.close();
-    } catch {
+    } catch (e) {
       /* audio unavailable */
+      swallowed("terminal", "ring the bell", e);
     }
   }
 
@@ -1099,10 +1105,11 @@
     try {
       fit?.fit();
       term.refresh(0, term.rows - 1);
-      resizePty(sessionId, term.cols, term.rows).catch(() => {});
+      resizePty(sessionId, term.cols, term.rows).catch(writtenByCall);
       onresize?.(term.cols, term.rows);
-    } catch {
+    } catch (e) {
       /* not measurable yet */
+      swallowed("terminal", "fit the terminal", e);
     }
   }
 
@@ -1123,7 +1130,7 @@
     // Bundled fonts load asynchronously — once the chosen face is ready,
     // re-measure so xterm doesn't stay on the fallback glyphs.
     if (typeof document !== "undefined" && document.fonts) {
-      document.fonts.load(`${fontSize}px ${fontFamily}`).then(applyFontAndFit).catch(() => {});
+      document.fonts.load(`${fontSize}px ${fontFamily}`).then(applyFontAndFit).catch(swallow("terminal", "load the terminal's font"));
     }
   });
 
@@ -1180,7 +1187,7 @@
   // to (the note costs a look at the process on every Enter): while blocks are.
   $effect(() => {
     if (!local || !live) return;
-    void watchLocalSubmits(sessionId, fileLinksTracked).catch(() => {});
+    void watchLocalSubmits(sessionId, fileLinksTracked).catch(writtenByCall);
   });
 
   // Leaving the structured view (and dropping its data) the moment the feature

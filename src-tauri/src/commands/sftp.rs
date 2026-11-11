@@ -1,6 +1,7 @@
 // File commands of the bridge layer: SFTP browsing and editing, directory sync,
 // search, server tools and the transfer jobs (`transfers.rs`).
 
+use crate::diag::{Logged, Unheard};
 use crate::error::{AppError, AppResult};
 use crate::locks::Locked;
 use crate::sftp::FileEntry;
@@ -426,7 +427,9 @@ pub async fn lint_remote(
     sftp::write_bytes(&sftp, &tmp, content.as_bytes()).await?;
     let sudo_password = sudo_secret(sudo_password);
     let out = sync::run_lint(&session, &tool, &tmp, secret_str(&sudo_password)).await;
-    let _ = sftp.remove_file(tmp.clone()).await;
+    sftp.remove_file(tmp.clone())
+        .await
+        .log_debug("files", "remove the temporary file");
     // Replace both the full temp path and its basename with `FILE`, since validators
     // vary in which they print.
     let base = tmp.rsplit('/').next().unwrap_or(&tmp).to_string();
@@ -468,9 +471,10 @@ pub async fn run_tool_install(
     let cmd = format!("{} 2>&1", servertools::sudoize(&command));
     let pw = sync::sudo_stdin(secret_str(&sudo_secret(sudo_password)));
     let event = ssh::install_output_event(&session_id);
+    let failed = crate::diag::FirstFailure::new("editor", "emit the install's output");
     session
         .run_command_stdin_streaming(&cmd, &pw, |chunk| {
-            let _ = app.emit(&event, String::from_utf8_lossy(chunk).into_owned());
+            failed.note(app.emit(&event, String::from_utf8_lossy(chunk).into_owned()));
         })
         .await
 }
@@ -718,7 +722,9 @@ pub(crate) async fn launch_transfer(
     tokio::spawn(async move {
         let done = transfers::run(&app, spec, src, dst, cancel, origin, queued, resumed).await;
         app.state::<AppState>().cancels.locked().remove(&id);
-        let _ = ended.send(done);
+        ended
+            .send(done)
+            .log_unheard("files", "answer the waiting side");
     });
     Ok(wait)
 }

@@ -11,6 +11,7 @@
 // `container::check_args`, `kube::check_args`, `netprobe::local_program_allowed`):
 // the WebView is a trust boundary, and these are the checks behind it.
 
+use crate::diag::Logged;
 use crate::error::AppResult;
 use crate::ssh::ExecOutcome;
 use serde::Serialize;
@@ -130,8 +131,8 @@ pub async fn run_local(cmd: Local<'_>, timeout_secs: u64) -> AppResult<ExecOutpu
         }
     };
     if let (Some(input), Some(mut sink)) = (cmd.stdin, child.stdin.take()) {
-        let _ = sink.write_all(input).await;
-        let _ = sink.shutdown().await; // EOF, so `--password-stdin` proceeds
+        sink.write_all(input).await.log_debug("app", "write stdin");
+        sink.shutdown().await.log_debug("app", "close stdin"); // EOF, so `--password-stdin` proceeds
     }
     let fut = child.wait_with_output();
     let output = match tokio::time::timeout(Duration::from_secs(timeout_secs), fut).await {

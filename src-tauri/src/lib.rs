@@ -46,6 +46,7 @@ mod webview2;
 mod winhit;
 mod winplace;
 
+use crate::diag::Logged;
 use error::{AppError, AppResult};
 
 use std::collections::HashMap;
@@ -129,6 +130,11 @@ pub(crate) async fn session_gate(
 /// and a destroyed window all come here.
 pub(crate) async fn end_session(app: &AppHandle, session_id: &str) {
     let state = app.state::<AppState>();
+    let had = state.sessions.lock().await.contains_key(session_id)
+        || state.local_ptys.locked().contains_key(session_id);
+    if had {
+        tracing::info!(source = "connection", sid = session_id, "session ended");
+    }
     // A login still waiting on the user's answers (keyboard-interactive) ends
     // here too — otherwise closing the tab would leave it parked forever.
     app.state::<kbdauth::PendingPrompts>().cancel(session_id);
@@ -256,10 +262,11 @@ pub fn run() {
         .plugin(tauri_plugin_single_instance::init(|app, argv, _cwd| {
             // Files open in the main window — it owns "Open with" (ADR 0017).
             for path in file_args(&argv) {
-                let _ = app.emit_to(appwin::MAIN, "vterm://open-file", path);
+                app.emit_to(appwin::MAIN, "vterm://open-file", path)
+                    .log_debug("windows", "hand an opened file to the main window");
             }
             if let Some(w) = app.get_webview_window(appwin::MAIN) {
-                let _ = w.set_focus();
+                w.set_focus().log_debug("windows", "window set focus");
             }
         }))
         .plugin(tauri_plugin_opener::init())
@@ -280,14 +287,20 @@ pub fn run() {
             let maximize = appwin::place_main(&win);
             win.show()?;
             if maximize {
-                let _ = win.maximize();
+                win.maximize().log_debug("windows", "window maximize");
             }
             // Any write of the server list or the folders reaches every window:
             // each keeps its own copy, and `prod` / `noAi` must not drift apart.
             diag::attach(app.handle().clone());
+            match tauri::webview_version() {
+                Ok(v) => tracing::info!(source = "app", webview = %v, "webview ready"),
+                Err(e) => tracing::warn!(source = "app", "webview version unknown: {e}"),
+            }
             let handle = app.handle().clone();
             store::on_catalog_change(move || {
-                let _ = handle.emit("window://catalog", ());
+                handle
+                    .emit("window://catalog", ())
+                    .log_debug("windows", "emit window://catalog");
             });
             Ok(())
         })
@@ -491,6 +504,8 @@ pub fn run() {
         // Whichever way out, the journal's last change is written first: it is
         // written behind the notes, a moment after the last one.
         if let tauri::RunEvent::Exit = &event {
+            // The diagnostics' last lines go to disk before the process does.
+            diag::shutdown();
             if let Some(journal) = app_handle.try_state::<journal::Journal>() {
                 journal.flush();
             }
@@ -523,7 +538,9 @@ pub fn run() {
                     state.pending_opens.locked().extend(paths.iter().cloned());
                 }
                 for p in paths {
-                    let _ = app_handle.emit_to(appwin::MAIN, "vterm://open-file", p);
+                    app_handle
+                        .emit_to(appwin::MAIN, "vterm://open-file", p)
+                        .log_debug("windows", "hand an opened file to the main window");
                 }
             }
         }
@@ -552,7 +569,9 @@ mod tests {
             .expect("connect_session")..];
         let body = &body[..body.find("\n}\n").expect("end of connect_session")];
         let after_login = &body[body.find("ssh::connect(").expect("ssh::connect")..];
-        let after_login = &after_login[after_login.find(".await?;").expect("login await") + 8..];
+        // The login is the statement that calls it: whatever ends it, what follows
+        // runs with the session live.
+        let after_login = &after_login[after_login.find(";\n").expect("end of the login") + 2..];
         let code: String = after_login
             .lines()
             .map(|l| l.split("//").next().unwrap_or(""))

@@ -14,6 +14,7 @@
   // result, secrets masked (the sftp/git mirror shape, record-only). "Run in
   // terminal" needs no audit: the typed command and its output are the
   // recording's own input/output.
+  import { writtenByCall } from "../api/call";
   import type { Snippet } from "svelte";
   import Icon from "../ui/Icon.svelte";
   import ConfirmDialog from "../ui/ConfirmDialog.svelte";
@@ -97,7 +98,7 @@
     }
     if (auditOf && isRecording(id)) {
       const out = output ?? { stdout: "", stderr: error, exitCode: 1 };
-      void recordAudit(id, auditOf(out)).catch(() => {});
+      void recordAudit(id, auditOf(out)).catch(writtenByCall);
     }
   }
 

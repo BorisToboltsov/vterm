@@ -7,6 +7,7 @@
 //! uses. Input/resize go through the same `write_to_terminal` / `resize_pty`
 //! commands, which route by session id.
 
+use crate::diag::{Logged, Unheard};
 use crate::error::AppResult;
 use crate::locks::Locked;
 use crate::outgate::OutputGate;
@@ -66,7 +67,9 @@ fn run_recorder(mut rec: Recorder, rx: mpsc::Receiver<RecMsg>) {
             RecMsg::Stop(reply) => {
                 let path = rec.path().to_path_buf();
                 drop(rec); // flush the BufWriter to disk before the caller reads the file
-                let _ = reply.send(path);
+                reply
+                    .send(path)
+                    .log_unheard("terminal", "answer the waiting side");
                 return;
             }
         }
@@ -113,7 +116,8 @@ impl LocalPty {
     fn record(&self, msg: RecMsg) {
         if let Ok(g) = self.rec_tx.lock() {
             if let Some(tx) = g.as_ref() {
-                let _ = tx.send(msg);
+                tx.send(msg)
+                    .log_debug("recording", "hand a message to the recorder");
             }
         }
     }
@@ -242,7 +246,10 @@ impl Drop for LocalPty {
         // reader thread (EOF) and lets it reap the process. That EOF must not be
         // announced: the id may already belong to a new session (a reconnect).
         self.gate.shut();
-        let _ = self.killer.locked().kill();
+        self.killer
+            .locked()
+            .kill()
+            .log_debug("terminal", "child process kill");
     }
 }
 
@@ -308,10 +315,15 @@ fn open_with_gate(
         cmd.cwd(dir);
     }
 
-    let mut child = pair
-        .slave
-        .spawn_command(cmd)
-        .map_err(|e| format!("could not start local shell: {e}"))?;
+    let program = cmd
+        .get_argv()
+        .first()
+        .map(|a| a.to_string_lossy().into_owned());
+    let mut child = pair.slave.spawn_command(cmd).map_err(|e| {
+        tracing::warn!(source = "terminal", shell = ?program, "local shell did not start: {e}");
+        format!("could not start local shell: {e}")
+    })?;
+    tracing::info!(source = "terminal", shell = ?program, "local shell started");
     // The child owns the slave now; drop our handle so EOF propagates on exit.
     drop(pair.slave);
 
@@ -333,6 +345,9 @@ fn open_with_gate(
     let rec_tx_reader = rec_tx.clone();
     std::thread::spawn(move || {
         let mut buf = [0u8; 8192];
+        // Per chunk: the first failure is written, the rest only counted.
+        let recorder_gone =
+            crate::diag::FirstFailure::new("recording", "hand output to the recorder");
         loop {
             match reader.read(&mut buf) {
                 Ok(0) | Err(_) => break,
@@ -342,7 +357,7 @@ fn open_with_gate(
                     // drain keeps up with ConPTY and the shell never back-pressures.
                     if let Ok(g) = rec_tx_reader.lock() {
                         if let Some(tx) = g.as_ref() {
-                            let _ = tx.send(RecMsg::Output(buf[..n].to_vec()));
+                            recorder_gone.note(tx.send(RecMsg::Output(buf[..n].to_vec())));
                         }
                     }
                     gate_reader.output(buf[..n].to_vec());
@@ -351,7 +366,13 @@ fn open_with_gate(
         }
         gate_reader.closed();
         // Reap the child so it doesn't linger as a zombie.
-        let _ = child.wait();
+        if let Some(status) = child.wait().log_debug("terminal", "reap the local shell") {
+            tracing::info!(
+                source = "terminal",
+                code = status.exit_code(),
+                "local shell exited"
+            );
+        }
     });
 
     Ok(LocalPty {

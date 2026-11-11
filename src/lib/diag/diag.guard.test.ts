@@ -9,7 +9,9 @@
 //  4. The bell's popover shows the messages alone; the diagnostics are a layer
 //     of Settings → Journal.
 //  5. Rust writes through `tracing` only: printing is a clippy error outside
-//     the tests, for nobody reads a GUI process's stdout.
+//     the tests, for nobody reads a GUI process's stdout — and nothing is
+//     dropped in silence: `let _ =` over a `Result` and `.ok();` are clippy
+//     errors too (ADR 0063, stage 2).
 //  6. The mask is one: the shared examples hold `redactSecrets` and the
 //     writer's mask (`diag/mask.rs`) alike.
 //
@@ -95,7 +97,7 @@ function bellViolations(s: Pick<Sources, "bell" | "settings">): string[] {
 
 function printViolations(s: Pick<Sources, "cargo" | "clippy">): string[] {
   const out: string[] = [];
-  for (const lint of ["print_stdout", "print_stderr", "dbg_macro"]) {
+  for (const lint of ["print_stdout", "print_stderr", "dbg_macro", "let_underscore_must_use", "unused_result_ok"]) {
     if (!new RegExp(`^${lint}\\s*=\\s*"(?:warn|deny)"`, "m").test(s.cargo)) out.push(`clippy does not hold ${lint}`);
   }
   for (const allow of ["allow-print-in-tests", "allow-dbg-in-tests"]) {
@@ -130,7 +132,7 @@ describe("diagnostics guard", () => {
     expect(bellViolations(s)).toEqual([]);
   });
 
-  it("Rust prints nowhere outside its tests", () => {
+  it("Rust prints nowhere outside its tests and drops no Result in silence", () => {
     expect(printViolations(s)).toEqual([]);
   });
 
@@ -183,5 +185,8 @@ describe("diagnostics guard — catches what it exists for", () => {
   it("a print let through", () => {
     expect(printViolations({ ...s, cargo: mutate(s.cargo, 'print_stderr = "warn"', "") })).toEqual(["clippy does not hold print_stderr"]);
     expect(printViolations({ ...s, clippy: mutate(s.clippy, "allow-print-in-tests = true", "") })).toEqual(["tests may not use print"]);
+    expect(printViolations({ ...s, cargo: mutate(s.cargo, 'let_underscore_must_use = "warn"', "") })).toEqual([
+      "clippy does not hold let_underscore_must_use",
+    ]);
   });
 });

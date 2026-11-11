@@ -24,6 +24,7 @@
 //! only what was left and the cut-off file from its last checkpoint. A job the
 //! user stopped is not kept, and neither is one whose tab has closed.
 
+use crate::diag::Logged;
 use crate::error::{AppError, AppResult};
 use crate::localfile;
 use crate::partial::{Keep, Partial};
@@ -450,10 +451,14 @@ impl End {
     async fn mkdir(&self, dir: &str) {
         match self {
             End::Local => {
-                let _ = tokio::fs::create_dir_all(dir).await;
+                tokio::fs::create_dir_all(dir)
+                    .await
+                    .log_debug("transfer", "create the destination folder");
             }
             End::Remote(s) => {
-                let _ = s.create_dir(dir).await;
+                s.create_dir(dir)
+                    .await
+                    .log_debug("transfer", "create the destination folder");
             }
         }
     }
@@ -514,10 +519,14 @@ impl End {
     async fn remove(&self, path: &str) {
         match self {
             End::Local => {
-                let _ = tokio::fs::remove_file(path).await;
+                tokio::fs::remove_file(path)
+                    .await
+                    .log_debug("transfer", "remove the file");
             }
             End::Remote(s) => {
-                let _ = s.remove_file(path).await;
+                s.remove_file(path)
+                    .await
+                    .log_debug("transfer", "remove the file");
             }
         }
     }
@@ -994,7 +1003,8 @@ fn base_name(path: &str) -> String {
 pub(crate) fn send(app: &AppHandle, view: &JobView, origin: &str) {
     let windows = app.state::<crate::appwin::Windows>();
     for label in audience(view, origin, |session| windows.owner_of(session)) {
-        let _ = app.emit_to(label.as_str(), EVENT, view);
+        app.emit_to(label.as_str(), EVENT, view)
+            .log_debug("transfer", "tell a window about a transfer job");
     }
 }
 
@@ -2116,7 +2126,9 @@ mod live_sftp {
         );
 
         for dir in [&from, &to] {
-            let _ = sftp::remove(&a, dir, true).await;
+            if let Err(e) = sftp::remove(&a, dir, true).await {
+                eprintln!("cleanup: {e}");
+            }
         }
     }
 
@@ -2187,7 +2199,9 @@ mod live_sftp {
             "the temp became the file"
         );
         for path in [&from, &to] {
-            let _ = a.remove_file(path.clone()).await;
+            if let Err(e) = a.remove_file(path.clone()).await {
+                eprintln!("cleanup: {e}");
+            }
         }
     }
 
@@ -2258,7 +2272,9 @@ mod live_sftp {
         assert_eq!(mode.map(|m| m & 0o777), Some(0o600));
 
         for dir in [&from, &to] {
-            let _ = sftp::remove(&a, dir, true).await;
+            if let Err(e) = sftp::remove(&a, dir, true).await {
+                eprintln!("cleanup: {e}");
+            }
         }
     }
 }

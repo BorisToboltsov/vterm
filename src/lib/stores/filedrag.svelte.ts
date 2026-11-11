@@ -29,6 +29,7 @@
 // lets go: no drop, nothing taken back. From then on this page is told where
 // the files are like any other window of the app (`showGuestFiles`).
 
+import { orNull, swallowed } from "../api/diag";
 import {
   cancelOnEscape,
   holdSelection,
@@ -272,7 +273,7 @@ function tellOver(): void {
   }
   told = true;
   const said: Promise<void> = over(files)
-    .catch(() => null)
+    .catch(orNull("files", "tell another window about the drag"))
     .then((sight) => {
       if (telling === said) telling = null;
       if (candidate === drag && fileDrag.files !== null) {
@@ -359,8 +360,9 @@ function stopListening(): void {
   if (candidate && fileDrag.files !== null) {
     try {
       candidate.el.releasePointerCapture(candidate.pointerId);
-    } catch {
+    } catch (e) {
       /* already released, or the panel it belonged to is gone */
+      swallowed("files", "release the pointer", e);
     }
   }
   candidate = null;
@@ -376,8 +378,9 @@ function onMove(e: PointerEvent): void {
     fileDrag.guest = false;
     try {
       candidate.el.setPointerCapture(candidate.pointerId);
-    } catch {
+    } catch (e) {
       /* the element may be gone; window listeners still see the pointer */
+      swallowed("files", "capture the pointer", e);
     }
   }
   holdSelection();

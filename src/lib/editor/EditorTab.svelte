@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { swallow, swallowed } from "../api/diag";
   import { onDestroy, onMount } from "svelte";
   import { tooltip } from "../actions/tooltip";
   import { EditorState, Compartment } from "@codemirror/state";
@@ -178,10 +179,11 @@
             ? await sftpReadBytes(sessionId, ref.path, MAX_IMAGE_BYTES)
             : await readLocalBytes(ref.path, MAX_IMAGE_BYTES);
         mdImages = new Map(mdImages).set(target, dataUrl(ref.mime, b64));
-      } catch {
+      } catch (e) {
         // A missing or oversized image is not an error worth a toast — the
         // placeholder already says this one did not render, and a .md commonly
         // outlives the files it references.
+        swallowed("editor", "load a preview image", e);
       }
     }
   }
@@ -373,9 +375,7 @@
         // The view may be gone (file closed) before its grammar arrives.
         if (view === created) view.dispatch({ effects: langC.reconfigure(ext) });
       })
-      .catch(() => {
-        // No highlighting is the plain-text fallback, not an error worth a toast.
-      });
+      .catch(swallow("editor", "load the language's grammar"));
     // Jump to a requested place (a content-search hit, `x.c:42:5` in output).
     if (doc.gotoLine && (doc.gotoLine > 1 || (doc.gotoColumn ?? 1) > 1)) jumpTo(doc.gotoLine, doc.gotoColumn);
   });

@@ -1,4 +1,5 @@
 //! Explicit GitHub update requests. No polling and no WebView network access.
+use crate::diag::Logged;
 use crate::locks::Locked;
 use crate::{
     error::{AppError, AppResult},
@@ -213,6 +214,13 @@ pub async fn update_check(state: State<'_, Updates>) -> AppResult<Release> {
             .is_some_and(|p| p.plan.version == version),
     };
     *state.release.locked() = Some(result.clone());
+    tracing::info!(
+        source = "update",
+        current,
+        latest = version,
+        available = result.available,
+        "update check"
+    );
     Ok(result)
 }
 
@@ -260,6 +268,9 @@ pub async fn update_download(
         .map_err(|_| err("update-network"))?
         .error_for_status()
         .map_err(|_| err("update-network"))?;
+    tracing::info!(source = "update", version = %release.version, asset = %asset.name, size = asset.size, "update download started");
+    // Per chunk: a window gone mid-download is said once, not per chunk.
+    let told = crate::diag::FirstFailure::new("update", "report the download's progress");
     let mut downloaded = 0;
     let mut stream = response.bytes_stream();
     while let Some(chunk) = stream.next().await {
@@ -269,13 +280,24 @@ pub async fn update_download(
             return Err(err("update-signature"));
         }
         file.write_all(&chunk).map_err(err)?;
-        let _ = progress.send(Progress {
+        told.note(progress.send(Progress {
             downloaded,
             total: asset.size,
-        });
+        }));
     }
     file.sync_all().map_err(err)?;
-    protocol::verify_file(&payload, asset).map_err(err)?;
+    protocol::verify_file(&payload, asset).map_err(|e| {
+        tracing::error!(
+            source = "update",
+            "downloaded update failed verification: {e}"
+        );
+        err(e)
+    })?;
+    tracing::info!(
+        source = "update",
+        bytes = downloaded,
+        "update downloaded and verified"
+    );
     let plan = Plan {
         version: release.version,
         kind,
@@ -376,9 +398,9 @@ pub async fn update_install(
             std::env::current_exe().map_err(err)?
         };
         fs::copy(source, &helper).map_err(err)?;
-        let _ = fs::remove_file(dir.join("helper-ready"));
-        let _ = fs::remove_file(dir.join("commit"));
-        let _ = fs::remove_file(dir.join("helper-error"));
+        fs::remove_file(dir.join("helper-ready")).log_debug("update", "remove helper-ready");
+        fs::remove_file(dir.join("commit")).log_debug("update", "remove commit");
+        fs::remove_file(dir.join("helper-error")).log_debug("update", "remove helper-error");
         let plan_path = dir.join("plan.json");
         fs::write(&plan_path, serde_json::to_vec(&plan).map_err(err)?).map_err(err)?;
         let mut child = Command::new(helper)
@@ -403,18 +425,24 @@ pub async fn update_install(
         fs::write(dir.join("commit"), b"install").map_err(err)?;
         // The helper owns staged files after handoff; keep them through process exit.
         if let Some(p) = state.prepared.locked().take() {
-            let _ = p.directory.keep();
+            let staged = p.directory.keep();
+            tracing::info!(source = "update", path = %staged.display(), "staged files handed to the helper");
         }
-        let _ = crate::appwin::quit_app(app.clone()).await;
+        crate::appwin::quit_app(app.clone())
+            .await
+            .log_warn("update", "quit for the install");
         Ok(())
     }
     .await;
     if outcome.is_err() {
         *state.transaction.locked() = None;
         for (_, window) in app.webview_windows() {
-            let _ = window.set_enabled(true);
+            window
+                .set_enabled(true)
+                .log_debug("update", "window set enabled");
         }
-        let _ = app.emit("update://resume", ());
+        app.emit("update://resume", ())
+            .log_debug("update", "emit update://resume");
     }
     outcome
 }
@@ -431,11 +459,24 @@ pub async fn update_startup(app: AppHandle, window: WebviewWindow) -> AppResult<
     while updated_launch && !path.exists() && tokio::time::Instant::now() < deadline {
         tokio::time::sleep(Duration::from_millis(100)).await;
     }
-    let status = fs::read(&path)
+    let status: Option<String> = fs::read(&path)
         .ok()
         .and_then(|b| serde_json::from_slice(&b).ok());
+    match status.as_deref() {
+        Some("updated") => tracing::info!(
+            source = "update",
+            version = env!("CARGO_PKG_VERSION"),
+            "updated"
+        ),
+        Some(other) => tracing::warn!(source = "update", "the update did not install: {other}"),
+        None if updated_launch => tracing::warn!(
+            source = "update",
+            "updated launch, but the helper left no result"
+        ),
+        None => {}
+    }
     if status.is_some() {
-        let _ = fs::remove_file(path);
+        fs::remove_file(path).log_debug("update", "remove the helper's result");
     }
     Ok(status)
 }

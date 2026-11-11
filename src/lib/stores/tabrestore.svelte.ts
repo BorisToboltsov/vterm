@@ -23,6 +23,7 @@
 // `tabrestore.guard`). Where the tab was is: the folders of its shell and its
 // dock, the k8s scope, the files open in it and their zones (v1.36).
 
+import { swallowed } from "../api/diag";
 import { isMainLabel, windowLabel } from "../windows/appwindow";
 import { settings } from "../settings/settings.svelte";
 import type { CenterLayout, SavedLayout } from "../layout/splitlayout";
@@ -66,8 +67,9 @@ export function tabKeeper(label: string, storage: SlotStorage = localStorage) {
         const key = storage.key(i);
         if (key !== null) out.push(key);
       }
-    } catch {
+    } catch (e) {
       /* storage unavailable — nothing was saved */
+      swallowed("windows", "save the tabs for the next launch", e, "warn");
     }
     return out;
   };
@@ -81,8 +83,9 @@ export function tabKeeper(label: string, storage: SlotStorage = localStorage) {
   const remove = (key: string): void => {
     try {
       storage.removeItem(key);
-    } catch {
+    } catch (e) {
       /* storage unavailable — non-fatal */
+      swallowed("windows", "remove a saved slot", e);
     }
   };
 
@@ -147,8 +150,9 @@ export function tabKeeper(label: string, storage: SlotStorage = localStorage) {
       try {
         storage.setItem(own, text);
         last = text;
-      } catch {
+      } catch (e) {
         /* storage unavailable or full — non-fatal */
+        swallowed("windows", "save the tabs for the next launch", e, "warn");
       }
     },
   };

@@ -90,11 +90,13 @@ impl OutputGate {
     pub fn for_session(app: AppHandle, session_id: &str) -> Arc<Self> {
         let out = output_event(session_id);
         let closed = closed_event(session_id);
+        // Per chunk: the first failure is written, the rest only counted.
+        let failed = crate::diag::FirstFailure::new("terminal", "emit terminal output");
         Arc::new(Self::new(Box::new(move |emit| {
-            let _ = match emit {
+            failed.note(match emit {
                 Emit::Output(bytes) => app.emit(&out, bytes),
                 Emit::Closed => app.emit(&closed, ()),
-            };
+            });
         })))
     }
 

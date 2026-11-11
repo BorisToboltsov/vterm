@@ -68,7 +68,8 @@ export function compileRules(rules: HighlightRule[]): CompiledRule[] {
         wholeLine: r.wholeLine,
       });
     } catch {
-      /* malformed user regex — skip */
+      // A malformed pattern of the user's: the rule is left out, the others stand.
+      continue;
     }
   }
   return out;

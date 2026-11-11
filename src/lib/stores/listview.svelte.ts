@@ -15,6 +15,7 @@
 // panels' under `vterm.filesort` before that: both move into the settings on
 // the first load and are dropped.
 
+import { swallowed } from "../api/diag";
 import { settings } from "../settings/settings.svelte";
 import { sanitizeOrder, sanitizeStoredOrders, type ListOrder, type ListSchema } from "../ui/listview";
 
@@ -48,22 +49,25 @@ function migrate(): void {
   try {
     const raw: unknown = JSON.parse(localStorage.getItem(STORAGE_KEY) ?? "null");
     if (typeof raw === "object" && raw !== null && !Array.isArray(raw)) stored = raw as Record<string, unknown>;
-  } catch {
+  } catch (e) {
     /* unreadable — nothing to take over */
+    swallowed("settings", "read the saved list orders", e);
   }
   try {
     const legacy: unknown = JSON.parse(localStorage.getItem(LEGACY_FILES_KEY) ?? "null");
     if (!("files" in stored) && legacy !== null) stored = { ...stored, files: { sort: legacy, group: "none" } };
-  } catch {
+  } catch (e) {
     /* the old entry unreadable — the default order then */
+    swallowed("settings", "read the old order of the files", e);
   }
   const kept = sanitizeStoredOrders(stored);
   if (Object.keys(kept).length > 0) settings.listOrders = { ...kept, ...settings.listOrders };
   try {
     localStorage.removeItem(STORAGE_KEY);
     localStorage.removeItem(LEGACY_FILES_KEY);
-  } catch {
+  } catch (e) {
     /* storage unavailable — nothing was read from it either */
+    swallowed("settings", "remove the old order of the files", e);
   }
 }
 

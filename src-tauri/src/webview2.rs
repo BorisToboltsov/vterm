@@ -28,6 +28,7 @@
 // тесты, поэтому в не-тестовой сборке под macOS/Linux она «мёртвая».
 #![cfg_attr(not(windows), allow(dead_code))]
 
+use crate::diag::Logged;
 use sha2::{Digest, Sha256};
 use std::fs;
 use std::io::{self, Read, Seek, SeekFrom, Write};
@@ -282,19 +283,19 @@ where
             )
         })
     })();
-    let _ = fs::remove_file(&cab);
+    fs::remove_file(&cab).log_debug("app", "tidy the WebView2 runtime folder");
     if let Err(e) = staged {
-        let _ = fs::remove_dir_all(&partial);
+        fs::remove_dir_all(&partial).log_debug("app", "tidy the WebView2 runtime folder");
         return Err(e);
     }
 
     let target = base.join(&trailer.version);
     // Остаток прежней версии без движка (кто-то стёр файлы руками) мешает rename.
     if target.exists() && find_runtime_root(&target).is_none() {
-        let _ = fs::remove_dir_all(&target);
+        fs::remove_dir_all(&target).log_debug("app", "tidy the WebView2 runtime folder");
     }
     if let Err(e) = fs::rename(&partial, &target) {
-        let _ = fs::remove_dir_all(&partial);
+        fs::remove_dir_all(&partial).log_debug("app", "tidy the WebView2 runtime folder");
         // Второй запуск успел первым — его результат так же годен.
         if find_runtime_root(&target).is_none() {
             return Err(e);
@@ -334,12 +335,14 @@ pub fn cleanup_stale(base: &Path, keep: &str) {
                 .and_then(|t| now.duration_since(t).ok())
                 .is_some_and(|age| age >= STALE_AFTER);
             if old {
-                let _ = fs::remove_dir_all(&path).or_else(|_| fs::remove_file(&path));
+                fs::remove_dir_all(&path)
+                    .or_else(|_| fs::remove_file(&path))
+                    .log_debug("app", "tidy the WebView2 runtime folder");
             }
         } else if valid_version(&name) {
             let trash = base.join(format!("{TRASH_PREFIX}{}", unique_suffix()));
             if fs::rename(&path, &trash).is_ok() {
-                let _ = fs::remove_dir_all(&trash);
+                fs::remove_dir_all(&trash).log_debug("app", "tidy the WebView2 runtime folder");
             }
         }
     }
@@ -388,6 +391,11 @@ pub const WEBVIEW2_URL: &str = "https://developer.microsoft.com/microsoft-edge/w
 pub fn prepare() {
     let env_set = std::env::var_os(ENV_FOLDER).is_some_and(|v| !v.is_empty());
     if env_set || win::system_runtime_installed() {
+        tracing::debug!(
+            source = "app",
+            from_env = env_set,
+            "WebView2: the system's or the one named"
+        );
         return;
     }
     // Своё же exe — только источник хвоста: кто может подменить этот файл, уже
@@ -407,6 +415,11 @@ pub fn prepare() {
             let msg = text(Msg::Missing, win::ui_is_russian())
                 .replace("{releases}", RELEASES_URL)
                 .replace("{webview2}", WEBVIEW2_URL);
+            tracing::error!(
+                source = "app",
+                "WebView2: none installed and none bundled — cannot start"
+            );
+            crate::diag::shutdown();
             win::message_box(&msg, false);
             std::process::exit(1);
         }
@@ -419,7 +432,10 @@ pub fn prepare() {
     };
     let cached = find_runtime_root(&base.join(&trailer.version));
     let root = match (decide(false, false, true, cached.is_some()), cached) {
-        (Choice::UseCache, Some(root)) => root,
+        (Choice::UseCache, Some(root)) => {
+            tracing::info!(source = "app", version = %trailer.version, "WebView2: the bundled runtime, unpacked before");
+            root
+        }
         _ => {
             let russian = win::ui_is_russian();
             let splash = win::Splash::show(text(Msg::Preparing, russian));
@@ -433,8 +449,13 @@ pub fn prepare() {
             );
             drop(splash);
             match result {
-                Ok(root) => root,
+                Ok(root) => {
+                    tracing::info!(source = "app", version = %trailer.version, "WebView2: the bundled runtime unpacked");
+                    root
+                }
                 Err(e) => {
+                    tracing::error!(source = "app", dir = %base.display(), "WebView2: the bundled runtime did not unpack: {e}");
+                    crate::diag::shutdown();
                     let msg = text(Msg::Failed, russian)
                         .replace("{err}", &e.to_string())
                         .replace("{dir}", &base.display().to_string());
@@ -679,7 +700,12 @@ mod win {
                     );
                     let font = GetStockObject(DEFAULT_GUI_FONT);
                     SendMessageW(static_hwnd, WM_SETFONT, font as usize, 1);
-                    let _ = tx.send(hwnd as usize);
+                    if tx.send(hwnd as usize).is_err() {
+                        tracing::debug!(
+                            source = "app",
+                            "splash window: nobody waits for its handle"
+                        );
+                    }
                     let mut msg: MSG = std::mem::zeroed();
                     while GetMessageW(&mut msg, std::ptr::null_mut(), 0, 0) > 0 {
                         TranslateMessage(&msg);
@@ -704,8 +730,11 @@ mod win {
                     PostMessageW(self.hwnd as HWND, WM_CLOSE, 0, 0);
                 }
             }
+            // A panic of the splash's thread is written by the panic hook already.
             if let Some(t) = self.thread.take() {
-                let _ = t.join();
+                if t.join().is_err() {
+                    tracing::debug!(source = "app", "splash thread ended in a panic");
+                }
             }
         }
     }

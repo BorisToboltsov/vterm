@@ -3,6 +3,7 @@
   // read-only xterm with play/pause, scrubbing and speed. Seeking is "reset +
   // replay output up to t" (terminal state is cumulative). Pure timing helpers
   // (outputUpTo/formatTime/castDuration) live in recording.ts.
+  import { swallowed } from "../api/diag";
   import { onMount, onDestroy } from "svelte";
   import { tooltip } from "../actions/tooltip";
   import { Terminal } from "@xterm/xterm";
@@ -119,8 +120,9 @@
     try {
       const dims = fit.proposeDimensions();
       if (dims && dims.rows > 0) term.resize(Math.max(1, width), dims.rows);
-    } catch {
+    } catch (e) {
       /* container not measurable yet */
+      swallowed("recording", "fit the player", e);
     }
   }
 

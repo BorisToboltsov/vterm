@@ -9,6 +9,7 @@
   // whose transport follows the session. The answer is target:port × server
   // (NetCheckMatrix). Rules, picks and the last run live in the store per home
   // host: another tab shows its own.
+  import { swallowed } from "../api/diag";
   import { untrack } from "svelte";
   import Icon from "../ui/Icon.svelte";
   import CopyButton from "../ui/CopyButton.svelte";
@@ -119,8 +120,9 @@
       identities[sid] = rep;
       const key = hosts.find((h) => h.sessionId === sid)?.key;
       if (key && (rep.hostname || rep.addrs.length)) rememberFacts(key, { hostname: rep.hostname, addrs: visibleAddrs(rep.addrs) });
-    } catch {
+    } catch (e) {
       /* the chip just shows no details; a run reports its own error */
+      swallowed("netcheck", "read the host's facts", e);
     }
   }
 

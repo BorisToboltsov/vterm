@@ -733,7 +733,9 @@ mod live_compose {
         let other = check_stack(&names("/tmp"), &labels);
 
         let down = docker(&["compose", "-p", project, "down"]);
-        let _ = std::fs::remove_dir_all(&dir);
+        if let Err(e) = std::fs::remove_dir_all(&dir) {
+            eprintln!("cleanup: {e}");
+        }
         assert!(own.is_ok(), "{own:?} — labels: {labels}");
         assert!(other.is_err());
         assert!(

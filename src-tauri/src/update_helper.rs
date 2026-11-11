@@ -13,11 +13,30 @@ use std::{
 pub const FLAG: &str = "--vterm-update-helper";
 pub const ACK_ENV: &str = "VTERM_UPDATE_ACK";
 static STARTUP_ACK: OnceLock<Option<PathBuf>> = OnceLock::new();
+/// The helper's dropped error, written to its own diagnostics file: `debug`
+/// for a leftover it tidies, `warn` when the app will miss what it wrote.
+fn tidy<T, E: std::fmt::Display>(result: Result<T, E>, what: &str) {
+    if let Err(e) = result {
+        crate::diag::helper(crate::diag::Level::Debug, format!("{what}: {e}"));
+    }
+}
+
+fn noted<T, E: std::fmt::Display>(result: Result<T, E>, what: &str) {
+    if let Err(e) = result {
+        crate::diag::helper(crate::diag::Level::Warn, format!("{what}: {e}"));
+    }
+}
+
 /// Called before threads are created so the marker is not inherited by user shells.
 pub fn capture_startup() {
     let path = std::env::var_os(ACK_ENV).map(PathBuf::from);
     std::env::remove_var(ACK_ENV);
-    let _ = STARTUP_ACK.set(path);
+    if STARTUP_ACK.set(path).is_err() {
+        crate::diag::helper(
+            crate::diag::Level::Debug,
+            "startup marker captured twice".into(),
+        );
+    }
 }
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -130,7 +149,10 @@ pub fn entry() -> bool {
         let prepared = match prepare(&plan) {
             Ok(p) => p,
             Err(error) => {
-                let _ = fs::write(work.join("helper-error"), &error);
+                noted(
+                    fs::write(work.join("helper-error"), &error),
+                    "write the helper's error for the app",
+                );
                 return Err(error);
             }
         };
@@ -155,32 +177,47 @@ pub fn entry() -> bool {
             Ok(()) => "updated".into(),
             Err(e) => e.clone(),
         };
-        let _ = fs::write(
-            &plan.result,
-            serde_json::to_vec(&status).unwrap_or_default(),
+        noted(
+            fs::write(
+                &plan.result,
+                serde_json::to_vec(&status).unwrap_or_default(),
+            ),
+            "write the update's result for the app",
         );
         if outcome.as_ref().is_err_and(|e| e != "update-start-timeout") && plan.executable.exists()
         {
-            let _ = Command::new(&plan.executable).env_remove(ACK_ENV).spawn();
+            tidy(
+                Command::new(&plan.executable).env_remove(ACK_ENV).spawn(),
+                "start the new version",
+            );
         }
         if outcome.is_ok() && matches!(plan.kind, Kind::Msi | Kind::Nsis | Kind::Deb | Kind::Rpm) {
-            let _ = Command::new(&plan.executable).env_remove(ACK_ENV).spawn();
+            tidy(
+                Command::new(&plan.executable).env_remove(ACK_ENV).spawn(),
+                "start the new version",
+            );
         }
         if outcome.is_ok() {
-            let _ = fs::remove_file(&plan.payload);
-            let _ = fs::remove_file(&plan.manifest);
-            let _ = fs::remove_file(&path);
-            let _ = fs::remove_file(work.join("ready"));
-            let _ = fs::remove_file(work.join("helper-ready"));
-            let _ = fs::remove_file(work.join("commit"));
+            tidy(fs::remove_file(&plan.payload), "remove a staged file");
+            tidy(fs::remove_file(&plan.manifest), "remove a staged file");
+            tidy(fs::remove_file(&path), "remove a staged file");
+            tidy(fs::remove_file(work.join("ready")), "remove a staged file");
+            tidy(
+                fs::remove_file(work.join("helper-ready")),
+                "remove a staged file",
+            );
+            tidy(fs::remove_file(work.join("commit")), "remove a staged file");
             // Windows can keep this running helper locked until the OS cleans temporary files.
             let helper_name = if cfg!(windows) {
                 "vterm-update-helper.exe"
             } else {
                 "vterm-update-helper"
             };
-            let _ = fs::remove_file(work.join(helper_name));
-            let _ = fs::remove_dir(work);
+            tidy(
+                fs::remove_file(work.join(helper_name)),
+                "remove a staged file",
+            );
+            tidy(fs::remove_dir(work), "remove a staged file");
         }
         outcome
     })();
@@ -277,7 +314,7 @@ fn install(plan: &Plan, work: &Path, prepared: PreparedStage) -> Result<(), Stri
         Ok(child) => child,
         Err(error) => {
             restore(&plan.target, &backup)?;
-            let _ = fs::remove_file(journal);
+            tidy(fs::remove_file(journal), "remove a staged file");
             return Err(format!("update-launch: {error}"));
         }
     };
@@ -287,13 +324,13 @@ fn install(plan: &Plan, work: &Path, prepared: PreparedStage) -> Result<(), Stri
             // Cleanup failure cannot turn a healthy launch into a second restart.
             // Leave the journal if the backup needs manual recovery/cleanup.
             if remove(&backup).is_ok() {
-                let _ = fs::remove_file(&journal);
+                tidy(fs::remove_file(&journal), "remove a staged file");
             }
             return Ok(());
         }
         if io(child.try_wait())?.is_some() {
             restore(&plan.target, &backup)?;
-            let _ = fs::remove_file(journal);
+            tidy(fs::remove_file(journal), "remove a staged file");
             return Err("update-rolled-back".into());
         }
         if Instant::now() >= deadline {

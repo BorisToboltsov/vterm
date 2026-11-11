@@ -335,13 +335,14 @@ fn stream_gate(app: &AppHandle, id: &str) -> Arc<aigate::StreamGate> {
         done_event(id),
         error_event(id),
     );
+    let failed = crate::diag::FirstFailure::new("ai", "emit the assistant's answer");
     Arc::new(aigate::StreamGate::new(Box::new(move |piece| {
-        let _ = match piece {
+        failed.note(match piece {
             Piece::Out(t) => app.emit(&out, t),
             Piece::Think(t) => app.emit(&think, t),
             Piece::Done(usage) => app.emit(&done, usage),
             Piece::Error(e) => app.emit(&error, e),
-        };
+        });
     })))
 }
 

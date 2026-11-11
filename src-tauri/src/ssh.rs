@@ -5,6 +5,7 @@
 //! forwards bytes to the frontend via Tauri events; the write half is kept in
 //! the session registry so commands can send keystrokes and window resizes.
 
+use crate::diag::Logged;
 use crate::error::{AppError, AppResult};
 use crate::fileuser::{self, FileUser, ShellUser};
 use crate::kbdauth;
@@ -63,7 +64,7 @@ async fn answered_within<T, E: std::fmt::Display>(
 }
 
 /// How vterm decides whether to trust a server's host key.
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum HostKeyPolicy {
     /// Trust only a key already recorded for this host (reject unknown/changed).
     Strict,
@@ -101,6 +102,28 @@ pub fn install_output_event(session_id: &str) -> String {
 /// `"proxyTunnel"`; SOCKS5/HTTP → `"proxyConnecting"`, `"proxyHandshake"`. Then
 /// the target: `"connecting"` (TCP + SSH handshake), `"authenticating"`,
 /// `"session"` (opening the channel / PTY / shell).
+/// What the host key check decided, in words for the diagnostics: `known`,
+/// `new, remembered`, `accepted (any)`, `rejected: changed`, `rejected: unknown`.
+fn host_key_verdict(policy: HostKeyPolicy, known: Option<&str>, fingerprint: &str) -> &'static str {
+    match (policy, known) {
+        (HostKeyPolicy::AcceptAny, _) => "accepted (any)",
+        (_, Some(k)) if k == fingerprint => "known",
+        (_, Some(_)) => "rejected: changed",
+        (HostKeyPolicy::TofuReject, None) => "new, remembered",
+        (HostKeyPolicy::Strict, None) => "rejected: unknown",
+    }
+}
+
+/// The proxy a connect goes through, as the diagnostics name it.
+fn proxy_kind(proxy: &Option<Proxy>) -> &'static str {
+    match proxy {
+        None => "none",
+        Some(Proxy::Jump(_)) => "jump",
+        Some(Proxy::Socks5 { .. }) => "socks5",
+        Some(Proxy::Http { .. }) => "http",
+    }
+}
+
 pub fn phase_event(session_id: &str) -> String {
     format!("term://phase/{session_id}")
 }
@@ -141,6 +164,16 @@ impl client::Handler for ClientHandler {
         };
         let id = format!("{}:{}", self.host, self.port);
         let known = store::known_host_key(&id);
+        let verdict = host_key_verdict(self.policy, known.as_deref(), &fingerprint);
+        match verdict {
+            "rejected: changed" | "rejected: unknown" => tracing::warn!(
+                source = "connection",
+                host = %id,
+                fingerprint = %fingerprint,
+                "host key {verdict}"
+            ),
+            _ => tracing::debug!(source = "connection", host = %id, "host key {verdict}"),
+        }
         let trusted = match self.policy {
             HostKeyPolicy::AcceptAny => {
                 store::remember_host_key(&id, &fingerprint);
@@ -357,7 +390,7 @@ impl SshSession {
                 .data(stdin)
                 .await
                 .map_err(|e| format!("stdin write failed: {e}"))?;
-            let _ = channel.eof().await;
+            channel.eof().await.log_debug("connection", "channel eof");
         }
         loop {
             match channel.wait().await {
@@ -381,7 +414,7 @@ impl SshSession {
                 .data(stdin)
                 .await
                 .map_err(|e| format!("stdin write failed: {e}"))?;
-            let _ = channel.eof().await;
+            channel.eof().await.log_debug("connection", "channel eof");
         }
         let mut out: Vec<u8> = Vec::new();
         loop {
@@ -413,7 +446,7 @@ impl SshSession {
                 .data(stdin)
                 .await
                 .map_err(|e| format!("stdin write failed: {e}"))?;
-            let _ = channel.eof().await;
+            channel.eof().await.log_debug("connection", "channel eof");
         }
         let mut out: Vec<u8> = Vec::new();
         loop {
@@ -492,7 +525,7 @@ pub(crate) async fn exec_on<H: client::Handler>(
             .data(stdin)
             .await
             .map_err(|e| format!("stdin write failed: {e}"))?;
-        let _ = channel.eof().await;
+        channel.eof().await.log_debug("connection", "channel eof");
     }
 
     let mut out: Vec<u8> = Vec::new();
@@ -560,12 +593,21 @@ pub(crate) async fn exec_on<H: client::Handler>(
     if stopped {
         // Best effort: an sshd without signal support still closes the pipes,
         // and the script dies on its next write.
-        let _ = channel.signal(russh::Sig::TERM).await;
-        let _ = channel.close().await;
+        channel
+            .signal(russh::Sig::TERM)
+            .await
+            .log_debug("connection", "channel signal");
+        channel
+            .close()
+            .await
+            .log_debug("connection", "channel close");
         return Err(AppError::Cancelled);
     }
     if timed_out {
-        let _ = channel.close().await;
+        channel
+            .close()
+            .await
+            .log_debug("connection", "channel close");
     }
     Ok(ExecOutcome {
         stdout: String::from_utf8_lossy(&out).into_owned(),
@@ -1022,6 +1064,16 @@ pub async fn connect(
         port,
         policy: opts.host_key_policy,
     };
+    tracing::info!(
+        source = "connection",
+        host,
+        port,
+        user = username,
+        proxy = proxy_kind(&opts.proxy),
+        policy = ?opts.host_key_policy,
+        "connecting"
+    );
+    let started = std::time::Instant::now();
 
     // Phase 1: reach the target's SSH transport (host-key check), optionally via a
     // proxy. Each branch yields the target `Handle`. The jump host emits its own
@@ -1031,7 +1083,8 @@ pub async fn connect(
     let mut proxy_handle: Option<Handle<ClientHandler>> = None;
     let mut handle = match opts.proxy {
         None => {
-            let _ = app.emit(&phase_event(&session_id), "connecting");
+            app.emit(&phase_event(&session_id), "connecting")
+                .log_debug("connection", "emit the connect phase");
             timeout(
                 connect_timeout,
                 client::connect(config, (host, port), handler),
@@ -1043,7 +1096,8 @@ pub async fn connect(
         Some(Proxy::Jump(p)) => {
             // Jump host mirrors a full SSH connect: its own connect → auth →
             // tunnel sub-phases, each a real emitted stage.
-            let _ = app.emit(&phase_event(&session_id), "proxyConnecting");
+            app.emit(&phase_event(&session_id), "proxyConnecting")
+                .log_debug("connection", "emit the connect phase");
             let jump_handler = ClientHandler {
                 host: p.host.clone(),
                 port: p.port,
@@ -1056,7 +1110,8 @@ pub async fn connect(
             .await
             .map_err(|_| conn_timeout(connect_timeout))?
             .map_err(map_handshake_err)?;
-            let _ = app.emit(&phase_event(&session_id), "proxyAuthenticating");
+            app.emit(&phase_event(&session_id), "proxyAuthenticating")
+                .log_debug("connection", "emit the connect phase");
             let asker = kbdauth::UiAsker {
                 app: &app,
                 session_id: &session_id,
@@ -1073,13 +1128,15 @@ pub async fn connect(
                     return Err(AppError::ProxyAuthMethodsUnsupported(m))
                 }
             }
-            let _ = app.emit(&phase_event(&session_id), "proxyTunnel");
+            app.emit(&phase_event(&session_id), "proxyTunnel")
+                .log_debug("connection", "emit the connect phase");
             let channel = jump
                 .channel_open_direct_tcpip(host.to_string(), port as u32, "127.0.0.1", 0)
                 .await
                 .map_err(|e| format!("proxy tunnel to {host}:{port} failed: {e}"))?;
             proxy_handle = Some(jump);
-            let _ = app.emit(&phase_event(&session_id), "connecting");
+            app.emit(&phase_event(&session_id), "connecting")
+                .log_debug("connection", "emit the connect phase");
             timeout(
                 connect_timeout,
                 client::connect_stream(config, channel.into_stream(), handler),
@@ -1095,11 +1152,14 @@ pub async fn connect(
         }) => {
             // TCP connect and SOCKS negotiation are separate awaits → separate
             // `proxyConnecting` / `proxyHandshake` sub-phases.
-            let _ = app.emit(&phase_event(&session_id), "proxyConnecting");
+            app.emit(&phase_event(&session_id), "proxyConnecting")
+                .log_debug("connection", "emit the connect phase");
             let socket = proxy_tcp_connect(&phost, pport, connect_timeout).await?;
-            let _ = app.emit(&phase_event(&session_id), "proxyHandshake");
+            app.emit(&phase_event(&session_id), "proxyHandshake")
+                .log_debug("connection", "emit the connect phase");
             let stream = socks5_negotiate(socket, host, port, &auth, connect_timeout).await?;
-            let _ = app.emit(&phase_event(&session_id), "connecting");
+            app.emit(&phase_event(&session_id), "connecting")
+                .log_debug("connection", "emit the connect phase");
             timeout(
                 connect_timeout,
                 client::connect_stream(config, stream, handler),
@@ -1113,11 +1173,14 @@ pub async fn connect(
             port: pport,
             auth,
         }) => {
-            let _ = app.emit(&phase_event(&session_id), "proxyConnecting");
+            app.emit(&phase_event(&session_id), "proxyConnecting")
+                .log_debug("connection", "emit the connect phase");
             let socket = proxy_tcp_connect(&phost, pport, connect_timeout).await?;
-            let _ = app.emit(&phase_event(&session_id), "proxyHandshake");
+            app.emit(&phase_event(&session_id), "proxyHandshake")
+                .log_debug("connection", "emit the connect phase");
             let stream = http_negotiate(socket, host, port, &auth, connect_timeout).await?;
-            let _ = app.emit(&phase_event(&session_id), "connecting");
+            app.emit(&phase_event(&session_id), "connecting")
+                .log_debug("connection", "emit the connect phase");
             timeout(
                 connect_timeout,
                 client::connect_stream(config, stream, handler),
@@ -1128,8 +1191,15 @@ pub async fn connect(
         }
     };
 
+    tracing::debug!(
+        source = "connection",
+        ms = started.elapsed().as_millis() as u64,
+        "transport up, host key accepted"
+    );
+
     // Phase 2: authentication (password or public key).
-    let _ = app.emit(&phase_event(&session_id), "authenticating");
+    app.emit(&phase_event(&session_id), "authenticating")
+        .log_debug("connection", "emit the connect phase");
     let asker = kbdauth::UiAsker {
         app: &app,
         session_id: &session_id,
@@ -1147,8 +1217,15 @@ pub async fn connect(
         AuthOutcome::Unsupported(m) => return Err(AppError::AuthMethodsUnsupported(m)),
     }
 
+    tracing::debug!(
+        source = "connection",
+        ms = started.elapsed().as_millis() as u64,
+        "logged in"
+    );
+
     // Phase 3: open the session channel, request a PTY and start the shell.
-    let _ = app.emit(&phase_event(&session_id), "session");
+    app.emit(&phase_event(&session_id), "session")
+        .log_debug("connection", "emit the connect phase");
     let channel = answered(handle.channel_open_session(), "could not open channel").await?;
     answered(
         channel.request_pty(true, &opts.term_type, opts.cols, opts.rows, 0, 0, &[]),
@@ -1177,6 +1254,7 @@ pub async fn connect(
                     gate_for_reader.output(bytes);
                 }
                 Some(ChannelMsg::Eof) | Some(ChannelMsg::Close) | None => {
+                    tracing::info!(source = "connection", "the server closed the session");
                     gate_for_reader.closed();
                     break;
                 }
@@ -1199,6 +1277,27 @@ pub async fn connect(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn the_host_key_verdict_names_every_decision() {
+        use super::{host_key_verdict, HostKeyPolicy::*};
+        assert_eq!(
+            host_key_verdict(AcceptAny, Some("other"), "fp"),
+            "accepted (any)"
+        );
+        assert_eq!(host_key_verdict(Strict, Some("fp"), "fp"), "known");
+        assert_eq!(host_key_verdict(TofuReject, Some("fp"), "fp"), "known");
+        assert_eq!(
+            host_key_verdict(TofuReject, Some("old"), "fp"),
+            "rejected: changed"
+        );
+        assert_eq!(
+            host_key_verdict(Strict, Some("old"), "fp"),
+            "rejected: changed"
+        );
+        assert_eq!(host_key_verdict(TofuReject, None, "fp"), "new, remembered");
+        assert_eq!(host_key_verdict(Strict, None, "fp"), "rejected: unknown");
+    }
+
     use super::*;
 
     #[tokio::test]
@@ -1682,7 +1781,9 @@ mod live_exec {
             a, b,
             "the command kept running on the server after the stop"
         );
-        let _ = exec_on(&handle, &format!("rm -f {mark}"), &[], 5, None).await;
+        if let Err(e) = exec_on(&handle, &format!("rm -f {mark}"), &[], 5, None).await {
+            eprintln!("cleanup: {e}");
+        }
     }
 
     #[tokio::test]

@@ -442,6 +442,12 @@ pub fn submit(e: Event) {
     }
 }
 
+/// The app is on its way out: said, and what the writer holds put on disk.
+pub fn shutdown() {
+    tracing::info!(source = "app", "vterm exiting");
+    flush();
+}
+
 /// Ask the writer to put what it holds on disk, and wait a little for it.
 fn flush() {
     let Some(diag) = DIAG.get() else {
@@ -489,6 +495,74 @@ pub fn helper(level: Level, text: String) {
     if std::fs::create_dir_all(&dir).is_ok() {
         match writer::append_to(&dir.join(writer::HELPER_FILE), &line) {
             Ok(()) | Err(_) => {}
+        }
+    }
+}
+
+// ── Nothing is dropped in silence ────────────────────────────────────────────
+
+/// A `Result` whose error is written rather than dropped (ADR 0063): `debug`
+/// when it was expected — a window already gone, a temporary file already
+/// removed — `warn` when the user lost something — a setting not saved, a
+/// file's mode not applied. Returns the value, if there was one.
+pub trait Logged<T> {
+    fn log_debug(self, source: &'static str, what: &str) -> Option<T>;
+    fn log_warn(self, source: &'static str, what: &str) -> Option<T>;
+}
+
+impl<T, E: std::fmt::Display> Logged<T> for Result<T, E> {
+    fn log_debug(self, source: &'static str, what: &str) -> Option<T> {
+        self.map_err(|e| tracing::debug!(source = source, "{what}: {e}"))
+            .ok()
+    }
+
+    fn log_warn(self, source: &'static str, what: &str) -> Option<T> {
+        self.map_err(|e| tracing::warn!(source = source, "{what}: {e}"))
+            .ok()
+    }
+}
+
+/// A send nobody waited for any more — a oneshot, a `OnceLock` already set:
+/// the error is the value itself, so the event says only that it went unheard.
+pub trait Unheard {
+    fn log_unheard(self, source: &'static str, what: &str);
+}
+
+impl<E> Unheard for Result<(), E> {
+    fn log_unheard(self, source: &'static str, what: &str) {
+        if self.is_err() {
+            tracing::debug!(source = source, "{what}: nobody was waiting");
+        }
+    }
+}
+
+/// A failure that would repeat per chunk (an emit of terminal output, a
+/// recorder's write): the first is written, the rest only counted — the hot
+/// path writes no event per chunk.
+pub struct FirstFailure {
+    source: &'static str,
+    what: &'static str,
+    failed: AtomicU64,
+}
+
+impl FirstFailure {
+    pub const fn new(source: &'static str, what: &'static str) -> Self {
+        FirstFailure {
+            source,
+            what,
+            failed: AtomicU64::new(0),
+        }
+    }
+
+    pub fn note<T, E: std::fmt::Display>(&self, result: Result<T, E>) {
+        if let Err(e) = result {
+            if self.failed.fetch_add(1, Ordering::Relaxed) == 0 {
+                tracing::debug!(
+                    source = self.source,
+                    "{}: {e} (later failures are not written)",
+                    self.what
+                );
+            }
         }
     }
 }
@@ -876,6 +950,25 @@ pub fn diag_reveal() -> AppResult<()> {
     tauri_plugin_opener::reveal_item_in_dir(&target).map_err(|e| e.to_string().into())
 }
 
+/// One test at a time moves the global threshold.
+#[cfg(test)]
+static TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+/// Run `f` with the diagnostics heard on this thread — at «verbose», through
+/// the real subscriber — and return what it wrote: a test of a failure path
+/// checks the event it leaves (DoD, ADR 0063).
+#[cfg(test)]
+pub fn capture<R>(f: impl FnOnce() -> R) -> (R, Vec<Event>) {
+    let _held = TEST_LOCK.locked();
+    let was = threshold();
+    set_threshold(Level::Debug);
+    let c = Capture::start();
+    let r = tracing::subscriber::with_default(tracing_subscriber::registry().with(DiagLayer), f);
+    let events = c.events();
+    set_threshold(was);
+    (r, events)
+}
+
 /// A test's events: kept on this thread instead of written, until dropped.
 #[cfg(test)]
 pub struct Capture;
@@ -903,11 +996,8 @@ impl Drop for Capture {
 mod tests {
     use super::*;
 
-    /// One test at a time moves the global threshold.
-    static THRESHOLD_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
-
     fn at(level: Level, f: impl FnOnce()) {
-        let _held = THRESHOLD_LOCK.locked();
+        let _held = TEST_LOCK.locked();
         let was = threshold();
         set_threshold(level);
         f();
@@ -1022,6 +1112,44 @@ mod tests {
         for plain in ["tokens_in", "passed", "keys", "path", "bypass", "key_id"] {
             assert!(!is_secret_field(plain), "{plain}");
         }
+    }
+
+    #[test]
+    fn a_dropped_error_is_written_and_a_per_chunk_one_only_once() {
+        at(Level::Debug, || {
+            let c = Capture::start();
+            let subscriber = tracing_subscriber::registry().with(DiagLayer);
+            tracing::subscriber::with_default(subscriber, || {
+                assert_eq!(Ok::<u8, String>(7).log_warn("storage", "save"), Some(7));
+                assert_eq!(
+                    Err::<u8, _>("disk full").log_warn("storage", "save known_hosts"),
+                    None
+                );
+                Err::<(), _>("gone").log_debug("windows", "emit window://close");
+                Err::<(), u8>(1).log_unheard("windows", "answer the drop");
+                let first = FirstFailure::new("terminal", "emit term://out");
+                for _ in 0..3 {
+                    first.note(Err::<(), _>("webview gone"));
+                }
+            });
+            let got: Vec<(Level, String)> =
+                c.events().into_iter().map(|e| (e.level, e.text)).collect();
+            assert_eq!(
+                got,
+                [
+                    (Level::Warn, "save known_hosts: disk full".to_owned()),
+                    (Level::Debug, "emit window://close: gone".to_owned()),
+                    (
+                        Level::Debug,
+                        "answer the drop: nobody was waiting".to_owned()
+                    ),
+                    (
+                        Level::Debug,
+                        "emit term://out: webview gone (later failures are not written)".to_owned()
+                    ),
+                ]
+            );
+        });
     }
 
     #[test]

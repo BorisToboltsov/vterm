@@ -65,6 +65,15 @@ pub enum HandOverError {
     Overflowed,
 }
 
+impl std::fmt::Display for HandOverError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            HandOverError::NotHeld => "the answer was not held",
+            HandOverError::Overflowed => "the held answer overflowed",
+        })
+    }
+}
+
 pub struct StreamGate {
     sink: Sink,
     cap: usize,

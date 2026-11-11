@@ -23,6 +23,7 @@
 //! [`Registry`] is the bookkeeping — plain data, tested without a Tauri runtime.
 //! The commands below wire it to real windows.
 
+use crate::diag::{Logged, Unheard};
 use crate::error::{AppError, AppResult};
 use crate::outgate::HandOverError;
 use crate::AppState;
@@ -462,7 +463,9 @@ impl WindowSink {
     }
 
     pub fn emit<S: Serialize + Clone>(&self, event: &str, payload: S) {
-        let _ = self.app.emit_to(self.label().as_str(), event, payload);
+        self.app
+            .emit_to(self.label().as_str(), event, payload)
+            .log_debug("windows", "tell the window");
     }
 }
 
@@ -480,10 +483,11 @@ pub fn request_quit<R: tauri::Runtime>(app: &AppHandle<R>) {
     }
     if let Some(main) = app.get_webview_window(MAIN) {
         // The question is asked in the main window: bring it up from wherever it is.
-        let _ = main.unminimize();
-        let _ = main.set_focus();
+        main.unminimize().log_debug("windows", "window unminimize");
+        main.set_focus().log_debug("windows", "window set focus");
     }
-    let _ = app.emit_to(MAIN, "menu://quit", ());
+    app.emit_to(MAIN, "menu://quit", ())
+        .log_debug("windows", "emit menu://quit to MAIN");
 }
 
 /// Send a native-menu command to the window the user is working in.
@@ -493,7 +497,8 @@ pub fn emit_to_focused<R: tauri::Runtime>(app: &AppHandle<R>, event: &str) {
         .try_state::<Windows>()
         .and_then(|w| w.lock().focused.clone());
     let target = menu_target(focused, |label| app.get_webview_window(label).is_some());
-    let _ = app.emit_to(target, event, ());
+    app.emit_to(target, event, ())
+        .log_debug("windows", "emit event to target");
 }
 
 /// Window events the registry cares about. Returns true when a close request
@@ -518,7 +523,8 @@ pub fn on_window_event(window: &tauri::Window, event: &tauri::WindowEvent) -> bo
             if label == MAIN {
                 request_quit(app);
             } else {
-                let _ = app.emit_to(label, "window://close", ());
+                app.emit_to(label, "window://close", ())
+                    .log_debug("windows", "emit window://close to label");
             }
             true
         }
@@ -530,11 +536,13 @@ pub fn on_window_event(window: &tauri::Window, event: &tauri::WindowEvent) -> bo
                 (sessions, waker, left)
             };
             if let Some(done) = waker {
-                let _ = done.send(Err(HandoffFailure::NotTaken));
+                done.send(Err(HandoffFailure::NotTaken))
+                    .log_unheard("windows", "answer the waiting side");
             }
             if let Some(over) = left {
                 // It was dragging a tab over another window, which still draws it.
-                let _ = app.emit_to(over, DRAG_EVENT, DragEvent::Leave);
+                app.emit_to(over, DRAG_EVENT, DragEvent::Leave)
+                    .log_debug("windows", "emit DRAG_EVENT to over");
             }
             // It no longer takes tabs: the others stop offering it.
             broadcast_roster(app, &windows);
@@ -586,7 +594,15 @@ pub async fn quit_app(app: AppHandle) -> crate::error::AppResult<()> {
             crate::transfers::discard_held(&app, held).await;
         }
     };
-    let _ = tokio::time::timeout(DISCARD_ON_QUIT, discard).await;
+    if tokio::time::timeout(DISCARD_ON_QUIT, discard)
+        .await
+        .is_err()
+    {
+        tracing::warn!(
+            source = "transfer",
+            "held transfers not discarded within {DISCARD_ON_QUIT:?}: their partial files stay"
+        );
+    }
     app.exit(0);
     Ok(())
 }
@@ -615,7 +631,7 @@ fn remember_places(app: &AppHandle) {
         .filter(|(label, _)| crate::winplace::kept_label(label))
         .filter_map(|(label, w)| crate::winplace::place_of(w).map(|p| (label.clone(), p)))
         .collect();
-    let _ = crate::store::save_window_places(&places);
+    crate::store::save_window_places(&places).log_warn("windows", "save window places");
 }
 
 /// The main window, before it is shown: where it stood when the app last quit.
@@ -705,6 +721,11 @@ fn build_reopened(
         builder = builder.decorations(false);
     }
     let win = builder.build()?;
+    tracing::info!(
+        source = "windows",
+        window = label,
+        "window of the last launch reopened"
+    );
     let maximize = match place {
         Some(saved) => crate::winplace::apply(&win, saved, place_min(&win)),
         None => {
@@ -712,14 +733,15 @@ fn build_reopened(
             // confirmation last time): beside the main window, as a new one.
             if let Ok(pos) = main.outer_position() {
                 let step = (CASCADE * main.scale_factor().unwrap_or(1.0)) as i32;
-                let _ = win.set_position(tauri::PhysicalPosition::new(pos.x + step, pos.y + step));
+                win.set_position(tauri::PhysicalPosition::new(pos.x + step, pos.y + step))
+                    .log_debug("windows", "window set position");
             }
             false
         }
     };
     win.show()?;
     if maximize {
-        let _ = win.maximize();
+        win.maximize().log_debug("windows", "window maximize");
     }
     Ok(())
 }
@@ -738,6 +760,7 @@ pub fn close_window(window: WebviewWindow, windows: State<Windows>) -> AppResult
     if window.label() == MAIN {
         return Ok(());
     }
+    tracing::info!(source = "windows", window = window.label(), "window closed");
     windows.lock().armed.remove(window.label());
     window
         .destroy()
@@ -771,7 +794,8 @@ pub fn other_windows_summary(window: WebviewWindow, windows: State<Windows>) -> 
 /// offers nothing any more.
 fn broadcast_roster<R: tauri::Runtime>(app: &AppHandle<R>, windows: &Windows) {
     let roster = windows.lock().roster();
-    let _ = app.emit(ROSTER_EVENT, roster);
+    app.emit(ROSTER_EVENT, roster)
+        .log_debug("windows", "emit ROSTER_EVENT");
     broadcast_targets(app, windows);
 }
 
@@ -787,7 +811,8 @@ const TARGETS_EVENT: &str = "window://targets";
 
 fn broadcast_targets<R: tauri::Runtime>(app: &AppHandle<R>, windows: &Windows) {
     let shared = windows.lock().shared_targets();
-    let _ = app.emit(TARGETS_EVENT, shared);
+    app.emit(TARGETS_EVENT, shared)
+        .log_debug("windows", "emit TARGETS_EVENT");
 }
 
 /// The sessions this window offers as a place to copy files to (v1.13) — told
@@ -854,7 +879,9 @@ async fn pointer_window(app: &AppHandle) -> AppResult<Option<crate::winhit::Hit>
     let (answer, hit) = oneshot::channel();
     let handle = app.clone();
     app.run_on_main_thread(move || {
-        let _ = answer.send(crate::winhit::app_window_at_pointer(&handle));
+        answer
+            .send(crate::winhit::app_window_at_pointer(&handle))
+            .log_unheard("windows", "answer the waiting side");
     })
     .map_err(|e| AppError::Message(format!("window under pointer: {e}")))?;
     let hit = hit.await.ok().flatten();
@@ -866,7 +893,7 @@ async fn pointer_window(app: &AppHandle) -> AppResult<Option<crate::winhit::Hit>
 /// and a window that is not active draws the tab over it a beat late.
 fn raise_window(app: &AppHandle, label: &str) {
     if let Some(window) = app.get_webview_window(label) {
-        let _ = window.set_focus();
+        window.set_focus().log_debug("windows", "window set focus");
     }
 }
 
@@ -896,14 +923,19 @@ pub(crate) fn system_drag_moved(app: &AppHandle, source: &str, what: &serde_json
         .lock()
         .hover(source, hit.as_ref().map(|hit| hit.label.as_str()));
     if let Some(left) = left {
-        let _ = app.emit_to(left, DRAG_EVENT, DragEvent::Leave);
+        app.emit_to(left, DRAG_EVENT, DragEvent::Leave)
+            .log_debug("windows", "tell the window the drag left it");
     }
     let Some(hit) = hit else { return false };
     let (x, y, tab) = (hit.x, hit.y, what.clone());
-    let _ = app.emit_to(
+    app.emit_to(
         hit.label.as_str(),
         DRAG_EVENT,
         DragEvent::Over { x, y, tab },
+    )
+    .log_debug(
+        "windows",
+        "tell the window under the pointer about the drag",
     );
     true
 }
@@ -914,7 +946,8 @@ pub(crate) fn system_drag_moved(app: &AppHandle, source: &str, what: &serde_json
 pub(crate) fn system_drag_cancelled(app: &AppHandle, source: &str) {
     let left = app.state::<Windows>().lock().end_hover(source);
     if let Some(left) = left {
-        let _ = app.emit_to(left, DRAG_EVENT, DragEvent::Leave);
+        app.emit_to(left, DRAG_EVENT, DragEvent::Leave)
+            .log_debug("windows", "tell the window the drag left it");
     }
 }
 
@@ -931,14 +964,19 @@ pub(crate) fn system_drag_ended(app: &AppHandle, source: &str, what: &serde_json
         left
     };
     if let Some(left) = left {
-        let _ = app.emit_to(left, DRAG_EVENT, DragEvent::Leave);
+        app.emit_to(left, DRAG_EVENT, DragEvent::Leave)
+            .log_debug("windows", "tell the window the drag left it");
     }
     let Some(hit) = hit else { return false };
     let (x, y, tab) = (hit.x, hit.y, what.clone());
-    let _ = app.emit_to(
+    app.emit_to(
         hit.label.as_str(),
         DRAG_EVENT,
         DragEvent::Drop { x, y, tab },
+    )
+    .log_debug(
+        "windows",
+        "tell the window under the pointer about the drag",
     );
     true
 }
@@ -983,7 +1021,8 @@ pub async fn drag_over(
     let target = hit.as_ref().map(|hit| hit.label.as_str());
     let left = windows.lock().hover(source, target);
     if let Some(left) = left {
-        let _ = app.emit_to(left, DRAG_EVENT, DragEvent::Leave);
+        app.emit_to(left, DRAG_EVENT, DragEvent::Leave)
+            .log_debug("windows", "tell the window the drag left it");
     }
     // Over none of the app's windows no page can draw the tab: a window of its
     // own does, kept next to the pointer.
@@ -1003,10 +1042,14 @@ pub async fn drag_over(
         });
     };
     let (x, y) = (hit.x, hit.y);
-    let _ = app.emit_to(
+    app.emit_to(
         hit.label.as_str(),
         DRAG_EVENT,
         DragEvent::Over { x, y, tab },
+    )
+    .log_debug(
+        "windows",
+        "tell the window under the pointer about the drag",
     );
     Ok(DragAnswer {
         window: Some(hit.label),
@@ -1034,14 +1077,19 @@ pub async fn drag_drop(
     let target = hit.as_ref().map(|hit| hit.label.as_str());
     let left = windows.lock().hover(source, target);
     if let Some(left) = left {
-        let _ = app.emit_to(left, DRAG_EVENT, DragEvent::Leave);
+        app.emit_to(left, DRAG_EVENT, DragEvent::Leave)
+            .log_debug("windows", "tell the window the drag left it");
     }
     let Some(hit) = hit else { return Ok(None) };
     let (x, y) = (hit.x, hit.y);
-    let _ = app.emit_to(
+    app.emit_to(
         hit.label.as_str(),
         DRAG_EVENT,
         DragEvent::Drop { x, y, tab },
+    )
+    .log_debug(
+        "windows",
+        "tell the window under the pointer about the drag",
     );
     Ok(Some(hit.label))
 }
@@ -1058,7 +1106,8 @@ pub fn drag_end(app: AppHandle, window: WebviewWindow, windows: State<Windows>) 
         reg.end_hover(window.label())
     };
     if let Some(left) = left {
-        let _ = app.emit_to(left, DRAG_EVENT, DragEvent::Leave);
+        app.emit_to(left, DRAG_EVENT, DragEvent::Leave)
+            .log_debug("windows", "tell the window the drag left it");
     }
 }
 
@@ -1134,7 +1183,16 @@ fn build_window(
     {
         builder = builder.decorations(false);
     }
-    builder.build()
+    let built = builder.build();
+    match &built {
+        Ok(_) => tracing::info!(
+            source = "windows",
+            window = label,
+            "window opened for a tab"
+        ),
+        Err(e) => tracing::warn!(source = "windows", window = label, "window not opened: {e}"),
+    }
+    built
 }
 
 /// What step 1 held: the terminal's output and, when the assistant is answering
@@ -1169,6 +1227,7 @@ pub async fn detach_begin(
     if !windows.owns(&session_id, window.label()) {
         return Err(AppError::NoSession);
     }
+    tracing::info!(source = "windows", sid = %session_id, from = window.label(), "tab hand-off begun");
     let gate = crate::session_gate(&state, &session_id)
         .await
         .ok_or(AppError::NoSession)?;
@@ -1188,6 +1247,7 @@ pub async fn detach_abort(
     if !windows.owns(&session_id, window.label()) {
         return Ok(());
     }
+    tracing::info!(source = "windows", sid = %session_id, from = window.label(), "tab hand-off rolled back");
     if let Some(gate) = crate::session_gate(&state, &session_id).await {
         gate.resume();
     }
@@ -1202,7 +1262,9 @@ fn offer_tab(app: &AppHandle, label: &str) -> AppResult<()> {
         .ok_or(AppError::HandoffNotTaken)?;
     // A minimized WebView is throttled like a background page: brought up
     // first, or the tab would take seconds to arrive instead of a blink.
-    let _ = target.unminimize();
+    target
+        .unminimize()
+        .log_debug("windows", "window unminimize");
     app.emit_to(label, HANDOFF_EVENT, ())
         .map_err(|e| AppError::Message(format!("offer tab: {e}")))
 }
@@ -1221,6 +1283,7 @@ pub async fn detach_commit(
     packet: String,
     opts: DetachOpts,
 ) -> AppResult<String> {
+    tracing::debug!(source = "windows", sid = %session_id, from = window.label(), "tab hand-off committing");
     let packet = Zeroizing::new(packet);
     if !windows.owns(&session_id, window.label()) {
         return Err(AppError::NoSession);
@@ -1303,7 +1366,7 @@ pub async fn detach_commit(
             crate::aigate::resume_session(&session_id);
             if created {
                 if let Some(w) = app.get_webview_window(&label) {
-                    let _ = w.destroy();
+                    w.destroy().log_debug("windows", "window destroy");
                 }
             }
             Err(failure.into())
@@ -1337,7 +1400,10 @@ pub fn decline_handoff(window: WebviewWindow, windows: State<Windows>, session_i
         }
     };
     if let Some(pending) = pending {
-        let _ = pending.done.send(Err(HandoffFailure::NotTaken));
+        pending
+            .done
+            .send(Err(HandoffFailure::NotTaken))
+            .log_unheard("windows", "answer the waiting side");
     }
 }
 
@@ -1353,6 +1419,7 @@ pub async fn attach_session(
 ) -> AppResult<()> {
     let label = window.label().to_string();
     let Some(pending) = windows.lock().take_pending(&label, &session_id) else {
+        tracing::warn!(source = "windows", sid = %session_id, to = %label, "tab offered nowhere: not taken");
         return Err(AppError::HandoffNotTaken);
     };
     // From here every path answers the window waiting in `detach_commit`.
@@ -1366,7 +1433,8 @@ pub async fn attach_session(
         Some(gate) => match gate.hand_over() {
             Ok(()) => {
                 // The window listens for the answer too: what was held of it goes there.
-                let _ = crate::aigate::hand_over_session(&session_id);
+                crate::aigate::hand_over_session(&session_id)
+                    .log_debug("windows", "hand over the assistant's answer");
                 let mut reg = windows.lock();
                 reg.claim(&session_id, &label);
                 // The tab it was shown is the one it now has.
@@ -1377,9 +1445,12 @@ pub async fn attach_session(
             Err(HandOverError::NotHeld) => Err(HandoffFailure::NotTaken),
         },
     };
-    let _ = pending.done.send(outcome);
+    pending
+        .done
+        .send(outcome)
+        .log_unheard("windows", "answer the waiting side");
     outcome?;
-    let _ = window.set_focus();
+    window.set_focus().log_debug("windows", "window set focus");
     Ok(())
 }
 

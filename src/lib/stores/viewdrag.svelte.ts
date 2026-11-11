@@ -21,6 +21,7 @@
 // would resize the terminal mid-drag — a `SIGWINCH` per pixel for what runs in
 // it — and re-lay the editors out under the pointer.
 
+import { swallowed } from "../api/diag";
 import {
   cancelOnEscape,
   holdSelection,
@@ -166,8 +167,9 @@ function stopListening(): void {
   if (candidate && viewDrag.view !== null) {
     try {
       candidate.el.releasePointerCapture(candidate.pointerId);
-    } catch {
+    } catch (e) {
       /* already released */
+      swallowed("app", "release the pointer", e);
     }
   }
   candidate = null;
@@ -181,8 +183,9 @@ function onMove(e: PointerEvent): void {
     viewDrag.view = candidate.view;
     try {
       candidate.el.setPointerCapture(candidate.pointerId);
-    } catch {
+    } catch (e) {
       /* the element may be gone; window listeners still see the pointer */
+      swallowed("app", "capture the pointer", e);
     }
   }
   viewDrag.x = e.clientX;

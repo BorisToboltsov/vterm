@@ -839,6 +839,17 @@ Git, Docker, k8s, сетевые пробы и метрики — **один к�
   (`diag_query`); окно под кнопкой журнала её не показывает. Гейты `diag.guard`, `journal.guard`.
 - **Текст события — технический английский: это данные, а не интерфейс.** Его ищут и пересылают;
   через `t()` идёт всё вокруг — уровни, источники, кнопки, подписи.
+- **Ничего не глушится молча:** ошибку обрабатывают (ветка, запасное значение, сообщение) или
+  пишут — `debug`, если так и ожидалось, `warn`, если пользователь что-то потерял. Rust —
+  `.log_debug`/`.log_warn` (`diag::Logged`), `log_unheard` для ответа, которого никто не ждёт; фронт
+  — `swallow`/`swallowed`/`orNull` ([api/diag.ts](../src/lib/api/diag.ts)), отказ `call()` —
+  `writtenByCall`: его записал сам `call()`. На пути куска — `FirstFailure`: первая ошибка, остальные
+  счётом. Гейты: clippy `let_underscore_must_use`, `unused_result_ok`, правило
+  `vterm/no-silent-catch`.
+- **Подключение пишет вехи внутри span `session`** (вкладка и сервер у каждого события): начало и
+  через что, решение по ключу хоста (`host_key_verdict`), вход, итог с длительностью — отказ входа
+  `info`, сбой `warn`; обрыв со стороны сервера и конец сессии. Гейт
+  `nothing_after_login_can_fail_the_connection` считает вход оператором вызова `ssh::connect`.
 
 ---
 
@@ -1190,13 +1201,15 @@ Git, Docker, k8s, сетевые пробы и метрики — **один к�
 настроек и вопрос, который он отключает) · `theme-colors` · `virtual-scroll` · `paste-caret` ·
 `scan-blocks` (гейты и скрипты вырезают блоки разметки сканером, а не регуляркой: CodeQL роняет
 на этом PR; правило действует и в тестах) · `invoke-in-call` (`invoke` — только в `api/call.ts`) ·
-`no-console` · `diag-no-secret` (поля события — литерал без секретных имён).
+`no-console` · `diag-no-secret` (поля события — литерал без секретных имён) · `no-silent-catch`
+(пустой `catch`, `.catch(() => {})` и подобные — ошибка обрабатывается или пишется).
 
 **Правило clippy** (`[lints.clippy]` в [Cargo.toml](../src-tauri/Cargo.toml), `-D warnings` на
 трёх ОС): `undocumented_unsafe_blocks` — `unsafe` только для FFI к ОС, и у каждого блока
 `// SAFETY:` с обоснованием. `unsafe` проверяет clippy, а не Semgrep (гейт `ci.guard`).
 `print_stdout`, `print_stderr`, `dbg_macro` — вне тестов пишут только через `tracing` в
-диагностику (`clippy.toml` разрешает печать тестам; гейт `diag.guard`).
+диагностику (`clippy.toml` разрешает печать тестам); `let_underscore_must_use`,
+`unused_result_ok` — `let _ =` над `Result` и `.ok();` не глушат ошибку (гейт `diag.guard`).
 
 | Гейт | Что держит |
 |------|------------|

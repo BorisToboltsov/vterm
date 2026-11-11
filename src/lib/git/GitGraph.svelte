@@ -11,6 +11,7 @@
   // always shown; otherwise in a strip under it. Never between the rows — they stay
   // uniform, so the SVG stays aligned. The list measures itself (v1.27): how tall a
   // row is depends on its width, so the rows and the SVG read the same number.
+  import { swallowed } from "../api/diag";
   import Modal from "../ui/Modal.svelte";
   import ContextMenu from "../ui/ContextMenu.svelte";
   import SidePane from "../ui/SidePane.svelte";
@@ -321,8 +322,9 @@
     try {
       const res = await runQuery(branchContainsArgs(hash));
       if (selected === hash && res.exitCode === 0) contained = parseContains(res.stdout);
-    } catch {
+    } catch (e) {
       /* the details stand without it */
+      swallowed("git", "find the branches holding a commit", e);
     }
   }
 

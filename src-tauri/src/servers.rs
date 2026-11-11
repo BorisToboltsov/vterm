@@ -6,6 +6,7 @@
 use tauri::State;
 use zeroize::Zeroizing;
 
+use crate::diag::Logged;
 use crate::error::{AppError, AppResult};
 use crate::locks::Locked;
 use crate::model::{AuthMethod, NewServerProfile, ServerProfile};
@@ -223,7 +224,7 @@ pub async fn delete_server(id: String, state: State<'_, AppState>) -> AppResult<
         servers.clone()
     };
     store::save_servers(&snapshot)?;
-    let _ = secrets::delete_all(&id);
+    secrets::delete_all(&id).log_warn("servers", "forget the server's secrets");
     // Drop any live session for this server (Drop closes the connection).
     state.sessions.lock().await.remove(&id);
     Ok(())

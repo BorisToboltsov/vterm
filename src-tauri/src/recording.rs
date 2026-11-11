@@ -269,6 +269,8 @@ enum EscState {
 /// A live recorder writing asciicast events for one session.
 pub struct Recorder {
     writer: BufWriter<File>,
+    /// A write that failed: said once, not per event.
+    write_failed: crate::diag::FirstFailure,
     start: Instant,
     path: PathBuf,
     mode: RecordMode,
@@ -347,9 +349,12 @@ impl Recorder {
             writeln!(writer, "{}", event_line(0.0, 'o', prompt))
                 .map_err(|e| format!("write recording prompt: {e}"))?;
         }
-        writer.flush().ok();
+        writer
+            .flush()
+            .map_err(|e| format!("write recording header: {e}"))?;
         Ok(Recorder {
             writer,
+            write_failed: crate::diag::FirstFailure::new("recording", "write the recording"),
             start: Instant::now(),
             path,
             mode,
@@ -387,8 +392,10 @@ impl Recorder {
             self.synthetic += step;
             v
         };
-        let _ = writeln!(self.writer, "{}", event_line(t, kind, data));
-        let _ = self.writer.flush();
+        // Per event: the first failure is written, the rest only counted.
+        self.write_failed
+            .note(writeln!(self.writer, "{}", event_line(t, kind, data)));
+        self.write_failed.note(self.writer.flush());
     }
 
     /// Pause/resume recording. While paused, output is dropped (don't waste disk on

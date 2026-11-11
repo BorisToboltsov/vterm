@@ -11,6 +11,7 @@
 // then any failure gives the held output back and leaves the tab where it was.
 // Whether a tab may go is asked before the trip, by whoever sends it.
 
+import { nullWrittenByCall, writtenByCall } from "../api/call";
 import {
   announceWindow,
   closeWindow,
@@ -101,7 +102,7 @@ export function createWindowFlow(deps: WindowDeps) {
   const count = $derived(tabsState.list.length);
   $effect(() => {
     if (!takesTabs) return;
-    void announceWindow(title, count).catch(() => {});
+    void announceWindow(title, count).catch(writtenByCall);
   });
 
   // A tab dragged outside the window moves to another one — the third way in,
@@ -118,7 +119,7 @@ export function createWindowFlow(deps: WindowDeps) {
             // Told of with or without another window to land in: over the
             // desktop the tab is drawn by the floating label either way.
             over: tellDragOver,
-            left: () => void dragEnd().catch(() => {}),
+            left: () => void dragEnd().catch(writtenByCall),
           }
         : null,
     );
@@ -204,17 +205,17 @@ export function createWindowFlow(deps: WindowDeps) {
     if (!lead) return;
     const held = paneMoveBlocker(tabs.map(stateOf), true);
     if (held) {
-      void dragEnd().catch(() => {});
+      void dragEnd().catch(writtenByCall);
       const reason = t(DETACH_BLOCK_MESSAGE[held.block]);
       notifyInfo(t("window.paneBlocked", { tab: deps.title(tabs[held.at]), reason }), { source: "windows" });
       return;
     }
-    const under = await dragDrop(describeTab(lead)).catch(() => null);
+    const under = await dragDrop(describeTab(lead)).catch(nullWrittenByCall);
     if (under && targets.some((w) => w.label === under)) {
       await movePane(paneId, { window: under });
       return;
     }
-    if (under) void dragEnd().catch(() => {});
+    if (under) void dragEnd().catch(writtenByCall);
     if (outside && paneDetachOffered({ mainWindow: isMainWindow, tabs: tabsState.list.length }, tabs.length)) {
       await movePane(paneId, { at });
     }
@@ -231,7 +232,7 @@ export function createWindowFlow(deps: WindowDeps) {
     // What keeps a tab from every other window keeps it here: said now.
     const block = detachBlocker(stateOf(tab), true);
     if (block) {
-      void dragEnd().catch(() => {});
+      void dragEnd().catch(writtenByCall);
       notifyInfo(t(DETACH_BLOCK_MESSAGE[block]), { source: "windows" });
       return;
     }
@@ -239,13 +240,13 @@ export function createWindowFlow(deps: WindowDeps) {
     // the gesture. The window it was dropped on keeps its place from here on.
     // Asked even with no other window to land in: this is also what takes the
     // floating label off the desktop.
-    const under = await dragDrop(describeTab(tab)).catch(() => null);
+    const under = await dragDrop(describeTab(tab)).catch(nullWrittenByCall);
     if (under && targets.some((w) => w.label === under)) {
       // If the tab does not get there after all, that window is told.
-      if (!(await detachTab(sessionId, { window: under }))) void dragEnd().catch(() => {});
+      if (!(await detachTab(sessionId, { window: under }))) void dragEnd().catch(writtenByCall);
       return;
     }
-    if (under) void dragEnd().catch(() => {});
+    if (under) void dragEnd().catch(writtenByCall);
     // Inside this window after all (the other one was gone by the release):
     // nothing to open a window for.
     if (outside && canOfferDetach) void detachTab(sessionId, { at });
@@ -312,7 +313,7 @@ export function createWindowFlow(deps: WindowDeps) {
       return taken;
     } catch (e) {
       // Give the held output back (a no-op if the backend already rolled back).
-      if (held) await detachAbort(sessionId).catch(() => {});
+      if (held) await detachAbort(sessionId).catch(writtenByCall);
       throw e;
     }
   }
@@ -406,7 +407,7 @@ export function createWindowFlow(deps: WindowDeps) {
    * session over (`Terminal.svelte`, `adopt`).
    */
   async function takeTab(): Promise<boolean> {
-    const packet = parsePacket(await takeHandoff().catch(() => null));
+    const packet = parsePacket(await takeHandoff().catch(nullWrittenByCall));
     if (!packet) return false;
     deps.arrived(packet.tab.sessionId, packet.page);
     // Dropped here, it takes the place this window kept for it; sent by a
@@ -493,7 +494,7 @@ export function createWindowFlow(deps: WindowDeps) {
     /** A secondary window, on load: take over the tab it was opened for. */
     async adoptHandoff() {
       // Nothing to show (the handoff was rolled back): a window with no tab goes.
-      if (!(await takeTab())) void closeWindow().catch(() => {});
+      if (!(await takeTab())) void closeWindow().catch(writtenByCall);
     },
 
     /**
@@ -502,7 +503,7 @@ export function createWindowFlow(deps: WindowDeps) {
      * Nothing here closes this window: it has tabs of its own.
      */
     async receiveTab() {
-      if (!(await takeTab())) void declineHandoff().catch(() => {});
+      if (!(await takeTab())) void declineHandoff().catch(writtenByCall);
     },
 
     /**
@@ -511,11 +512,11 @@ export function createWindowFlow(deps: WindowDeps) {
      * goes without ending the session — it was never ours.
      */
     adoptFailed(sessionId: string) {
-      void declineHandoff(sessionId).catch(() => {});
+      void declineHandoff(sessionId).catch(writtenByCall);
       deps.teardown(sessionId, true);
       // A window opened for this tab has nothing else to show and goes. One that
       // was already open keeps its tabs — closing it would end their sessions.
-      if (!isMainWindow && tabsState.list.length === 0) void closeWindow().catch(() => {});
+      if (!isMainWindow && tabsState.list.length === 0) void closeWindow().catch(writtenByCall);
     },
   };
 }

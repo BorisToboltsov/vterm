@@ -28,6 +28,8 @@ undocumented_unsafe_blocks = "warn"
 print_stdout = "warn"
 print_stderr = "warn"
 dbg_macro = "warn"
+let_underscore_must_use = "warn"
+unused_result_ok = "warn"
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }

@@ -921,12 +921,10 @@ export type K8sAvailability =
 export function parseAvailability(stdout: string, stderr: string, _exitCode: number): K8sAvailability {
   let clientVersion = "";
   let serverVersion = "";
-  try {
-    const doc = JSON.parse(stdout) as Record<string, unknown>;
+  const doc = parseJsonOrNull(stdout) as Record<string, unknown> | null;
+  if (doc) {
     clientVersion = str(dig(doc, "clientVersion", "gitVersion"));
     serverVersion = str(dig(doc, "serverVersion", "gitVersion"));
-  } catch {
-    /* not JSON — an error path */
   }
   if (serverVersion) return { ok: true, clientVersion, serverVersion };
 
@@ -2643,14 +2641,19 @@ export function parseEndpointSlices(raw: string): K8sEndpointSlice[] {
  * well not list them). The reason is kubectl's own first line — "" when it gave
  * none, as when it exits 0 with something that is not a list.
  */
+/** `text` as JSON, or null when it is not JSON — kubectl's error path prints text. */
+function parseJsonOrNull(text: string): unknown {
+  try {
+    return JSON.parse(text) as unknown;
+  } catch {
+    return null;
+  }
+}
+
 export function listFailure(stdout: string, stderr: string, exitCode: number): string | null {
   if (exitCode === 0) {
-    try {
-      const doc = JSON.parse(stdout) as { items?: unknown } | null;
-      if (doc && Array.isArray(doc.items)) return null;
-    } catch {
-      /* not JSON */
-    }
+    const doc = parseJsonOrNull(stdout) as { items?: unknown } | null;
+    if (doc && Array.isArray(doc.items)) return null;
     return "";
   }
   const detail = (text: string): string => {

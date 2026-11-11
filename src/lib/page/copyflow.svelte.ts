@@ -4,6 +4,8 @@
 // window's, and the dialog that asks where the files go before the transfer
 // starts. The transfer itself is a backend job (transferflow.ts, ADR 0025).
 
+import { writtenByCall } from "../api/call";
+import { swallowed } from "../api/diag";
 import { untrack } from "svelte";
 import { announceCopyTargets, localHome, sftpHome } from "../api";
 import { copyTargets, defaultDestDir, distinctTitles, shareTargets, sideOf, type CopyTarget } from "../files/copyto";
@@ -48,7 +50,7 @@ export function createCopyFlow(deps: CopyDeps) {
     const said = JSON.stringify(shared);
     if (said === told) return;
     told = said;
-    void announceCopyTargets(shared).catch(() => {});
+    void announceCopyTargets(shared).catch(writtenByCall);
   });
 
   // The copy being set up: what, from which tab, to which — and where there.
@@ -76,8 +78,9 @@ export function createCopyFlow(deps: CopyDeps) {
     try {
       const home = await (target.local ? localHome() : sftpHome(target.sessionId));
       if (ask?.request === request && !dir) dir = home;
-    } catch {
+    } catch (e) {
       /* the field stays empty — the user types the folder */
+      swallowed("files", "find the home folder for the copy", e);
     }
   }
 

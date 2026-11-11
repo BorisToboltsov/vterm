@@ -9,6 +9,7 @@
   // Two layers in one place (ADR 0063): «Messages» — what was said to the user —
   // and «Diagnostics» — what the app did, the same kind of list over the
   // backend's file. The bell's popover shows the messages alone.
+  import { writtenByCall } from "../api/call";
   import Icon from "../ui/Icon.svelte";
   import InfoHint from "../ui/InfoHint.svelte";
   import ConfirmDialog from "../ui/ConfirmDialog.svelte";
@@ -112,7 +113,7 @@
   confirmLabel={t("journal.clear")}
   onconfirm={() => {
     asking = false;
-    void clearJournal().catch(() => {});
+    void clearJournal().catch(writtenByCall);
   }}
   oncancel={() => (asking = false)}
 >

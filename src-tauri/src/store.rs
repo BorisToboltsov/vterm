@@ -6,6 +6,7 @@
 //!
 //! Passwords are never written here — they go to the OS keychain (Phase 2).
 
+use crate::diag::{Logged, Unheard};
 use std::collections::HashMap;
 use std::fs::{self, File};
 use std::io::Write;
@@ -76,11 +77,11 @@ fn write_atomic(path: &Path, bytes: &[u8]) -> AppResult<()> {
         f.sync_all()
     })();
     if let Err(e) = written {
-        let _ = fs::remove_file(&tmp);
+        fs::remove_file(&tmp).log_debug("storage", "remove the temporary file");
         return Err(format!("write {}: {e}", tmp.display()).into());
     }
     if let Err(e) = fs::rename(&tmp, path) {
-        let _ = fs::remove_file(&tmp);
+        fs::remove_file(&tmp).log_debug("storage", "remove the temporary file");
         return Err(format!("rename onto {}: {e}", path.display()).into());
     }
     Ok(())
@@ -152,8 +153,21 @@ where
         Err(_) => {
             let dest = quarantine_path(path);
             let quarantined = fs::rename(path, &dest)
-                .ok()
+                .log_warn("storage", "move the unreadable file aside")
                 .map(|()| dest.display().to_string());
+            match &quarantined {
+                Some(to) => tracing::warn!(
+                    source = "storage",
+                    file = %path.display(),
+                    quarantined = %to,
+                    "store file did not parse: moved aside"
+                ),
+                None => tracing::error!(
+                    source = "storage",
+                    file = %path.display(),
+                    "store file did not parse and could not be moved aside: its data is at risk"
+                ),
+            }
             if let Ok(mut w) = warnings().lock() {
                 w.push(StoreWarning {
                     file: path.display().to_string(),
@@ -183,7 +197,9 @@ static CATALOG_CHANGED: std::sync::OnceLock<Box<dyn Fn() + Send + Sync>> =
 /// functions every mutation ends in, rather than in each of the commands: a
 /// command added later cannot forget to announce its change. Set once.
 pub fn on_catalog_change(hook: impl Fn() + Send + Sync + 'static) {
-    let _ = CATALOG_CHANGED.set(Box::new(hook));
+    CATALOG_CHANGED
+        .set(Box::new(hook))
+        .log_unheard("storage", "set the catalog hook a second time");
 }
 
 fn catalog_changed() {
@@ -279,7 +295,7 @@ pub fn save_journal(entries: &[crate::journal::Entry]) -> AppResult<()> {
 /// Take the journal off the disk: the user does not keep it across launches.
 pub fn remove_journal() {
     if let Some(path) = journal_path() {
-        let _ = fs::remove_file(path);
+        fs::remove_file(path).log_debug("storage", "remove the file");
     }
 }
 
@@ -340,7 +356,7 @@ pub fn remember_host_key(id: &str, fingerprint: &str) {
     if let Ok(json) = serde_json::to_vec_pretty(&map) {
         // Best-effort by design (see doc comment), but still atomic: a crash here
         // must not truncate the trust store into "no host is known".
-        let _ = write_atomic(&path, &json);
+        write_atomic(&path, &json).log_warn("storage", "write known_hosts");
     }
 }
 
@@ -366,7 +382,7 @@ pub fn forget_host_key(id: &str) -> bool {
     }
     if let Some(path) = host_keys_path() {
         if let Ok(json) = serde_json::to_vec_pretty(&map) {
-            let _ = write_atomic(&path, &json);
+            write_atomic(&path, &json).log_warn("storage", "write known_hosts");
         }
     }
     removed
@@ -584,6 +600,25 @@ mod tests {
         assert!(name.starts_with("servers.json.corrupt-"));
         // A second corruption must not overwrite the evidence from the first.
         assert_ne!(quarantine_path(Path::new("/cfg/servers.json")), q);
+    }
+
+    #[test]
+    fn a_store_file_that_does_not_parse_is_a_warning_of_the_diagnostics() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let path = dir.path().join("servers.json");
+        fs::write(&path, b"{ not json").expect("write");
+        let (got, events) = crate::diag::capture(|| read_store::<Vec<String>>(&path));
+        assert!(got.is_empty());
+        let e = events
+            .iter()
+            .find(|e| e.text == "store file did not parse: moved aside")
+            .expect("the quarantine is written");
+        assert_eq!(e.level, crate::diag::Level::Warn);
+        assert_eq!(e.source.as_deref(), Some("storage"));
+        assert!(e.fields["file"]
+            .as_str()
+            .is_some_and(|f| f.ends_with("servers.json")));
+        take_warnings();
     }
 
     #[test]

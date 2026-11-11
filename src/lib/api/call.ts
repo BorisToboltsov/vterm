@@ -23,3 +23,15 @@ export async function call<T>(cmd: string, args?: InvokeArgs, options?: InvokeOp
     throw err;
   }
 }
+
+/**
+ * The handler for a promise of `call()` whose rejection needs nothing more:
+ * `call()` has written it to the diagnostics already. Only for a promise that
+ * comes from `call()` — any other is written with `swallow()` (`api/diag.ts`).
+ */
+export function writtenByCall(): void {}
+
+/** The same, going on with `null`. */
+export function nullWrittenByCall(): null {
+  return null;
+}

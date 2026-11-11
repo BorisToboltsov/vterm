@@ -3,6 +3,7 @@
   // It supplies the SFTP transport + POSIX navigation as an adapter, the SFTP-only
   // features (upload/download/grep/sync) and the transfers footer; everything else
   // (selection, keyboard, drag-move, path bar, list, menus) lives in FileBrowser.
+  import { nullWrittenByCall } from "../api/call";
   import {
     pickSaveDir,
     pickSavePath,
@@ -155,7 +156,7 @@
 
   async function askShellUser() {
     const mine = ++shellAsk;
-    const answer = await shellUser(sessionId).catch(() => null);
+    const answer = await shellUser(sessionId).catch(nullWrittenByCall);
     if (mine === shellAsk) report = answer;
   }
 

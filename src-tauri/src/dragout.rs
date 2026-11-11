@@ -31,6 +31,7 @@
 //! app the files are still drawn by it, and let go of there they are the app's
 //! own drop, as before.
 
+use crate::diag::Unheard;
 use crate::error::AppResult;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -580,7 +581,9 @@ type Began = tokio::sync::oneshot::Sender<bool>;
 fn begin(app: &AppHandle, window: &WebviewWindow, spec: OutSpec, answer: Began) {
     // The label the app itself draws over the desktop steps aside.
     crate::dragghost::hide(app);
-    let _ = answer.send(macos::begin(app, window, spec));
+    answer
+        .send(macos::begin(app, window, spec))
+        .log_unheard("files", "answer the waiting side");
 }
 
 #[cfg(windows)]
@@ -588,13 +591,17 @@ fn begin(app: &AppHandle, window: &WebviewWindow, spec: OutSpec, answer: Began) 
     crate::dragghost::hide(app);
     let feed = std::sync::Arc::new(feed::Feed::new(app, window.label(), spec));
     windows::begin(feed, move |began| {
-        let _ = answer.send(began);
+        answer
+            .send(began)
+            .log_unheard("files", "say whether the system took the drag");
     });
 }
 
 #[cfg(not(any(target_os = "macos", windows)))]
 fn begin(_app: &AppHandle, _window: &WebviewWindow, _spec: OutSpec, answer: Began) {
-    let _ = answer.send(false);
+    answer
+        .send(false)
+        .log_unheard("files", "say the system takes no drag here");
 }
 
 #[cfg(test)]

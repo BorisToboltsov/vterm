@@ -625,7 +625,7 @@ mod live_kube {
 
     impl Drop for Namespace {
         fn drop(&mut self) {
-            let _ = Command::new("kubectl")
+            if let Err(e) = Command::new("kubectl")
                 .args([
                     "--context",
                     &self.ctx,
@@ -634,7 +634,10 @@ mod live_kube {
                     &self.name,
                     "--wait=false",
                 ])
-                .output();
+                .output()
+            {
+                eprintln!("cleanup: {e}");
+            }
         }
     }
 

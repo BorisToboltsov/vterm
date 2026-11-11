@@ -4,6 +4,7 @@
 //! module owns the remote-hash shell command + parser and the apply step.
 
 use crate::appwin::WindowSink;
+use crate::diag::Logged;
 use crate::error::{AppError, AppResult};
 use crate::sftp::{self, apply_eol, detect_eol, looks_binary, sha256_hex, TextFile, WriteResult};
 use crate::ssh::SshSession;
@@ -694,7 +695,9 @@ async fn ensure_remote_dirs(sftp: &SftpSession, remote_file: &str) {
             cur.push('/');
         }
         cur.push_str(seg);
-        let _ = sftp.create_dir(cur.clone()).await; // ignore "exists"
+        sftp.create_dir(cur.clone())
+            .await
+            .log_debug("sync", "create folder cur"); // ignore "exists"
     }
 }
 
@@ -790,18 +793,24 @@ pub async fn apply(
             }
             "download" => {
                 if let Some(parent) = local.parent() {
-                    let _ = tokio::fs::create_dir_all(parent).await;
+                    tokio::fs::create_dir_all(parent)
+                        .await
+                        .log_debug("sync", "create folder parent");
                 }
                 sftp::download(win, id, sftp, &remote, &local_str, None).await?;
                 stats.downloaded += 1;
             }
             "deleteRemote" => {
-                let _ = sftp.remove_file(remote).await;
+                sftp.remove_file(remote)
+                    .await
+                    .log_debug("sync", "remove remote");
                 stats.deleted += 1;
                 sftp::emit_done(win, &id, &a.path, "upload");
             }
             "deleteLocal" => {
-                let _ = tokio::fs::remove_file(&local).await;
+                tokio::fs::remove_file(&local)
+                    .await
+                    .log_debug("sync", "remove local");
                 stats.deleted += 1;
                 sftp::emit_done(win, &id, &a.path, "download");
             }
@@ -944,9 +953,9 @@ pub async fn sudo_write(
     // Tighten the staging file to 0600 before it is copied into place as root.
     // Goes through `sftp::chmod_attrs` — `..Default::default()` would send
     // `ATTR_SIZE = 0` and truncate the staged content away (see its doc comment).
-    let _ = sftp
-        .set_metadata(tmp.clone(), sftp::chmod_attrs(0o600))
-        .await;
+    sftp.set_metadata(tmp.clone(), sftp::chmod_attrs(0o600))
+        .await
+        .log_warn("sync", "tighten the staging file to 0600");
 
     // Backup before the root overwrite. Failure aborts the save while the target
     // is untouched — same contract as the ordinary path in `sftp::write_text`.
@@ -958,7 +967,9 @@ pub async fn sudo_write(
     // means the `cp` really did fail. `cp -p` carries mode/owner/timestamps, so
     // the copy is never more readable than what it copied.
     if backup && !sudo_ok(session, &sudo_backup_command(path), password).await? {
-        let _ = sftp.remove_file(tmp).await;
+        sftp.remove_file(tmp)
+            .await
+            .log_debug("sync", "remove the temporary file");
         return Err(AppError::BackupFailed(format!(
             "sudo cp -p {path} {path}.bak"
         )));
@@ -966,7 +977,9 @@ pub async fn sudo_write(
 
     let cmd = format!("cp -- {} {}", shell_quote(&tmp), shell_quote(path));
     let ok = sudo_ok(session, &cmd, password).await?;
-    let _ = sftp.remove_file(tmp).await;
+    sftp.remove_file(tmp)
+        .await
+        .log_debug("sync", "remove the temporary file");
     if !ok {
         return Err(AppError::Message(
             "sudo write failed (check password / permissions)".into(),

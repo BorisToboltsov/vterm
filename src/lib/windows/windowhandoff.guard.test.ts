@@ -400,7 +400,7 @@ describe("window guard — catches what it exists for", () => {
     expect(
       sessionEndViolations(
         PAGE,
-        mutate(page, "if (!keepSession) void disconnect(sessionId).catch(() => {});", ""),
+        mutate(page, "if (!keepSession) void disconnect(sessionId).catch(writtenByCall);", ""),
       ),
     ).toEqual(
       expect.arrayContaining([
@@ -549,7 +549,7 @@ describe("window guard — catches what it exists for", () => {
     const moved = mutate(
       mutate(
         page,
-        "      takePendingOpens()\n        .then((paths) => paths.forEach(handleOpenFile))\n        .catch(() => {});\n",
+        "      takePendingOpens()\n        .then((paths) => paths.forEach(handleOpenFile))\n        .catch(writtenByCall);\n",
         "",
       ),
       "    if (isMainWindow) {",

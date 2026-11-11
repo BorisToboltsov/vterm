@@ -34,6 +34,7 @@
 // of a pane it would take. Moving the tab for real on every pointer move would
 // resize terminals mid-drag — a `SIGWINCH` per pixel for the programs in them.
 
+import { orNull, swallowed } from "../api/diag";
 import {
   cancelOnEscape,
   holdSelection,
@@ -143,7 +144,7 @@ function tellOver(): void {
   }
   told = true;
   const said: Promise<void> = over(drag.tab, drag.pane)
-    .catch(() => null)
+    .catch(orNull("windows", "tell another window about the tab"))
     .then((sight) => {
       if (telling === said) telling = null;
       // Not for a drag that ended while this was out.
@@ -300,8 +301,9 @@ function stopListening(): void {
   if (candidate && tabDrag.tab !== null) {
     try {
       candidate.el.releasePointerCapture(candidate.pointerId);
-    } catch {
+    } catch (e) {
       /* already released */
+      swallowed("windows", "release the pointer", e);
     }
   }
   candidate = null;
@@ -315,8 +317,9 @@ function onMove(e: PointerEvent): void {
     tabDrag.pane = candidate.pane;
     try {
       candidate.el.setPointerCapture(candidate.pointerId);
-    } catch {
+    } catch (e) {
       /* the element may be gone; window listeners still see the pointer */
+      swallowed("windows", "capture the pointer", e);
     }
   }
   tabDrag.x = e.clientX;

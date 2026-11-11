@@ -75,6 +75,7 @@ export function flushDiag(): void {
   const events = queue;
   queue = [];
   // A batch that did not get there is not written: there is nowhere else to say so.
+  // eslint-disable-next-line vterm/no-silent-catch -- the diagnostics cannot write their own failure: it would go through them again
   call<void>("diag_write", { events }).catch(() => undefined);
 }
 
@@ -115,6 +116,29 @@ export const diag = {
   debug: (source: string, text: string, fields?: DiagFields, about?: DiagAbout) =>
     diagEvent("debug", source, text, fields, about),
 };
+
+/**
+ * An error dropped on purpose, written (ADR 0063): `debug` when it was
+ * expected — a window already gone, an answer nobody waits for — `warn` when
+ * the user lost something. `what` says what did not happen.
+ */
+export function swallowed(source: string, what: string, err: unknown, level: "debug" | "warn" = "debug"): void {
+  diagEvent(level, source, `${what}: ${errorText(err)}`);
+}
+
+/** The same, as a handler: `.catch(swallow("windows", "end the drag"))`. */
+export const swallow =
+  (source: string, what: string, level: "debug" | "warn" = "debug") =>
+  (err: unknown): void =>
+    swallowed(source, what, err, level);
+
+/** The same, going on with `null`: `await over(files).catch(orNull("files", "tell the window"))`. */
+export const orNull =
+  (source: string, what: string, level: "debug" | "warn" = "debug") =>
+  (err: unknown): null => {
+    swallowed(source, what, err, level);
+    return null;
+  };
 
 /** A backend command was rejected (`call()`): its name, time and error — never its arguments. */
 export function noteRejected(cmd: string, err: unknown, ms: number): void {

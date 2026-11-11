@@ -56,7 +56,7 @@
   import { containerRun, dockerLogin } from "../api";
   import { settings } from "../settings/settings.svelte";
   import { notifyError, notifySuccess } from "../stores/toasts.svelte";
-  import { diag } from "../api/diag";
+  import { diag, orNull, swallowed } from "../api/diag";
   import { aboutSession } from "../stores/diag.svelte";
   import {
     versionArgs,
@@ -511,8 +511,9 @@
             next.set(c.id, { facts: BLANK_FACTS, key: factsKey(c), at: now });
           }
         }
-      } catch {
+      } catch (e) {
         /* facts are an enrichment — the panel works without them */
+        swallowed("docker", "read the containers' facts", e);
       }
     }
     factsCache = next;
@@ -543,8 +544,9 @@
         subnets = parseNetworkSubnets(res.stdout);
         subnetsOf = key;
       }
-    } catch {
+    } catch (e) {
       /* subnets are an enrichment */
+      swallowed("docker", "read the networks' subnets", e);
     }
   }
 
@@ -625,7 +627,7 @@
         const [ps, st, ev] = await Promise.all([
           runQuery(psArgs()),
           runQuery(statsArgs()),
-          runQuery(eventsArgs()).catch(() => null),
+          runQuery(eventsArgs()).catch(orNull("docker", "read the events")),
         ]);
         containers = parsePs(ps.stdout);
         // Events are an enrichment: a docker that refuses them leaves the last answer.

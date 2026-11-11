@@ -5,6 +5,7 @@
   // the collapse, so the tree works the same in any dock. Owns its own
   // search/folder-collapse/drag UI state and emits intents via callbacks; all
   // data mutation (persisting moves, opening modals) happens in the parent.
+  import { swallowed } from "../api/diag";
   import type { ServerProfile } from "../types";
   import { tooltip } from "../actions/tooltip";
   import {
@@ -85,8 +86,9 @@
   $effect(() => {
     try {
       localStorage.setItem(COLLAPSE_KEY, JSON.stringify(collapsedFolders));
-    } catch {
+    } catch (e) {
       /* non-fatal */
+      swallowed("servers", "keep the folded folders", e, "warn");
     }
   });
 
@@ -301,8 +303,9 @@
     if (id !== null) {
       try {
         listEl?.releasePointerCapture(event.pointerId);
-      } catch {
+      } catch (e) {
         /* already released */
+        swallowed("servers", "release the pointer", e);
       }
       if (kind === "server" && target !== null) {
         const server = servers.find((s) => s.id === id);

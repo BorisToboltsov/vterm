@@ -4,6 +4,7 @@
 //! the editor contract is identical; only the I/O backend differs (std/tokio fs
 //! vs the SFTP session).
 
+use crate::diag::Logged;
 use crate::error::{AppError, AppResult};
 use crate::sftp::{
     apply_eol, detect_eol, sha256_hex, FileEntry, TextFile, WriteResult, HARD_MAX_EDIT_SIZE,
@@ -559,7 +560,9 @@ pub(crate) async fn copy_staged(
     drop(dst);
     if let Err(e) = copied {
         if told.is_none() {
-            let _ = tokio::fs::remove_file(&tmp).await;
+            tokio::fs::remove_file(&tmp)
+                .await
+                .log_debug("files", "remove the temporary file");
         }
         return Err(e);
     }
@@ -568,10 +571,14 @@ pub(crate) async fn copy_staged(
         Err(_) => source.map(|m| m.permissions()),
     };
     if let Some(permissions) = kept {
-        let _ = tokio::fs::set_permissions(&tmp, permissions).await;
+        tokio::fs::set_permissions(&tmp, permissions)
+            .await
+            .log_warn("files", "set the mode of the temporary file");
     }
     if let Err(e) = tokio::fs::rename(&tmp, to).await {
-        let _ = tokio::fs::remove_file(&tmp).await;
+        tokio::fs::remove_file(&tmp)
+            .await
+            .log_debug("files", "remove the temporary file");
         return Err(format!("rename onto {to}: {e}").into());
     }
     Ok(())
@@ -694,10 +701,14 @@ pub async fn write_text(
     #[cfg(unix)]
     if let Some(m) = existing.as_ref().and_then(file_mode) {
         use std::os::unix::fs::PermissionsExt;
-        let _ = tokio::fs::set_permissions(&tmp, std::fs::Permissions::from_mode(m)).await;
+        tokio::fs::set_permissions(&tmp, std::fs::Permissions::from_mode(m))
+            .await
+            .log_warn("files", "set the mode of the temporary file");
     }
     if let Err(e) = tokio::fs::rename(&tmp, path).await {
-        let _ = tokio::fs::remove_file(&tmp).await;
+        tokio::fs::remove_file(&tmp)
+            .await
+            .log_debug("files", "remove the temporary file");
         return Err(format!("rename onto {path}: {e}").into());
     }
 
@@ -738,7 +749,9 @@ pub async fn write_editor_copy(
     .await;
     if let Err(e) = result {
         drop(file);
-        let _ = tokio::fs::remove_file(path).await;
+        tokio::fs::remove_file(path)
+            .await
+            .log_debug("files", "remove the file");
         return Err(format!("write local copy {path}: {e}").into());
     }
     Ok(())

@@ -158,7 +158,14 @@ where
             Ok(()) => Ok(Vec::new()),
             Err(message) => Err(message.clone()),
         };
-        let _ = tokio::task::spawn_blocking(move || send.send(last)).await;
+        match tokio::task::spawn_blocking(move || send.send(last)).await {
+            Ok(Ok(())) => {}
+            // The reader is gone: the system took what it wanted, or gave up.
+            Ok(Err(_)) => {
+                tracing::debug!(source = "files", "feed's last word: nobody reads any more")
+            }
+            Err(e) => tracing::warn!(source = "files", "feed's last word not handed over: {e}"),
+        }
         ended(moved, outcome);
     });
     RemoteReader::new(blocks, stall)
@@ -478,7 +485,9 @@ mod tests {
                 async move { Ok(source) },
                 Duration::from_secs(5),
                 move |moved, outcome| {
-                    let _ = said.send((moved, outcome));
+                    if let Err(e) = said.send((moved, outcome)) {
+                        eprintln!("cleanup: {e}");
+                    }
                 },
             );
             assert_eq!(drain(reader, step).unwrap(), bytes, "step {step}");
@@ -509,7 +518,9 @@ mod tests {
             },
             Duration::from_secs(5),
             move |moved, outcome| {
-                let _ = said.send((moved, outcome));
+                if let Err(e) = said.send((moved, outcome)) {
+                    eprintln!("cleanup: {e}");
+                }
             },
         );
         let error = drain(reader, 4096).unwrap_err();
@@ -801,7 +812,9 @@ mod tests {
             async move { Ok(std::io::Cursor::new(bytes)) },
             Duration::from_secs(5),
             move |moved, outcome| {
-                let _ = said.send((moved, outcome));
+                if let Err(e) = said.send((moved, outcome)) {
+                    eprintln!("cleanup: {e}");
+                }
             },
         );
         let mut buf = [0u8; 10];

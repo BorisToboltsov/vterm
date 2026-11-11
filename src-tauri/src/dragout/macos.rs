@@ -18,6 +18,7 @@
 //! main thread when the job has ended.
 
 use super::{OutItem, OutSpec};
+use crate::diag::Logged;
 use block2::{DynBlock, RcBlock};
 use objc2::rc::Retained;
 use objc2::runtime::{AnyObject, ProtocolObject};
@@ -146,7 +147,8 @@ define_class!(
             tauri::async_runtime::spawn(async move {
                 let fetched = super::fetch(&app, &origin, &spec, &item, &dest).await;
                 // The block is AppKit's: it is called where it was given.
-                let _ = app.run_on_main_thread(move || done.call(fetched.is_ok()));
+                app.run_on_main_thread(move || done.call(fetched.is_ok()))
+                    .log_debug("files", "finish the promise on the main thread");
             });
         }
 
