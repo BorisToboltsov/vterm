@@ -45,6 +45,8 @@ vi.mock("../api", async (importOriginal) => ({
 import K8sPanel from "./K8sPanel.svelte";
 import { peekDockState, resetDockState } from "../stores/dockstate.svelte";
 import { panelSplits, resetPanelShares } from "../stores/panelsplit.svelte";
+import { resetListOrders } from "../stores/listview.svelte";
+import { settings } from "../settings/settings.svelte";
 
 /** A fixed pause — only for "and nothing more happens": there is no event to wait for. */
 const settle = (ms = 120) => new Promise((r) => setTimeout(r, ms));
@@ -84,9 +86,77 @@ beforeEach(() => {
   answer = null;
   slow = null;
   resetDockState();
+  resetListOrders();
 });
 // A test that ends with calls still out must not leave them to the next one.
 afterEach(idle);
+
+describe("K8sPanel — shared context controls", () => {
+  const pod = { metadata: { name: "web-menu", namespace: "shop" }, spec: { nodeName: "worker" }, status: { phase: "Running" } };
+  const json = (items: unknown[]) => ({ stdout: JSON.stringify({ items }), stderr: "", exitCode: 0 });
+  async function mountMenu() {
+    answer = (args) => args.includes("get") && args.includes("pods") ? json([pod]) : undefined;
+    render(K8sPanel, { sessionId: "k-menu", visible: true, sessionReady: true });
+    await idle();
+  }
+  it("preserves pod actions and shares sorting with the header without querying the cluster", async () => {
+    await mountMenu();
+    const before = calls.length;
+    await fireEvent.contextMenu(screen.getByTestId("k8s-row"));
+    expect(screen.getByRole("menuitem", { name: "View details" })).toBeInTheDocument();
+    await fireEvent.click(screen.getByRole("menuitem", { name: "View" }));
+    await fireEvent.click(screen.getByRole("menuitem", { name: /^Order:/ }));
+    await fireEvent.click(screen.getByRole("menuitemcheckbox", { name: "Name" }));
+    expect(settings.listOrders["k8s.pods"].sort.key).toBe("name");
+    await fireEvent.click(screen.getByTestId("k8s-pods-header-view"));
+    expect(screen.getByRole("menuitem", { name: "Order: Name" })).toBeInTheDocument();
+    expect(calls).toHaveLength(before);
+  });
+  it("filters from blank space, resets an empty result and refreshes the current scope", async () => {
+    await mountMenu();
+    await fireEvent.change(screen.getByTestId("k8s-namespace"), { target: { value: "shop" } });
+    await idle();
+    const field = within(screen.getByTestId("k8s-pods-header")).getByRole("textbox");
+    await fireEvent.input(field, { target: { value: "missing" } });
+    await fireEvent.contextMenu(screen.getByTestId("k8s-list-part"));
+    expect(screen.queryByRole("menuitem", { name: "View details" })).toBeNull();
+    await fireEvent.click(screen.getByRole("menuitem", { name: "Filters" }));
+    await fireEvent.click(screen.getByRole("menuitem", { name: "Reset search and filters" }));
+    expect(screen.getByTestId("k8s-row")).toHaveTextContent("web-menu");
+    calls.length = 0;
+    await fireEvent.contextMenu(screen.getByTestId("k8s-list-part"));
+    await fireEvent.click(screen.getByRole("menuitem", { name: "Refresh" }));
+    await idle();
+    expect(count("get pods")).toBe(1);
+    expect(calls.find((c) => c.includes("get pods"))).toContain("--namespace shop");
+    expect(calls.find((c) => c.includes("get pods"))).toContain("--context staging-eu");
+  });
+  it("uses network controls after changing tabs, even when no services exist", async () => {
+    await mountMenu();
+    await fireEvent.click(screen.getByTestId("k8s-subtab-network"));
+    await idle();
+    await fireEvent.contextMenu(screen.getByTestId("k8s-list-part"));
+    expect(screen.queryByRole("menuitem", { name: "Filters" })).toBeNull();
+    await fireEvent.click(screen.getByRole("menuitem", { name: "View" }));
+    await fireEvent.click(screen.getByRole("menuitemcheckbox", { name: "Route" }));
+    await idle();
+    expect(count("get endpointslices")).toBe(1);
+    await fireEvent.contextMenu(screen.getByTestId("k8s-list-part"));
+    await fireEvent.click(screen.getByRole("menuitem", { name: "View" }));
+    expect(screen.getByRole("menuitemcheckbox", { name: "Route" })).toHaveAttribute("aria-checked", "true");
+  });
+  it("offers refresh on an empty list and suppresses the menu during initial loading", async () => {
+    slow = () => 20;
+    render(K8sPanel, { sessionId: "k-menu-empty", visible: true, sessionReady: true });
+    const skeleton = await screen.findByTestId("k8s-skeleton");
+    await fireEvent.contextMenu(skeleton);
+    expect(screen.queryByRole("menu")).toBeNull();
+    await idle();
+    await fireEvent.contextMenu(screen.getByTestId("k8s-list-part"));
+    expect(screen.getByRole("menuitem", { name: "Refresh" })).toBeInTheDocument();
+    expect(screen.queryByRole("menuitem", { name: "View details" })).toBeNull();
+  });
+});
 
 describe("K8sPanel — probing the cluster", () => {
   it("probes a host with a kubeconfig once, not in a loop", async () => {
@@ -528,6 +598,25 @@ describe("K8sPanel — the Cluster view (stage 5)", () => {
     await idle();
     return calls.slice(before);
   }
+
+  it("scopes event controls under Events and lets View reopen a collapsed section", async () => {
+    await openCluster("k-menu-cluster", []);
+    await fireEvent.contextMenu(screen.getByTestId("k8s-list-part"));
+    expect(screen.queryByRole("menuitem", { name: "Filters" })).toBeNull();
+    await fireEvent.click(screen.getByRole("menuitem", { name: "Events" }));
+    await fireEvent.click(screen.getByRole("menuitem", { name: "Filters" }));
+    await fireEvent.click(screen.getByRole("menuitem", { name: "Find in this list" }));
+    expect(screen.getByRole("textbox")).toHaveFocus();
+    await fireEvent.contextMenu(screen.getByTestId("k8s-list-part"));
+    await fireEvent.click(screen.getByRole("menuitem", { name: "View" }));
+    await fireEvent.click(screen.getByRole("menuitemcheckbox", { name: "Events" }));
+    expect(screen.queryByRole("textbox")).toBeNull();
+    await fireEvent.contextMenu(screen.getByTestId("k8s-list-part"));
+    expect(screen.queryByRole("menuitem", { name: "Events" })).toBeNull();
+    await fireEvent.click(screen.getByRole("menuitem", { name: "View" }));
+    await fireEvent.click(screen.getByRole("menuitemcheckbox", { name: "Events" }));
+    expect(screen.getByRole("textbox")).toBeInTheDocument();
+  });
 
   it("lists the claims with who mounts each and why one waits; the pods are asked only for them", async () => {
     await openCluster("k-claims", [claim("data-db-0", "Bound"), claim("spare", "Pending")]);

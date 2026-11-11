@@ -5,7 +5,7 @@
   // z-index (backdrop z-40 / menu z-50) per the overlay invariant.
   import Icon from "./Icon.svelte";
   import { t } from "../i18n";
-  import { clampMenuPosition, isAction, type MenuAction, type OpenMenu } from "./ctxmenu";
+  import { clampMenuPosition, isAction, menuPathOpen, toggleMenuPath, type MenuAction, type MenuItem, type OpenMenu } from "./ctxmenu";
 
   let { menu, onclose }: { menu: OpenMenu | null; onclose: () => void } = $props();
 
@@ -14,12 +14,12 @@
   let viewportWidth = $state(0);
   let viewportHeight = $state(0);
   const pos = $derived(clampMenuPosition(menu?.x ?? 0, menu?.y ?? 0, width, height, viewportWidth, viewportHeight));
-  let expanded = $state<string | null>(null);
+  let expanded = $state<string[]>([]);
 
   // Dimensions update after expansion and on viewport resize as well as opening.
   // A fresh menu always starts collapsed, even when it replaces another one.
   $effect(() => {
-    if (menu) expanded = null;
+    if (menu) expanded = [];
   });
 
   function pick(action: MenuAction) {
@@ -50,6 +50,48 @@
   {/if}
 {/snippet}
 
+{#snippet rows(items: MenuItem[], path: string[])}
+  {#each items as item, i (i)}
+    {#if item.kind === "separator"}
+      <div class="my-1 border-t border-edge/60"></div>
+    {:else if item.kind === "submenu"}
+      {@const next = [...path, item.key]}
+      {@const opened = menuPathOpen(expanded, next)}
+      <button
+        type="button"
+        class="flex w-full items-center gap-2 px-2 py-1 text-left text-muted hover:bg-edge hover:text-text"
+        style:padding-left={`${0.5 + path.length * 1.5}rem`}
+        role="menuitem"
+        aria-expanded={opened}
+        onclick={() => (expanded = toggleMenuPath(expanded, next))}
+      >
+        {#if item.icon}<Icon name={item.icon} size={13} />{/if}
+        <span class="flex-1 truncate">{item.label}</span>
+        <Icon name={opened ? "chevronDown" : "chevronRight"} size={12} />
+      </button>
+      {#if opened}{@render rows(item.items, next)}{/if}
+    {:else if isAction(item)}
+      <button
+        type="button"
+        class="flex w-full items-center gap-2 px-2 py-1 text-left hover:bg-edge hover:text-text disabled:pointer-events-none disabled:opacity-40 {item.danger ? 'text-danger' : 'text-muted'}"
+        style:padding-left={`${0.5 + path.length * 1.5}rem`}
+        role={item.checked === undefined ? "menuitem" : "menuitemcheckbox"}
+        aria-checked={item.checked}
+        disabled={item.disabled}
+        onclick={() => pick(item)}
+      >
+        {#if item.checked !== undefined}
+          {@render tick(item)}
+        {:else if path.length === 0 && item.icon}
+          <Icon name={item.icon} size={13} />
+        {/if}
+        <span class="flex-1 truncate">{item.label}</span>
+        {@render hint(item)}
+      </button>
+    {/if}
+  {/each}
+{/snippet}
+
 {#if menu}
   <button
     type="button"
@@ -68,59 +110,6 @@
     style="left:{pos.x}px; top:{pos.y}px"
     role="menu"
   >
-    {#each menu.items as item, i (i)}
-      {#if item.kind === "separator"}
-        <div class="my-1 border-t border-edge/60"></div>
-      {:else if item.kind === "submenu"}
-        <button
-          type="button"
-          class="flex w-full items-center gap-2 px-2 py-1 text-left text-muted hover:bg-edge hover:text-text"
-          role="menuitem"
-          aria-expanded={expanded === item.key}
-          onclick={() => (expanded = expanded === item.key ? null : item.key)}
-        >
-          {#if item.icon}<Icon name={item.icon} size={13} />{/if}
-          <span class="flex-1 truncate">{item.label}</span>
-          <Icon name={expanded === item.key ? "chevronDown" : "chevronRight"} size={12} />
-        </button>
-        {#if expanded === item.key}
-          {#each item.items as sub, j (j)}
-            <button
-              type="button"
-              class="flex w-full items-center gap-2 py-1 pl-8 pr-2 text-left hover:bg-edge hover:text-text disabled:pointer-events-none disabled:opacity-40 {sub.danger
-                ? 'text-danger'
-                : 'text-muted'}"
-              role={sub.checked === undefined ? "menuitem" : "menuitemcheckbox"}
-              aria-checked={sub.checked}
-              disabled={sub.disabled}
-              onclick={() => pick(sub)}
-            >
-              {@render tick(sub)}
-              <span class="flex-1 truncate">{sub.label}</span>
-              {@render hint(sub)}
-            </button>
-          {/each}
-        {/if}
-      {:else if isAction(item)}
-        <button
-          type="button"
-          class="flex w-full items-center gap-2 px-2 py-1 text-left hover:bg-edge hover:text-text disabled:pointer-events-none disabled:opacity-40 {item.danger
-            ? 'text-danger'
-            : 'text-muted'}"
-          role={item.checked === undefined ? "menuitem" : "menuitemcheckbox"}
-          aria-checked={item.checked}
-          disabled={item.disabled}
-          onclick={() => pick(item)}
-        >
-          {#if item.checked === undefined}
-            {#if item.icon}<Icon name={item.icon} size={13} />{/if}
-          {:else}
-            {@render tick(item)}
-          {/if}
-          <span class="flex-1 truncate">{item.label}</span>
-          {@render hint(item)}
-        </button>
-      {/if}
-    {/each}
+    {@render rows(menu.items, [])}
   </div>
 {/if}

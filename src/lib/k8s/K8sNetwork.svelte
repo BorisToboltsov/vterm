@@ -55,6 +55,13 @@
     showMenu: (e: MouseEvent, items: MenuItem[]) => void;
   } = $props();
 
+  export function contextItems(): MenuItem[] {
+    return [{ kind: "submenu", key: "network-view", icon: "eye", label: t("list.view"), items: [
+      { label: t("k8s.viewList"), checked: view === "list", onSelect: () => onView?.("list") },
+      { label: t("k8s.viewRoute"), checked: view === "route", onSelect: () => onView?.("route") },
+    ] }];
+  }
+
   function copy(text: string) {
     void navigator.clipboard?.writeText(text);
   }

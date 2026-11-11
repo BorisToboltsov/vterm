@@ -41,6 +41,8 @@ export const en = {
   // ── Lists: filter row, facets, «View» menu (v1.29) ──
   "list.shownOf": "{shown} of {total}",
   "list.clear": "Clear the filter",
+  "list.find": "Find in this list",
+  "list.resetAll": "Reset search and filters",
   "list.filters": "Filters",
   "list.view": "View",
   "list.groups": "Groups",

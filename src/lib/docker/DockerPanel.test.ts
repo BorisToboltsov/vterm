@@ -47,6 +47,9 @@ vi.mock("../api", async (importOriginal) => ({
 import { flushSync } from "svelte";
 import DockerPanel from "./DockerPanel.svelte";
 import { resetDockState } from "../stores/dockstate.svelte";
+import { resetListOrders } from "../stores/listview.svelte";
+import { settings } from "../settings/settings.svelte";
+import { hiddenFields, toggleField } from "../stores/colwidths.svelte";
 import { panelSplits, resetPanelShares, setPanelShare } from "../stores/panelsplit.svelte";
 
 /** Give the row the two parts share a width, as the browser's observer would
@@ -78,7 +81,99 @@ async function mount(id: string) {
 beforeEach(() => {
   calls.length = 0;
   resetDockState();
+  resetListOrders();
   resetPanelShares();
+});
+
+describe("DockerPanel — shared context controls", () => {
+  it("keeps row actions and changes the header's grouping through nested View", async () => {
+    await mount("d-menu-row");
+    await fireEvent.contextMenu(screen.getByText("edge-proxy"));
+    expect(screen.getByRole("menuitem", { name: "Inspect" })).toBeInTheDocument();
+    await fireEvent.click(screen.getByRole("menuitem", { name: "View" }));
+    await fireEvent.click(screen.getByRole("menuitem", { name: /^Groups:/ }));
+    await fireEvent.click(screen.getByRole("menuitemcheckbox", { name: "Status" }));
+    expect(settings.listOrders["docker.containers"].group).toBe("state");
+    expect(screen.queryByRole("menu")).toBeNull();
+    await fireEvent.click(screen.getByTestId("docker-list-header-view"));
+    expect(screen.getByRole("menuitem", { name: "Groups: Status" })).toBeInTheDocument();
+  });
+
+  it("offers search and reset on empty filtered space, without object actions", async () => {
+    await mount("d-menu-filter");
+    await fireEvent.contextMenu(screen.getByTestId("docker-list-part"));
+    await fireEvent.click(screen.getByRole("menuitem", { name: "Filters" }));
+    await fireEvent.click(screen.getByRole("menuitem", { name: "Status: All" }));
+    await fireEvent.click(screen.getByRole("menuitemcheckbox", { name: /^running/ }));
+    expect(screen.getByTestId("docker-list-header-funnel")).toHaveTextContent("1");
+    const field = within(screen.getByTestId("docker-list-header")).getByRole("textbox");
+    await fireEvent.input(field, { target: { value: "missing" } });
+    await fireEvent.contextMenu(screen.getByTestId("docker-list-part"));
+    expect(screen.queryByRole("menuitem", { name: "Inspect" })).toBeNull();
+    await fireEvent.click(screen.getByRole("menuitem", { name: "Filters" }));
+    await fireEvent.click(screen.getByRole("menuitem", { name: "Find in this list" }));
+    expect(field).toHaveFocus();
+    await fireEvent.contextMenu(screen.getByTestId("docker-list-part"));
+    await fireEvent.click(screen.getByRole("menuitem", { name: "Filters" }));
+    await fireEvent.click(screen.getByRole("menuitem", { name: "Reset search and filters" }));
+    expect(field).toHaveValue("");
+    expect(screen.getByTestId("docker-list-header-funnel")).not.toHaveClass("text-accent");
+    expect(screen.getByText("edge-proxy")).toBeInTheDocument();
+  });
+
+  it("offers columns only in the wide list and changes the same visibility setting", async () => {
+    await mount("d-menu-columns");
+    const list = screen.getByTestId("docker-list-part");
+    await fireEvent.contextMenu(list);
+    await fireEvent.click(screen.getByRole("menuitem", { name: "View" }));
+    expect(screen.queryByRole("menuitem", { name: "Columns" })).toBeNull();
+    await fireEvent.keyDown(window, { key: "Escape" });
+    Object.defineProperty(list, "clientWidth", { configurable: true, value: 1200 });
+    resize(1200);
+    await fireEvent.contextMenu(list);
+    await fireEvent.click(screen.getByRole("menuitem", { name: "View" }));
+    await fireEvent.click(screen.getByRole("menuitem", { name: "Columns" }));
+    const before = hiddenFields("docker.containers").includes("image");
+    try {
+      await fireEvent.click(screen.getByRole("menuitemcheckbox", { name: "Image" }));
+      expect(hiddenFields("docker.containers").includes("image")).toBe(!before);
+    } finally {
+      if (hiddenFields("docker.containers").includes("image") !== before) toggleField("docker.containers", "image");
+    }
+  });
+
+  it("uses image controls after switching tabs and refreshes disk usage as the toolbar does", async () => {
+    await mount("d-menu-images");
+    await fireEvent.click(screen.getByRole("button", { name: "Images" }));
+    await screen.findByTestId("docker-images-header");
+    await fireEvent.contextMenu(screen.getByTestId("docker-list-part"));
+    await fireEvent.click(screen.getByRole("menuitem", { name: "View" }));
+    await fireEvent.click(screen.getByRole("menuitem", { name: /^Groups:/ }));
+    expect(screen.getByRole("menuitemcheckbox", { name: "Repository" })).toBeInTheDocument();
+    expect(screen.queryByRole("menuitemcheckbox", { name: "Status" })).toBeNull();
+    await fireEvent.keyDown(window, { key: "Escape" });
+    const before = calls.filter((c) => c.startsWith("docker system df")).length;
+    await fireEvent.contextMenu(screen.getByTestId("docker-list-part"));
+    await fireEvent.click(screen.getByRole("menuitem", { name: "Refresh" }));
+    await waitFor(() => expect(calls.filter((c) => c.startsWith("docker system df")).length).toBeGreaterThan(before));
+  });
+
+  it("switches the network graph through View and hides filters that do not apply to it", async () => {
+    await mount("d-menu-net");
+    await fireEvent.click(screen.getByTestId("docker-subtab-networks"));
+    await screen.findByTestId("docker-net-header");
+    await fireEvent.contextMenu(screen.getByTestId("docker-list-part"));
+    expect(screen.getByRole("menuitem", { name: "Filters" })).toBeInTheDocument();
+    await fireEvent.click(screen.getByRole("menuitem", { name: "View" }));
+    await fireEvent.click(screen.getByRole("menuitemcheckbox", { name: "Graph" }));
+    expect(screen.queryByTestId("docker-net-header")).toBeNull();
+    await fireEvent.contextMenu(screen.getByTestId("docker-list-part"));
+    expect(screen.queryByRole("menuitem", { name: "Filters" })).toBeNull();
+    await fireEvent.click(screen.getByRole("menuitem", { name: "View" }));
+    expect(screen.getByRole("menuitemcheckbox", { name: "Graph" })).toHaveAttribute("aria-checked", "true");
+    await fireEvent.click(screen.getByRole("menuitemcheckbox", { name: "List" }));
+    expect(screen.getByTestId("docker-net-header")).toBeInTheDocument();
+  });
 });
 
 describe("DockerPanel — where a container's details open", () => {

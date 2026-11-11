@@ -30,20 +30,20 @@ export interface MenuSeparator {
 }
 
 /** An inline, expandable group of sub-actions (e.g. git reset modes). */
-export interface MenuSubmenu {
+export interface MenuSubmenu<T = MenuAction> {
   kind: "submenu";
   /** Stable id used to track which submenu is expanded. */
   key: string;
   icon?: IconName;
   label: string;
-  items: MenuAction[];
+  items: T[];
 }
 
-export type MenuItem = MenuAction | MenuSeparator | MenuSubmenu;
+export type MenuItem = MenuAction | MenuSeparator | MenuSubmenu<MenuItem>;
 
 /** Reuse an existing menu inside one expandable group, without a second nesting level. */
 export function menuActions(items: readonly MenuItem[]): MenuAction[] {
-  return items.flatMap((item) => item.kind === "submenu" ? item.items : isAction(item) ? [item] : []);
+  return items.flatMap((item) => item.kind === "submenu" ? menuActions(item.items) : isAction(item) ? [item] : []);
 }
 
 /** An open menu: viewport position + the rows to show. */
@@ -76,4 +76,13 @@ export function clampMenuPosition(
 /** Type guard: a real (clickable) action row, not a separator/submenu. */
 export function isAction(item: MenuItem): item is MenuAction {
   return item.kind === undefined || item.kind === "action";
+}
+
+/** A single expanded path keeps sibling groups mutually exclusive at each level. */
+export function menuPathOpen(expanded: readonly string[], path: readonly string[]): boolean {
+  return path.every((key, index) => expanded[index] === key);
+}
+
+export function toggleMenuPath(expanded: readonly string[], path: readonly string[]): string[] {
+  return menuPathOpen(expanded, path) ? path.slice(0, -1) : [...path];
 }

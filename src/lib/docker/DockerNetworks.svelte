@@ -17,7 +17,7 @@
   import ListHeader from "../ui/ListHeader.svelte";
   import { listMenuText, type ListLabels } from "../ui/listtext";
   import { filterSummary, isFiltered, keeps, NO_FILTER, type ListFilter } from "../ui/listview";
-  import type { OpenMenu } from "../ui/ctxmenu";
+  import type { MenuItem, OpenMenu } from "../ui/ctxmenu";
   import { tooltip } from "../actions/tooltip";
   import {
     removeNetworkArgs,
@@ -116,6 +116,25 @@
   const LABELS: ListLabels = { facet: () => t("docker.driver") };
   const folded = (key: string) => collapsed.includes(key);
 
+  let header = $state<{ contextItems(): MenuItem[] }>();
+
+  export function contextItems(): MenuItem[] {
+    return [
+      { kind: "submenu", key: "network-view", icon: "eye", label: t("list.view"), items: [
+        { label: t("docker.viewList"), checked: view === "list", onSelect: () => onView?.("list") },
+        { label: t("docker.viewGraph"), checked: view === "graph", onSelect: () => onView?.("graph") },
+        ...(view === "list" ? [
+          { kind: "separator" as const },
+          ...(["ports", "networks", "volumes"] as const).map((key) => ({
+            label: t(key === "ports" ? "docker.ports" : key === "networks" ? "docker.networks" : "docker.volumes"),
+            checked: !folded(key), onSelect: () => ontoggle(key),
+          })),
+        ] : []),
+      ] },
+      ...(view === "list" ? header?.contextItems() ?? [] : []),
+    ];
+  }
+
   /** `8080 → 80/tcp`, a declared-only `7000/tcp`, or docker's own text when unrecognized. */
   function mapping(row: PortRow): string {
     if (row.kind === "raw") return row.raw;
@@ -167,6 +186,7 @@
   {:else}
     <!-- The list's filter row carries the switch, where the strip had it. -->
     <ListHeader
+      bind:this={header}
       {items}
       schema={NET_SCHEMA}
       {filter}

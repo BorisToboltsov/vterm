@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { clampMenuPosition, isAction, menuActions, type MenuItem } from "./ctxmenu";
+import { clampMenuPosition, isAction, menuActions, menuPathOpen, toggleMenuPath, type MenuItem } from "./ctxmenu";
 
 describe("clampMenuPosition", () => {
   const vw = 1000;
@@ -51,10 +51,21 @@ it("embeds existing actions without changing their checks, availability or callb
   const first = { label: "Name", checked: true, onSelect: () => {} };
   const second = { label: "Hidden", checked: false, disabled: true, onSelect: () => {} };
   const result = menuActions([
-    { kind: "submenu", key: "sort", label: "Sort", items: [first] },
+    { kind: "submenu", key: "view", label: "View", items: [
+      { kind: "submenu", key: "sort", label: "Sort", items: [first, { kind: "separator" }] },
+    ] },
     { kind: "separator" }, second,
   ]);
   expect(result).toEqual([first, second]);
   expect(result[0]).toBe(first);
   expect(result[1]).toBe(second);
+});
+
+it("tracks one expanded path, including repeated keys under different parents", () => {
+  expect(menuPathOpen(["view", "sort"], ["view"])).toBe(true);
+  expect(menuPathOpen(["view", "sort"], ["events", "sort"])).toBe(false);
+  expect(menuPathOpen([], ["view"])).toBe(false);
+  expect(toggleMenuPath(["view", "sort"], ["view", "columns"])).toEqual(["view", "columns"]);
+  expect(toggleMenuPath(["view", "sort"], ["view", "sort"])).toEqual(["view"]);
+  expect(toggleMenuPath(["view", "sort"], ["view"])).toEqual([]);
 });
