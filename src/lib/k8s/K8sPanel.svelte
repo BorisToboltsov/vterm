@@ -53,6 +53,8 @@
   import { kubectlRun } from "../api";
   import { settings } from "../settings/settings.svelte";
   import { notifyError, notifySuccess } from "../stores/toasts.svelte";
+  import { diag } from "../api/diag";
+  import { aboutSession } from "../stores/diag.svelte";
   import {
     kubectlProg,
     withScope,
@@ -655,6 +657,10 @@
           claimUsers = pods.exitCode === 0 ? usersOfClaims(listItems(pods.stdout)) : null;
         } else claimUsers = null;
       }
+      if (pollFailure) {
+        const failures = pollFailure.count;
+        diag.info("k8s", `poll back after ${failures} failures`, { failures }, aboutSession(sessionId));
+      }
       pollFailure = null;
     } catch (e) {
       failedRead(String(e));
@@ -670,11 +676,11 @@
    */
   const refresh = singleFlight(readNow);
 
-  /** A read failed: a strip in the panel, and — once per streak — a quiet note in the journal. */
+  /** A read failed: a strip in the panel, and — once per streak — an event of the diagnostics. */
   function failedRead(text: string) {
     const { failure, news } = pollFailed(pollFailure, text, Date.now());
     pollFailure = failure;
-    if (news) notifyError(text, { source: "k8s", sessionId, quiet: true });
+    if (news) diag.warn("k8s", `poll failed: ${text}`, undefined, aboutSession(sessionId));
   }
 
   /** Probe + first load against the current scope (from mount, retry, or scope change). */

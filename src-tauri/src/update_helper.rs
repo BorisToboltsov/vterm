@@ -185,7 +185,11 @@ pub fn entry() -> bool {
         outcome
     })();
     if let Err(e) = result {
-        eprintln!("{e}");
+        // No window to tell and no stderr anyone reads: its own diagnostics file.
+        crate::diag::helper(
+            crate::diag::Level::Error,
+            format!("update helper failed: {e}"),
+        );
     }
     true
 }

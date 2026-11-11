@@ -283,6 +283,31 @@ pub fn remove_journal() {
     }
 }
 
+// ── Diagnostics threshold ──────────────────────────────────────────────────────
+//
+// The threshold the user picked for diagnostics (ADR 0063). A store file of its
+// own and not a window setting: the first events come before any window could
+// say it, and the update helper — a process with no window — reads it too.
+
+fn diag_path() -> Option<PathBuf> {
+    config_file("diag.json")
+}
+
+/// The diagnostics settings; the defaults on the first run.
+pub fn load_diag() -> crate::diag::Settings {
+    let Some(path) = diag_path() else {
+        return crate::diag::Settings::default();
+    };
+    read_store(&path)
+}
+
+/// Write the diagnostics settings.
+pub fn save_diag(settings: &crate::diag::Settings) -> AppResult<()> {
+    let path = diag_path().ok_or("could not resolve config directory")?;
+    let json = serde_json::to_vec(settings).map_err(|e| format!("serialize: {e}"))?;
+    write_atomic(&path, &json)
+}
+
 // ── Host-key store (vterm-managed known_hosts) ─────────────────────────────────
 //
 // Maps "host:port" → host-key fingerprint (SHA256). Used to verify server

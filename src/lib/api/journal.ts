@@ -4,7 +4,7 @@
 // for the list only while it shows it. Called by the journal store
 // (`stores/journal.svelte.ts`) alone.
 
-import { invoke } from "@tauri-apps/api/core";
+import { call } from "./call";
 import type { JournalEntry, JournalKind, JournalSummary } from "../types";
 
 /** Heard by every window after any change: a {@link JournalSummary}. */
@@ -20,32 +20,32 @@ export interface JournalNote {
 }
 
 export function journalNote(note: JournalNote): Promise<JournalSummary> {
-  return invoke<JournalSummary>("journal_note", { note });
+  return call<JournalSummary>("journal_note", { note });
 }
 
 /** Every entry, newest change first. */
 export function journalList(): Promise<JournalEntry[]> {
-  return invoke<JournalEntry[]>("journal_list");
+  return call<JournalEntry[]>("journal_list");
 }
 
 export function journalSummary(): Promise<JournalSummary> {
-  return invoke<JournalSummary>("journal_summary");
+  return call<JournalSummary>("journal_summary");
 }
 
 /** These entries — or, given none, every one — have been seen. */
 export function journalMarkRead(ids: string[] | null = null): Promise<JournalSummary> {
-  return invoke<JournalSummary>("journal_mark_read", { ids });
+  return call<JournalSummary>("journal_mark_read", { ids });
 }
 
 export function journalRemove(ids: string[]): Promise<JournalSummary> {
-  return invoke<JournalSummary>("journal_remove", { ids });
+  return call<JournalSummary>("journal_remove", { ids });
 }
 
 export function journalClear(): Promise<JournalSummary> {
-  return invoke<JournalSummary>("journal_clear");
+  return call<JournalSummary>("journal_clear");
 }
 
 /** Kept across launches or not, and for how many days. */
 export function journalConfigure(persist: boolean, days: number): Promise<JournalSummary> {
-  return invoke<JournalSummary>("journal_configure", { persist, days });
+  return call<JournalSummary>("journal_configure", { persist, days });
 }

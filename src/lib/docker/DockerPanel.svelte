@@ -56,6 +56,8 @@
   import { containerRun, dockerLogin } from "../api";
   import { settings } from "../settings/settings.svelte";
   import { notifyError, notifySuccess } from "../stores/toasts.svelte";
+  import { diag } from "../api/diag";
+  import { aboutSession } from "../stores/diag.svelte";
   import {
     versionArgs,
     psArgs,
@@ -667,6 +669,10 @@
         const res = await runQuery(modalArgs, 30);
         modalText = res.stdout + (res.stderr.trim() ? `\n${res.stderr}` : "");
       }
+      if (pollFailure) {
+        const failures = pollFailure.count;
+        diag.info("docker", `poll back after ${failures} failures`, { failures }, aboutSession(sessionId));
+      }
       pollFailure = null;
     } catch (e) {
       failedRead(String(e));
@@ -682,11 +688,11 @@
    */
   const refresh = singleFlight(readNow);
 
-  /** A read failed: a strip in the panel, and — once per streak — a quiet note in the journal. */
+  /** A read failed: a strip in the panel, and — once per streak — an event of the diagnostics. */
   function failedRead(text: string) {
     const { failure, news } = pollFailed(pollFailure, text, Date.now());
     pollFailure = failure;
-    if (news) notifyError(text, { source: "docker", sessionId, quiet: true });
+    if (news) diag.warn("docker", `poll failed: ${text}`, undefined, aboutSession(sessionId));
   }
 
   // ── Actions ────────────────────────────────────────────────────────────────

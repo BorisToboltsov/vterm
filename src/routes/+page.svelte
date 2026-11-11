@@ -246,6 +246,7 @@
   import type { CommandItem } from "#lib/app/command.ts";
   import { notifyError, notifySuccess, notifyInfo } from "#lib/stores/toasts.svelte.ts";
   import { configureJournal, openJournal, startJournal } from "#lib/stores/journal.svelte.ts";
+  import { startDiag } from "#lib/stores/diag.svelte.ts";
   import { JOURNAL_ICON } from "#lib/notifications/journal.ts";
   import {
     applyJob,
@@ -1526,6 +1527,9 @@
     // The journal of notifications is one for all the windows (ADR 0062): each
     // hears it changed, for the bell's dot and its open list.
     unlisteners.push(startJournal());
+    // The diagnostics (ADR 0063): the threshold, this window's uncaught errors,
+    // and — the main window — the backend's panics, said once a minute at most.
+    unlisteners.push(startDiag(isMainWindow));
     listen<SettingsBroadcast>(SETTINGS_EVENT, (e) => applySettingsFrom(e.payload)).then((u) =>
       unlisteners.push(u),
     );

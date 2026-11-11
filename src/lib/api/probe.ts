@@ -2,7 +2,7 @@
 // backend command; the frontend builds argument vectors and parses output in the
 // per-tool pure modules (tls/http). Transport by session: an SSH tab runs it on
 // the server, a local tab spawns the user's own curl/openssl here (ADR 0014).
-import { invoke } from "@tauri-apps/api/core";
+import { call } from "./call";
 import type { ExecOutput } from "../types";
 
 /** Captured result of one probe invocation — the drivers' common shape. */
@@ -23,7 +23,7 @@ export function probeRun(
   timeoutSecs = 20,
   stdin: string | null = null,
 ): Promise<ProbeOutput> {
-  return invoke<ProbeOutput>("probe_run", { sessionId, args, timeoutSecs, stdin });
+  return call<ProbeOutput>("probe_run", { sessionId, args, timeoutSecs, stdin });
 }
 
 /** One host with its ports for `netcheckRun` (mirror of `netcheck::NetTarget`). */
@@ -51,7 +51,7 @@ export function netcheckRun(
   cancelId: string,
   localTool: string | null = null,
 ): Promise<ProbeOutput> {
-  return invoke<ProbeOutput>("netcheck_run", {
+  return call<ProbeOutput>("netcheck_run", {
     sessionId,
     args,
     targets,

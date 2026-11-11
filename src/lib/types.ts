@@ -228,3 +228,58 @@ export interface JournalSummary {
   total: number;
   unreadErrors: boolean;
 }
+
+/** How much a diagnostics event matters (mirror of `diag::Level`, ADR 0063). */
+export type DiagLevel = "error" | "warn" | "info" | "debug" | "trace";
+
+/**
+ * One diagnostics event as the file keeps it (mirror of `diag::Event`): what the
+ * app did, in technical English — data, not interface text. Absent fields were
+ * not said.
+ */
+export interface DiagEvent {
+  /** Unix ms. */
+  at: number;
+  level: DiagLevel;
+  source?: string;
+  text: string;
+  fields?: Record<string, string | number | boolean>;
+  sid?: string;
+  serverId?: string;
+  server?: string;
+  /** The window it happened in. */
+  win?: string;
+  /** How many times: a repeat line counts its series. */
+  count?: number;
+  /** It was a message the user saw. */
+  shown?: boolean;
+}
+
+/** A page of diagnostics (mirror of `diag::query::Page`). */
+export interface DiagPage {
+  events: DiagEvent[];
+  more: boolean;
+  /** Per facet (`level`, `source`, `server`): each value and how many the filter would show. */
+  counts: Record<string, Record<string, number>>;
+  total: number;
+  unreadable: number;
+}
+
+/** The diagnostics as Settings → Journal shows them (mirror of `diag::State`). */
+export interface DiagState {
+  level: DiagLevel;
+  /** The most the files take, in MB. */
+  sizeMb: number;
+  panics: number;
+  bytes: number;
+  /** Why the last write failed; null — it did not. */
+  error: string | null;
+  folder: string | null;
+}
+
+/** What every window hears when the threshold changed or a panic was written (`diag::News`). */
+export interface DiagNews {
+  level: DiagLevel;
+  sizeMb: number;
+  panics: number;
+}

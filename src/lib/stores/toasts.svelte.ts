@@ -6,8 +6,9 @@
 // is one for all the windows and outlives the toast, so what flew by can be
 // read later — masked on the way, for it is kept on disk. A toast is how this
 // window shows it now: the same message said again counts up on its toast
-// instead of standing a second one under it, and a `quiet` note is the
-// journal's alone (a poll that failed again, a reconnect attempt).
+// instead of standing a second one under it. What is told nobody — a poll that
+// failed again, a reconnect attempt — is not a message but an event of the
+// diagnostics (ADR 0063, `api/diag.ts`).
 // Bookkeeping + auto-dismiss timers; the visual is in Toast.svelte.
 
 import { redactSecrets } from "../ai/redact";
@@ -38,8 +39,6 @@ export interface NotifyOptions {
   source?: JournalSource;
   /** The session it is about: its server is named in the toast and the journal. */
   sessionId?: string | null;
-  /** The journal's alone: no toast. */
-  quiet?: boolean;
 }
 
 /** Default auto-dismiss delay (ms) per kind; errors linger a bit longer. */
@@ -72,14 +71,13 @@ function arm(id: string, delay: number): void {
 }
 
 /**
- * Note a message in the journal and show it as a toast; returns the toast's id
- * ("" for a quiet note). The same message said again while its toast stands
+ * Note a message in the journal and show it as a toast; returns the toast's id.
+ * The same message said again while its toast stands
  * counts up on it and keeps it up for another full delay.
  */
 export function notify(message: string, kind: ToastKind = "info", opts: NotifyOptions = {}): string {
   const { serverId, server } = serverOf(opts.sessionId ? findTab(opts.sessionId) : null);
   noteJournal({ kind, text: redactSecrets(message).text, source: opts.source, serverId, server });
-  if (opts.quiet) return "";
   const key = toastKey(kind, message, opts.source, serverId);
   const delay = opts.ttl ?? TOAST_TTL[kind];
   const standing = toastsState.list.find((x) => x.key === key);

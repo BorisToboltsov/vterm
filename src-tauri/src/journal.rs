@@ -492,6 +492,15 @@ pub fn journal_note(
     journal: State<'_, Journal>,
     note: Note,
 ) -> Summary {
+    // Every message is an event of the diagnostics too (ADR 0063): its layer is
+    // the whole story — what was shown and what happened around it.
+    crate::diag::shown(
+        note.kind,
+        &note.text,
+        note.source.as_deref(),
+        (note.server_id.as_deref(), note.server.as_deref()),
+        window.label(),
+    );
     let summary = journal.note(note, Some(window.label().to_owned()));
     announce(&app, summary)
 }

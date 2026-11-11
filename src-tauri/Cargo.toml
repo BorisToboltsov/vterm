@@ -22,6 +22,12 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 # подряд, с обоснованием или без, и снято (security.yml).
 [lints.clippy]
 undocumented_unsafe_blocks = "warn"
+# Диагностика (ADR 0063): у GUI-процесса stdout и stderr никто не читает, поэтому
+# сказанное туда пропадает — писать только через `tracing` (diag.rs). В тестах
+# печать разрешена (`clippy.toml`).
+print_stdout = "warn"
+print_stderr = "warn"
+dbg_macro = "warn"
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
@@ -102,6 +108,19 @@ sysinfo = "0.39"
 # Both are pure Rust and offline; the offline invariant is untouched.
 encoding_rs = "0.8"
 chardetng = "1"
+
+# Диагностика (diag.rs, ADR 0063): события пишутся через `tracing` — плоские поля и
+# span сессии, который даёт `sid` всем событиям внутри; `tracing-subscriber` — реестр
+# span'ов и перезагружаемый порог, без `env-filter` (он тянет regex) и без `fmt`
+# (строку пишет свой писатель). `log` — фасад, на котором пишет russh: его записи
+# переводит мост diag.rs, и только при пороге «Подробно». `tracing` и `log` уже в
+# дереве; `tracing-subscriber` (MIT) приносит `sharded-slab` и `thread_local`.
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", default-features = false, features = ["std", "registry"] }
+log = { version = "0.4", features = ["std"] }
+# Маска диагностики (diag/mask.rs) — те же правила, что `redactSecrets` фронта; `regex`
+# уже в дереве через tauri-utils.
+regex = "1"
 
 # Windows drive enumeration for the local file panel (Фаза 39.1). `GetLogicalDrives`
 # returns the letter bitmask WITHOUT touching any volume — the only complete source

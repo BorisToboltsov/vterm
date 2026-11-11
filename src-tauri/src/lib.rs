@@ -4,6 +4,7 @@ mod appwin;
 mod backup;
 mod commands;
 mod container;
+mod diag;
 mod dragghost;
 mod dragout;
 mod drives;
@@ -220,6 +221,9 @@ pub fn run() {
     if update_helper::replacement_in_progress() {
         return;
     }
+    // Diagnostics first (ADR 0063): the threshold of `diag.json`, the writer,
+    // the panic hook — everything after this can be written down.
+    diag::start();
     // «Полный» portable несёт WebView2 Runtime в хвосте exe: если системного нет,
     // распаковываем его и указываем загрузчику — до создания окна и рантайма tokio.
     #[cfg(windows)]
@@ -280,6 +284,7 @@ pub fn run() {
             }
             // Any write of the server list or the folders reaches every window:
             // each keeps its own copy, and `prod` / `noAi` must not drift apart.
+            diag::attach(app.handle().clone());
             let handle = app.handle().clone();
             store::on_catalog_change(move || {
                 let _ = handle.emit("window://catalog", ());
@@ -388,6 +393,14 @@ pub fn run() {
             journal::journal_remove,
             journal::journal_clear,
             journal::journal_configure,
+            diag::diag_write,
+            diag::diag_state,
+            diag::diag_set_level,
+            diag::diag_set_size,
+            diag::diag_query,
+            diag::diag_clear,
+            diag::diag_export,
+            diag::diag_reveal,
             localfile::local_home,
             localfile::local_list,
             localfile::local_kinds,

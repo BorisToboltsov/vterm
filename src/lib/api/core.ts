@@ -1,6 +1,6 @@
 // Cross-cutting API helpers: typed-error predicates, native clipboard read,
 // and the native-menu command. Split from api.ts in Phase 18.6.
-import { invoke } from "@tauri-apps/api/core";
+import { call } from "./call";
 import type { GenerateKeyRequest } from "../utilities/sshkeygen";
 
 /** Marker (in `AppError::FileChangedOnServer`) that a save lost a race. */
@@ -40,7 +40,7 @@ export function isPermissionError(err: unknown): boolean {
  * Rejects on platforms without a native reader so the caller can fall back.
  */
 export function readClipboardText(): Promise<string> {
-  return invoke<string>("read_clipboard_text");
+  return call<string>("read_clipboard_text");
 }
 
 // ── Host environment ────────────────────────────────────────────────────────
@@ -51,7 +51,7 @@ export function readClipboardText(): Promise<string> {
  * the Windows local-shell picker — without a runtime OS plugin in the WebView.
  */
 export function hostOs(): Promise<string> {
-  return invoke<string>("host_os");
+  return call<string>("host_os");
 }
 
 /**
@@ -60,7 +60,7 @@ export function hostOs(): Promise<string> {
  * to validate a custom local-shell path.
  */
 export function shellExists(program: string): Promise<boolean> {
-  return invoke<boolean>("shell_exists", { program });
+  return call<boolean>("shell_exists", { program });
 }
 
 // ── SSH key generation utility (Phase 32) ──────────────────────────────────────
@@ -89,17 +89,17 @@ export interface GeneratedKey {
  * and `req.overwrite` is false.
  */
 export function generateSshKey(req: GenerateKeyRequest): Promise<GeneratedKey> {
-  return invoke<GeneratedKey>("generate_ssh_key", { req });
+  return call<GeneratedKey>("generate_ssh_key", { req });
 }
 
 /** Whether a key file already exists at `path` (`~` expanded) — live collision hint. */
 export function keyPathExists(path: string): Promise<boolean> {
-  return invoke<boolean>("key_path_exists", { path });
+  return call<boolean>("key_path_exists", { path });
 }
 
 /** (Re)write the public key to `<path>.pub`; resolves to that path. */
 export function savePublicKey(path: string, publicKey: string): Promise<string> {
-  return invoke<string>("save_public_key", { path, publicKey });
+  return call<string>("save_public_key", { path, publicKey });
 }
 
 // ── known_hosts manager (Phase 33) ──────────────────────────────────────────────
@@ -114,12 +114,12 @@ export interface KnownHostEntry {
 
 /** List every vterm-recorded host key (local file read only). */
 export function listKnownHosts(): Promise<KnownHostEntry[]> {
-  return invoke<KnownHostEntry[]>("list_known_hosts");
+  return call<KnownHostEntry[]>("list_known_hosts");
 }
 
 /** Forget the recorded host key for `id`; resolves to whether one was removed. */
 export function removeKnownHost(id: string): Promise<boolean> {
-  return invoke<boolean>("remove_known_host", { id });
+  return call<boolean>("remove_known_host", { id });
 }
 
 // ── Corrupt-config warnings ────────────────────────────────────────────────────
@@ -141,7 +141,7 @@ export interface StoreWarning {
  * this resolves non-empty at most once per launch.
  */
 export function takeStoreWarnings(): Promise<StoreWarning[]> {
-  return invoke<StoreWarning[]>("take_store_warnings");
+  return call<StoreWarning[]>("take_store_warnings");
 }
 
 // ── Native menu ───────────────────────────────────────────────────────────────
@@ -162,7 +162,7 @@ export interface MenuLabels {
 
 /** Rebuild the native menu in the given language (called on startup + on change). */
 export function setMenuLanguage(labels: MenuLabels): Promise<void> {
-  return invoke<void>("set_menu_language", { labels });
+  return call<void>("set_menu_language", { labels });
 }
 
 // ── Quit confirmation ─────────────────────────────────────────────────────────
@@ -174,10 +174,10 @@ export function setMenuLanguage(labels: MenuLabels): Promise<void> {
  * would leave the window impossible to close.
  */
 export function armCloseGuard(): Promise<void> {
-  return invoke<void>("arm_close_guard");
+  return call<void>("arm_close_guard");
 }
 
 /** The user confirmed the quit dialog: exit the app. */
 export function quitApp(): Promise<void> {
-  return invoke<void>("quit_app");
+  return call<void>("quit_app");
 }

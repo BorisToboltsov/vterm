@@ -1,6 +1,6 @@
 // Live SSH/local session: connect, terminal I/O, disconnect, term event names,
 // and the status-bar/monitoring metric probes (mirror of metrics.rs types).
-import { invoke } from "@tauri-apps/api/core";
+import { call } from "./call";
 import { createOrderedWriter } from "../terminal/termwrite";
 
 // ── SSH session ───────────────────────────────────────────────────────────────
@@ -14,7 +14,7 @@ export interface ConnectPlan {
 
 /** Ask the backend whether connecting needs a typed secret (or keychain has it). */
 export function connectPlan(id: string): Promise<ConnectPlan> {
-  return invoke<ConnectPlan>("connect_plan", { id });
+  return call<ConnectPlan>("connect_plan", { id });
 }
 
 /**
@@ -44,7 +44,7 @@ export function connectSession(
   rows: number,
   opts: ConnectOptions,
 ): Promise<ConnectOutcome> {
-  return invoke<ConnectOutcome>("connect_session", {
+  return call<ConnectOutcome>("connect_session", {
     sessionId,
     serverId,
     secret,
@@ -72,7 +72,7 @@ export function openLocalTerminal(
   shell: string | null = null,
   cwd: string | null = null,
 ): Promise<void> {
-  return invoke<void>("open_local_terminal", { sessionId, cols, rows, shell, cwd });
+  return call<void>("open_local_terminal", { sessionId, cols, rows, shell, cwd });
 }
 
 /**
@@ -115,7 +115,7 @@ export function onSessionSubmit(
 
 /** Per-session sequential delivery — concurrent invokes may land out of order (termwrite.ts). */
 const orderedWrite = createOrderedWriter((sessionId, data) =>
-  invoke<void>("write_to_terminal", {
+  call<void>("write_to_terminal", {
     sessionId,
     data: Array.from(data),
   }),
@@ -126,7 +126,7 @@ const orderedWrite = createOrderedWriter((sessionId, data) =>
  * command-history overlay. Parsing lives in `history.ts`.
  */
 export function readShellHistory(sessionId: string): Promise<string> {
-  return invoke<string>("read_shell_history", { sessionId });
+  return call<string>("read_shell_history", { sessionId });
 }
 
 /** Inform the remote PTY of a new terminal size. */
@@ -135,18 +135,18 @@ export function resizePty(
   cols: number,
   rows: number,
 ): Promise<void> {
-  return invoke<void>("resize_pty", { sessionId, cols, rows });
+  return call<void>("resize_pty", { sessionId, cols, rows });
 }
 
 /** Close an active session. */
 export function disconnect(sessionId: string): Promise<void> {
-  return invoke<void>("disconnect", { sessionId });
+  return call<void>("disconnect", { sessionId });
 }
 
 /** Answer the server's login questions for `sessionId` (in the order shown), or
  *  `null` to cancel the login. The answers are never stored (kbdauth.rs). */
 export function answerAuthPrompt(sessionId: string, answers: string[] | null): Promise<void> {
-  return invoke<void>("answer_auth_prompt", { sessionId, answers });
+  return call<void>("answer_auth_prompt", { sessionId, answers });
 }
 
 /** Remote host metrics for the bottom status bar. */
@@ -188,7 +188,7 @@ export interface Metrics {
 
 /** Probe the active session for OS info and resource usage. */
 export function fetchMetrics(sessionId: string): Promise<Metrics> {
-  return invoke<Metrics>("fetch_metrics", { sessionId });
+  return call<Metrics>("fetch_metrics", { sessionId });
 }
 
 /** Pressure Stall Information `some` averages (10/60/300 s windows). */
@@ -358,7 +358,7 @@ export interface ProcRow {
 
 /** Detailed metrics for the monitoring overlay (heavier than `fetchMetrics`). */
 export function fetchMetricsDetail(sessionId: string, processes = false): Promise<MetricsDetail> {
-  return invoke<MetricsDetail>("fetch_metrics_detail", { sessionId, processes });
+  return call<MetricsDetail>("fetch_metrics_detail", { sessionId, processes });
 }
 
 /** Pending OS package updates + reboot-required flag. */
@@ -371,7 +371,7 @@ export interface PendingUpdates {
 
 /** Lazily probe pending package updates (heavy — overlay only, deferred). */
 export function fetchPendingUpdates(sessionId: string): Promise<PendingUpdates> {
-  return invoke<PendingUpdates>("fetch_pending_updates", { sessionId });
+  return call<PendingUpdates>("fetch_pending_updates", { sessionId });
 }
 
 /** An NVIDIA GPU (nvidia-smi); VRAM is in MiB. */
@@ -477,7 +477,7 @@ export interface Extras {
 
 /** Lazily probe optional extras (heavy/optional — overlay only, deferred). */
 export function fetchExtras(sessionId: string): Promise<Extras> {
-  return invoke<Extras>("fetch_extras", { sessionId });
+  return call<Extras>("fetch_extras", { sessionId });
 }
 
 /** The part of the extras that changes by the second (GPUs, containers). */
@@ -488,7 +488,7 @@ export interface LiveExtras {
 
 /** Poll GPUs and containers — only while their monitoring section is on screen. */
 export function fetchLiveExtras(sessionId: string): Promise<LiveExtras> {
-  return invoke<LiveExtras>("fetch_live_extras", { sessionId });
+  return call<LiveExtras>("fetch_live_extras", { sessionId });
 }
 
 /** One process, read on a click. `state` is an English key the page localizes. */
@@ -506,7 +506,7 @@ export interface ProcessDetail {
 
 /** Read one process's details; null when it is gone. */
 export function fetchProcessDetail(sessionId: string, pid: number): Promise<ProcessDetail | null> {
-  return invoke<ProcessDetail | null>("fetch_process_detail", { sessionId, pid });
+  return call<ProcessDetail | null>("fetch_process_detail", { sessionId, pid });
 }
 
 /** Event name carrying raw output bytes for a session (mirrors ssh.rs). */
