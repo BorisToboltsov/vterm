@@ -483,6 +483,9 @@ export const en = {
   "pathSync.whereServer": "You can change it later in the server card, under “Terminal”.",
   "pathSync.whereLocal": "You can change it later in Settings → Terminal.",
   "pathSync.saveFailed": "Path sync is on, but the choice wasn't saved: {error}",
+  "pathSync.noAnswer":
+    "Path sync is off: the shell didn't report its folder after the setup command. It may not be bash or zsh, or a program is holding the terminal. Turn path sync on again to retry.",
+  "pathSync.setupNotSent": "Path sync is off: the setup command didn't reach the terminal ({error}). Turn it on again to retry.",
   "sftp.newFolder": "New folder",
   "sftp.newFile": "New file",
   "sftp.upload": "Upload",

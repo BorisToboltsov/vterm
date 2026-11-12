@@ -10,6 +10,7 @@ import {
   fileLinkClick,
   fileLinksAllowed,
   headerDir,
+  isSecurityContext,
   isFileLinkClick,
   isFileLinkMode,
   lineCandidates,
@@ -442,6 +443,19 @@ describe("listingCommand", () => {
     expect(listingCommand("$ ls -s", "posix")).toEqual({ dir: null, several: false });
   });
 
+  it("says when each name comes after its security context (`ls -Z`)", () => {
+    expect(listingCommand("$ ls -Z", "posix")).toEqual({ dir: null, several: false, context: true });
+    expect(listingCommand("$ ls -laZ /etc", "posix")).toEqual({ dir: "/etc", several: false, context: true });
+    expect(listingCommand("$ ls --context", "posix")).toEqual({ dir: null, several: false, context: true });
+    expect(listingCommand("$ eza -Z", "posix")).toEqual({ dir: null, several: false, context: true });
+    expect(listingCommand("$ ls -RZ", "posix")).toEqual({ dir: null, several: true, context: true });
+    expect(listingCommand("$ cd /etc && ls -Z", "posix")).toEqual({ dir: null, several: false, cd: "/etc", context: true });
+    // A path is no option, and a long option that merely has a Z in it is no `-Z`.
+    expect(listingCommand("$ ls -- -Z", "posix")).toEqual({ dir: "-Z", several: false });
+    expect(listingCommand("$ ls --zero", "posix")).toEqual({ dir: null, several: false });
+    expect(listingCommand("$ ls Zdir", "posix")).toEqual({ dir: "Zdir", several: false });
+  });
+
   it("reads cmd and PowerShell", () => {
     expect(listingCommand("C:\\Users\\bob>dir", "windows")).toEqual({ dir: null, several: false });
     expect(listingCommand("C:\\Users\\bob>dir /s", "windows")).toEqual({ dir: null, several: true });
@@ -540,6 +554,34 @@ describe("unplacedNames", () => {
   it("takes the words of a column listing that are not numbers", () => {
     expect(texts("total 48")).toEqual([]);
     expect(texts("a.txt  b  1.5K  42")).toEqual(["a.txt", "b"]);
+  });
+
+  it("under `ls -Z`, leaves out the security context before each name", () => {
+    const ctx = (line: string) => unplacedNames(line, true).map((s) => line.slice(s.from, s.to));
+    expect(
+      ctx("unconfined_u:object_r:admin_home_t:s0 anaconda-ks.cfg  system_u:object_r:etc_t:s0 hosts"),
+    ).toEqual(["anaconda-ks.cfg", "hosts"]);
+    expect(ctx("unconfined_u:unconfined_r:unconfined_t:s0-s0:c0.c1023 run.sh")).toEqual(["run.sh"]);
+    // Without SELinux `ls -Z` prints `?` for it.
+    expect(ctx("? legacy.log  ? notes.txt")).toEqual(["legacy.log", "notes.txt"]);
+    // `ls -lZ` reads by its date, as any `ls -l` line.
+    expect(ctx("-rw-r--r--. 1 root root system_u:object_r:etc_t:s0 158 Oct 28 14:03 hosts")).toEqual(["hosts"]);
+    // Only under `-Z`: elsewhere a name may have colons in it.
+    expect(texts("system_u:object_r:etc_t:s0 ?")).toEqual(["system_u:object_r:etc_t:s0", "?"]);
+    expect(ctx("a:b x")).toEqual(["a:b", "x"]);
+  });
+});
+
+describe("isSecurityContext", () => {
+  it("reads what `ls -Z` prints before a name", () => {
+    expect(isSecurityContext("system_u:object_r:etc_t:s0")).toBe(true);
+    expect(isSecurityContext("staff_u:staff_r:staff_t:s0-s0:c0.c1023")).toBe(true);
+    expect(isSecurityContext("user_u:object_r:user_home_t")).toBe(true);
+    expect(isSecurityContext("?")).toBe(true);
+    expect(isSecurityContext("notes.txt")).toBe(false);
+    expect(isSecurityContext("a:b")).toBe(false);
+    expect(isSecurityContext("??")).toBe(false);
+    expect(isSecurityContext("a::b")).toBe(false);
   });
 });
 

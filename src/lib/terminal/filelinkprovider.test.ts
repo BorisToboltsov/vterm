@@ -294,6 +294,21 @@ describe("file links over SSH", () => {
     expect(await linksAt(s, 1)).toBeUndefined();
   });
 
+  it("offers path sync for the names of `ls -Z`, never for the context before each", async () => {
+    const s = ssh();
+    await run(s, "ls -Z");
+    s.term.print("unconfined_u:object_r:admin_home_t:s0 a.txt  ? notes.txt");
+    expect((await linksAt(s, 2))!.map((l) => l.text)).toEqual(["a.txt", "notes.txt"]);
+  });
+
+  it("with the folder known, links only the names `ls -Z` printed", async () => {
+    const s = ssh();
+    s.links.noteCwd("/home/u");
+    await run(s, "ls -Z");
+    s.term.print("unconfined_u:object_r:admin_home_t:s0 a.txt  ? notes.txt");
+    expect((await linksAt(s, 2))!.map((l) => l.text)).toEqual(["a.txt", "notes.txt"]);
+  });
+
   it("still links an absolute path where the folder is unknown", async () => {
     const s = ssh();
     await run(s, "cat log");
@@ -538,6 +553,14 @@ describe("targetOf (the menu's selection)", () => {
     s.term.print("a.txt");
     expect(await s.links.targetOf("a.txt", 1)).toEqual({ kind: "unplaced" });
     expect(await s.links.targetOf("ls", 0)).toBeNull();
+  });
+
+  it("over SSH, offers nothing for the context `ls -Z` printed before a name", async () => {
+    const s = setup({ local: false }, HOME);
+    await run(s, "ls -Z");
+    s.term.print("system_u:object_r:etc_t:s0 a.txt");
+    expect(await s.links.targetOf("system_u:object_r:etc_t:s0", 1)).toBeNull();
+    expect(await s.links.targetOf("a.txt", 1)).toEqual({ kind: "unplaced" });
   });
 });
 
