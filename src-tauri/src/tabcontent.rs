@@ -18,6 +18,7 @@
 //! alphabet the frontend allows (`tabrestore.ts`) — and nothing outside the
 //! folder is ever read, written or removed.
 
+use crate::diag::Logged;
 use crate::error::{AppError, AppResult};
 use std::fs::{self, File, OpenOptions};
 use std::io::Write;
@@ -106,11 +107,11 @@ pub fn save_in(dir: &Path, id: &str, content: &str) -> AppResult<()> {
         f.sync_all()
     })();
     if let Err(e) = written {
-        let _ = fs::remove_file(&tmp);
+        fs::remove_file(&tmp).log_debug("storage", "a temporary settings file was not removed");
         return Err(AppError::Message(format!("write {}: {e}", tmp.display())));
     }
     if let Err(e) = fs::rename(&tmp, &path) {
-        let _ = fs::remove_file(&tmp);
+        fs::remove_file(&tmp).log_debug("storage", "a temporary settings file was not removed");
         return Err(AppError::Message(format!(
             "rename onto {}: {e}",
             path.display()
@@ -132,7 +133,7 @@ pub fn load_in(dir: &Path, id: &str) -> Option<String> {
 /// Remove what is kept for these tabs.
 pub fn forget_in(dir: &Path, ids: &[String]) {
     for path in ids.iter().filter_map(|id| file_in(dir, id)) {
-        let _ = fs::remove_file(path);
+        fs::remove_file(path).log_debug("storage", "a settings file was not removed");
     }
 }
 
@@ -156,7 +157,7 @@ pub fn keep_only_in(dir: &Path, keep: &[String]) {
                 .is_some_and(|n| n.starts_with('.') && n.contains(".vterm-tmp-")),
         };
         if stale {
-            let _ = fs::remove_file(&path);
+            fs::remove_file(&path).log_debug("storage", "a settings file was not removed");
         }
     }
 }
@@ -276,7 +277,9 @@ mod tests {
         let big = "x".repeat(MAX_CONTENT + 1);
         assert!(save_in(&dir, "s1", &big).is_err());
         assert_eq!(load_in(&dir, "s1"), None);
-        let _ = fs::remove_dir_all(&dir);
+        if let Err(e) = fs::remove_dir_all(&dir) {
+            eprintln!("cleanup: {e}");
+        }
     }
 
     #[test]

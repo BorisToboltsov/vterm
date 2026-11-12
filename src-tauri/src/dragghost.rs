@@ -17,6 +17,7 @@
 //! a WebView takes a moment to load, and a label that arrives after the tab has
 //! been dropped is no label.
 
+use crate::diag::Logged;
 use serde::{Deserialize, Serialize};
 use std::sync::atomic::{AtomicBool, Ordering};
 use tauri::webview::PageLoadEvent;
@@ -112,7 +113,10 @@ fn window(app: &AppHandle) -> Option<WebviewWindow> {
         .build()
         .ok()?;
     // Nor the mouse: the window under it is the one the tab would land in.
-    let _ = ghost.set_ignore_cursor_events(true);
+    ghost.set_ignore_cursor_events(true).log_debug(
+        "windows",
+        "the floating label did not let the mouse through",
+    );
     Some(ghost)
 }
 
@@ -138,19 +142,26 @@ pub fn show(app: &AppHandle, look: &Look) -> bool {
         return false;
     }
     let (w, h) = look.size();
-    let _ = ghost.set_size(LogicalSize::new(w, h));
+    ghost
+        .set_size(LogicalSize::new(w, h))
+        .log_debug("windows", "the window was not given its size");
     if let Ok(at) = app.cursor_position() {
         let scale = ghost.scale_factor().unwrap_or(1.0);
-        let _ = ghost.set_position(PhysicalPosition::new(
-            at.x + OFFSET.0 * scale,
-            at.y + OFFSET.1 * scale,
-        ));
+        ghost
+            .set_position(PhysicalPosition::new(
+                at.x + OFFSET.0 * scale,
+                at.y + OFFSET.1 * scale,
+            ))
+            .log_debug("windows", "the window was not moved to its place");
     }
     if let Ok(json) = serde_json::to_string(look) {
-        let _ = ghost.eval(format!("window.setGhost && window.setGhost({json})"));
+        ghost
+            .eval(format!("window.setGhost && window.setGhost({json})"))
+            .log_debug("windows", "the floating label was not updated");
     }
     if !ghost.is_visible().unwrap_or(false) {
-        let _ = ghost.show();
+        let shown = ghost.show();
+        shown.log_debug("windows", "the floating label was not shown");
     }
     true
 }
@@ -159,7 +170,9 @@ pub fn show(app: &AppHandle, look: &Look) -> bool {
 pub fn hide(app: &AppHandle) {
     if let Some(ghost) = app.get_webview_window(LABEL) {
         if ghost.is_visible().unwrap_or(false) {
-            let _ = ghost.hide();
+            ghost
+                .hide()
+                .log_debug("windows", "the floating label was not hidden");
         }
     }
 }

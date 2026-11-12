@@ -1,13 +1,13 @@
 // Reconnecting a dropped SSH session by itself (setting `autoReconnect`, ADR
 // 0062), as the page drives it: the attempts of each tab, the pause before the
-// next one, and what the journal is told — quietly, for the tab's own screen
-// says where it stands. When to try and when to stop is `connect/reconnect.ts`;
+// next one, and what the diagnostics are told (ADR 0063) — not the user: the
+// tab's own screen says where it stands. When to try and when to stop is `connect/reconnect.ts`;
 // opening the session is the page's (`reconnectTab`).
 //
 // A connect this flow did not start (the tab's button, a new tab) is the user's:
 // it clears the count and any attempt that was waiting.
-import { t } from "../i18n";
-import { notifyError, notifyInfo } from "../stores/toasts.svelte";
+import { diag } from "../api/diag";
+import { aboutSession } from "../stores/diag.svelte";
 import {
   FRESH,
   onConnected,
@@ -45,9 +45,14 @@ export function createReconnectFlow(deps: ReconnectDeps) {
   }
 
   function apply(sessionId: string, step: ReconnectStep, detail: string) {
-    const about = { source: "connection" as const, sessionId, quiet: true };
+    const about = aboutSession(sessionId);
     if (step.kind === "wait") {
-      notifyInfo(t("reconnect.scheduled", { n: step.attempt, of: step.of, s: Math.round(step.delay / 1000) }), about);
+      diag.info(
+        "connection",
+        `reconnect attempt ${step.attempt} of ${step.of} in ${Math.round(step.delay / 1000)} s`,
+        { attempt: step.attempt, of: step.of, delayMs: step.delay },
+        { ...about, code: "reconnect-wait" },
+      );
       cancel(sessionId);
       timers.set(
         sessionId,
@@ -59,7 +64,7 @@ export function createReconnectFlow(deps: ReconnectDeps) {
         }, step.delay),
       );
     } else if (step.kind === "giveUp") {
-      notifyError(t("reconnect.gaveUp", { n: step.attempts, error: detail }), about);
+      diag.warn("connection", `reconnect gave up after ${step.attempts} attempts: ${detail}`, { attempts: step.attempts }, { ...about, code: "reconnect-gave-up" });
     }
   }
 
@@ -82,19 +87,19 @@ export function createReconnectFlow(deps: ReconnectDeps) {
           return;
         case "connected":
           if (state.attempt > 0) {
-            notifyInfo(t("reconnect.back", { n: state.attempt }), { source: "connection", sessionId, quiet: true });
+            diag.info("connection", `reconnected after ${state.attempt} attempts`, { attempts: state.attempt }, { ...aboutSession(sessionId), code: "reconnected" });
           }
           states.set(sessionId, onConnected(state, now()));
           return;
         case "closed": {
           if (!deps.auto()) {
-            notifyInfo(t("reconnect.closed"), { source: "connection", sessionId, quiet: true });
+            diag.info("connection", "session closed", undefined, { ...aboutSession(sessionId), code: "session-closed" });
             states.delete(sessionId);
             return;
           }
           const { state: next, step } = onDropped(state, now());
           states.set(sessionId, next);
-          apply(sessionId, step, detail || t("reconnect.closed"));
+          apply(sessionId, step, detail || "session closed");
           return;
         }
         case "error": {

@@ -2,7 +2,7 @@
 // backend command; the frontend builds argument vectors and parses output in
 // `k8s.ts`. Both transports (SSH + local) go through this one command — the
 // backend dispatches by session kind, like `container_run`.
-import { invoke } from "@tauri-apps/api/core";
+import { call } from "./call";
 import type { ExecOutput } from "../types";
 
 /** Captured result of one `kubectl` invocation — the drivers' common shape. */
@@ -24,5 +24,5 @@ export function kubectlRun(
   timeoutSecs = 20,
   mirror = false,
 ): Promise<KubeOutput> {
-  return invoke<KubeOutput>("kubectl_run", { sessionId, args, timeoutSecs, mirror });
+  return call<KubeOutput>("kubectl_run", { sessionId, args, timeoutSecs, mirror });
 }

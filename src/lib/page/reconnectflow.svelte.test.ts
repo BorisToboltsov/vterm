@@ -1,13 +1,18 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-const notes = vi.hoisted(() => [] as { kind: string; text: string; opts: unknown }[]);
+const toasts = vi.hoisted(() => [] as string[]);
 vi.mock("../stores/toasts.svelte", () => ({
-  notifyInfo: (text: string, opts: unknown) => notes.push({ kind: "info", text, opts }),
-  notifyError: (text: string, opts: unknown) => notes.push({ kind: "error", text, opts }),
+  notifyInfo: (text: string) => toasts.push(text),
+  notifyError: (text: string) => toasts.push(text),
 }));
 
 import { createReconnectFlow } from "./reconnectflow.svelte";
 import { RECONNECT_DELAYS_MS, STABLE_MS } from "../connect/reconnect";
+import { captureDiag } from "../api/diag";
+
+/** What the diagnostics heard: level and text. */
+let heard: ReturnType<typeof captureDiag>;
+const events = () => heard.events().map((e) => ({ level: e.level, text: e.text, sid: e.sid }));
 
 describe("the reconnect flow", () => {
   let auto = true;
@@ -28,27 +33,31 @@ describe("the reconnect flow", () => {
     tabs = new Set(["s1"]);
     reconnects = [];
     clock = 1_000_000;
-    notes.length = 0;
+    toasts.length = 0;
+    heard = captureDiag();
   });
-  afterEach(() => vi.useRealTimers());
+  afterEach(() => {
+    vi.useRealTimers();
+    heard.stop();
+    // Told the diagnostics, never the user: the tab's own screen says where it stands.
+    expect(toasts).toEqual([]);
+  });
 
-  it("reconnects a dropped session after its pause, quietly telling the journal", () => {
+  it("reconnects a dropped session after its pause, telling the diagnostics", () => {
     const f = flow();
     f.status("s1", "connected");
     clock += STABLE_MS + 1;
     f.status("s1", "closed");
     expect(f.waiting("s1")).toBe(true);
-    expect(notes).toEqual([
-      { kind: "info", text: "Reconnecting: attempt 1 of 6 in 1 s", opts: { source: "connection", sessionId: "s1", quiet: true } },
-    ]);
+    expect(events()).toEqual([{ level: "info", text: "reconnect attempt 1 of 6 in 1 s", sid: "s1" }]);
     vi.advanceTimersByTime(RECONNECT_DELAYS_MS[0] - 1);
     expect(reconnects).toEqual([]);
     vi.advanceTimersByTime(1);
     expect(reconnects).toEqual(["s1"]);
-    // Its own attempt connecting keeps the count; connected, the journal hears it.
+    // Its own attempt connecting keeps the count; connected, the diagnostics hear it.
     f.status("s1", "connecting");
     f.status("s1", "connected");
-    expect(notes.at(-1)?.text).toBe("Reconnected on attempt 1");
+    expect(events().at(-1)?.text).toBe("reconnected after 1 attempts");
   });
 
   it("tries again after each failed attempt, longer each time, and gives up at the end", () => {
@@ -63,10 +72,10 @@ describe("the reconnect flow", () => {
     }
     expect(reconnects).toHaveLength(RECONNECT_DELAYS_MS.length);
     expect(f.waiting("s1")).toBe(false);
-    expect(notes.at(-1)).toEqual({
-      kind: "error",
-      text: "Couldn't reconnect, attempts: 6. Connection refused",
-      opts: { source: "connection", sessionId: "s1", quiet: true },
+    expect(events().at(-1)).toEqual({
+      level: "warn",
+      text: "reconnect gave up after 6 attempts: Connection refused",
+      sid: "s1",
     });
     vi.advanceTimersByTime(60_000);
     expect(reconnects).toHaveLength(RECONNECT_DELAYS_MS.length);
@@ -93,9 +102,7 @@ describe("the reconnect flow", () => {
     f.status("s1", "connected");
     f.status("s1", "closed");
     expect(f.waiting("s1")).toBe(false);
-    expect(notes).toEqual([
-      { kind: "info", text: "The session ended", opts: { source: "connection", sessionId: "s1", quiet: true } },
-    ]);
+    expect(events()).toEqual([{ level: "info", text: "session closed", sid: "s1" }]);
     f.status("s1", "error", "x");
     vi.advanceTimersByTime(60_000);
     expect(reconnects).toEqual([]);

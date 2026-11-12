@@ -18,6 +18,7 @@
 // that takes it asks once how the run stands (`adoptSyncJob`). A compare is
 // still this window's: it holds the tab until it ends or is stopped.
 
+import { writtenByCall } from "../api/call";
 import { localHashTree, sftpHashTree, sftpSyncStart, sftpCancel, syncRunOf, type SyncRunView } from "../api";
 import {
   applicable,
@@ -131,7 +132,7 @@ export function adoptSyncJob(sessionId: string, job: SyncJob): void {
   syncRunOwner.sessionId = sessionId;
   void syncRunOf(sessionId)
     .then((view) => view && runHeard(view))
-    .catch(() => {});
+    .catch(writtenByCall);
 }
 
 /** A compare or a run is going on. */

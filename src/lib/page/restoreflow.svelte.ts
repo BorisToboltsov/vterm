@@ -10,6 +10,8 @@
 // conversation come back only under `restoreOutput`, never for a production
 // server: this flow is what writes them down, and the only one.
 
+import { nullWrittenByCall, writtenByCall } from "../api/call";
+import { orNull } from "../api/diag";
 import { isProdServer } from "../ai/aiexec";
 import {
   connectPlan,
@@ -110,7 +112,7 @@ export function createRestoreFlow(deps: RestoreDeps) {
   async function settle(sessionId: string) {
     const asked = findTab(sessionId);
     if (asked?.waiting !== "checking") return;
-    const plan = await connectPlan(asked.serverId).catch(() => null);
+    const plan = await connectPlan(asked.serverId).catch(nullWrittenByCall);
     // Closed, or opened by its button, while the keychain was being asked.
     const tab = findTab(sessionId);
     if (tab?.waiting !== "checking") return;
@@ -125,7 +127,7 @@ export function createRestoreFlow(deps: RestoreDeps) {
     await Promise.all(
       tabs.map(async (tab) => {
         if (!keepsContent(settings, isProd(tab))) return;
-        const content = parseContent(await tabContentLoad(tab.id).catch(() => null));
+        const content = parseContent(await tabContentLoad(tab.id).catch(nullWrittenByCall));
         if (content) {
           out.set(tab.id, content);
           kept.add(tab.id);
@@ -175,14 +177,14 @@ export function createRestoreFlow(deps: RestoreDeps) {
   async function keep(tab: Tab, now: number): Promise<void> {
     const sid = tab.sessionId;
     if (!keepsContent(settings, isProd(tab))) {
-      if (kept.delete(sid)) await tabContentForget([sid]).catch(() => {});
+      if (kept.delete(sid)) await tabContentForget([sid]).catch(writtenByCall);
       printed.delete(sid);
       return;
     }
     const mark = chatMark(sid);
     if (!printed.has(sid) && (chatSeen.get(sid) ?? NO_CHAT) === mark) return;
     printed.delete(sid);
-    const term = (await deps.keepsake?.(sid).catch(() => null)) ?? null;
+    const term = (await deps.keepsake?.(sid).catch(orNull("terminal", "the terminal's output was not kept for the next launch"))) ?? null;
     const messages = peekChat(sid)?.messages ?? [];
     if (!term && messages.length === 0) return;
     // Closed while its terminal was being read: nothing to keep.
@@ -230,14 +232,14 @@ export function createRestoreFlow(deps: RestoreDeps) {
     const slots = takeSavedTabs();
     if (!slots) {
       // Nothing comes back: nothing kept is anyone's.
-      void tabContentKeepOnly([]).catch(() => {});
+      void tabContentKeepOnly([]).catch(writtenByCall);
       return null;
     }
     const back = restoreSaved(slots.main, slots.others, (id) => deps.servers().some((s) => s.id === id));
     if (back.missing > 0) notifyInfo(t("restore.serversGone", { n: back.missing }), { source: "connection" });
     const everyTab = [...back.tabs, ...back.windows.flatMap((w) => w.window.tabs)];
     // What a tab that did not come back held goes; so does all of it when it is not kept.
-    void tabContentKeepOnly(settings.restoreOutput ? everyTab.map((tab) => tab.id) : []).catch(() => {});
+    void tabContentKeepOnly(settings.restoreOutput ? everyTab.map((tab) => tab.id) : []).catch(writtenByCall);
     bringBack(back.tabs, back.layout, back.beforeTile, await loadContent(back.tabs));
     return back;
   }
@@ -276,7 +278,7 @@ export function createRestoreFlow(deps: RestoreDeps) {
      * show; null when this window was not reopened (it was opened for a tab).
      */
     async restoreWindow(): Promise<number | null> {
-      const record = await takeRestore().catch(() => null);
+      const record = await takeRestore().catch(nullWrittenByCall);
       if (record === null) return null;
       restored = true;
       // Written by the main window a moment ago — and read like any slot.
@@ -352,7 +354,7 @@ export function createRestoreFlow(deps: RestoreDeps) {
       clearRestored(sessionId);
       if (dir === path) return;
       const cmd = cdCommand(dir, "posix");
-      if (cmd) void writeToTerminal(sessionId, new TextEncoder().encode(submitLine(cmd))).catch(() => {});
+      if (cmd) void writeToTerminal(sessionId, new TextEncoder().encode(submitLine(cmd))).catch(writtenByCall);
     },
 
     /** The session printed: its terminal is written down with the next round. */
@@ -379,7 +381,7 @@ export function createRestoreFlow(deps: RestoreDeps) {
     forget(sessionId: string) {
       printed.delete(sessionId);
       chatSeen.delete(sessionId);
-      if (kept.delete(sessionId) || settings.restoreOutput) void tabContentForget([sessionId]).catch(() => {});
+      if (kept.delete(sessionId) || settings.restoreOutput) void tabContentForget([sessionId]).catch(writtenByCall);
     },
 
     /**
@@ -392,7 +394,7 @@ export function createRestoreFlow(deps: RestoreDeps) {
       chatSeen.clear();
       if (kept.size === 0 && !restored) return;
       kept.clear();
-      void tabContentKeepOnly([]).catch(() => {});
+      void tabContentKeepOnly([]).catch(writtenByCall);
     },
   };
 }

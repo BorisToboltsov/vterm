@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { nullWrittenByCall, writtenByCall } from "../api/call";
   import { untrack } from "svelte";
   // The monitoring page (v1.33): a navigation of sections on the left — each with
   // its short value and the level of its worst problem — and the chosen section on
@@ -102,7 +103,7 @@
     const liveWanted = wantsLive(section);
     return Promise.all([
       fetchMetricsDetail(id, section === "processes"),
-      liveWanted ? fetchLiveExtras(id).catch(() => null) : Promise.resolve(null),
+      liveWanted ? fetchLiveExtras(id).catch(nullWrittenByCall) : Promise.resolve(null),
     ]);
   }
 
@@ -194,7 +195,7 @@
       .then((d) => {
         if (open && id === sessionId && section === "processes") detail = d;
       })
-      .catch(() => {});
+      .catch(writtenByCall);
   });
 
   // Arriving at the GPU or Containers section: one live reading at once rather
@@ -206,7 +207,7 @@
       .then((l) => {
         if (open && id === sessionId) live = l;
       })
-      .catch(() => {});
+      .catch(writtenByCall);
   });
 
   const th = $derived(settings.statusBarThresholds);

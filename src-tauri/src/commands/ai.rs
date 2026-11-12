@@ -46,12 +46,32 @@ pub async fn ai_exec(
     match state.session_server(&session_id) {
         Some(server) if server.ai_exec_allowed() => {}
         _ => {
+            // The frontend does not ask this — a refusal here is the boundary
+            // holding against a page that did (ADR 0036).
+            tracing::warn!(
+                source = "ai",
+                code = "ai-exec-refused",
+                sid = %session_id,
+                "assistant command refused: prod or AI disabled"
+            );
             return Err(AppError::Message(
                 "AI commands do not run on this server (prod or AI disabled)".into(),
-            ))
+            ));
         }
     }
+    let started = std::time::Instant::now();
     let outcome = session.exec_captured(&command, timeout_secs).await?;
+    // The command itself is kept by the recording and shown in the terminal;
+    // the diagnostics keep that it ran and how it ended.
+    tracing::info!(
+        source = "ai",
+        code = "ai-exec",
+        sid = %session_id,
+        exit = outcome.exit_code,
+        timed_out = outcome.timed_out,
+        ms = started.elapsed().as_millis() as u64,
+        "assistant ran a command"
+    );
 
     // Mirror the step into the live terminal + recording so it stays visible + audited.
     let mirror = ai::agent_mirror(

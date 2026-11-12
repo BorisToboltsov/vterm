@@ -49,6 +49,15 @@ import {
 } from "./termfiles";
 
 /** One command's output as file links keep it: the buffer row its line is on and its folder. */
+/**
+ * A folder that could not be listed has no listing, and a line whose names
+ * could not be confirmed offers no links: none of its names become links. The
+ * backend call that failed has written why (`call()`).
+ */
+function noListing(): undefined {
+  return undefined;
+}
+
 export interface SavedBlock {
   line: number;
   cwd: string | null;
@@ -128,10 +137,7 @@ export function createFileLinks(term: LinkTerminal, host: FileLinkHost): FileLin
     const hit = listings.get(dir);
     if (hit && now - hit.at < LISTING_TTL_MS) return hit.listing;
     const style = host.style();
-    const fresh = host.list(dir).then(
-      (entries) => listingOf(entries, style),
-      () => undefined,
-    );
+    const fresh = host.list(dir).then((entries) => listingOf(entries, style), noListing);
     listings.delete(dir);
     listings.set(dir, { at: now, listing: fresh });
     while (listings.size > MAX_LISTINGS) listings.delete(listings.keys().next().value as string);
@@ -261,7 +267,7 @@ export function createFileLinks(term: LinkTerminal, host: FileLinkHost): FileLin
           }
           return links.length ? links : undefined;
         })
-        .catch(() => undefined)
+        .catch(noListing)
         .then(callback);
     },
   };

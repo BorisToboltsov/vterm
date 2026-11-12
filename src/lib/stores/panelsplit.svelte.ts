@@ -6,6 +6,7 @@
 // Persisted to localStorage under `vterm.panelsplit`; the arithmetic and the
 // sanitizer are pure (`../panelsplit.ts`).
 
+import { swallowed } from "../api/diag";
 import {
   panelShare,
   sanitizeShares,
@@ -58,8 +59,9 @@ $effect.root(() => {
     const data = JSON.stringify(panelSplits.shares);
     try {
       localStorage.setItem(STORAGE_KEY, data);
-    } catch {
+    } catch (e) {
       /* storage unavailable — non-fatal */
+      swallowed("settings", "the panel borders were not saved", e, "warn");
     }
   });
 });

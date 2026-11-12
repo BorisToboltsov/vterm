@@ -56,6 +56,8 @@
   import { containerRun, dockerLogin } from "../api";
   import { settings } from "../settings/settings.svelte";
   import { notifyError, notifySuccess } from "../stores/toasts.svelte";
+  import { diag, orNull, swallowed } from "../api/diag";
+  import { aboutSession } from "../stores/diag.svelte";
   import {
     versionArgs,
     psArgs,
@@ -509,8 +511,9 @@
             next.set(c.id, { facts: BLANK_FACTS, key: factsKey(c), at: now });
           }
         }
-      } catch {
+      } catch (e) {
         /* facts are an enrichment — the panel works without them */
+        swallowed("docker", "the containers' details were not read", e);
       }
     }
     factsCache = next;
@@ -541,8 +544,9 @@
         subnets = parseNetworkSubnets(res.stdout);
         subnetsOf = key;
       }
-    } catch {
+    } catch (e) {
       /* subnets are an enrichment */
+      swallowed("docker", "the networks' subnets were not read", e);
     }
   }
 
@@ -623,7 +627,7 @@
         const [ps, st, ev] = await Promise.all([
           runQuery(psArgs()),
           runQuery(statsArgs()),
-          runQuery(eventsArgs()).catch(() => null),
+          runQuery(eventsArgs()).catch(orNull("docker", "the events were not read")),
         ]);
         containers = parsePs(ps.stdout);
         // Events are an enrichment: a docker that refuses them leaves the last answer.
@@ -667,6 +671,13 @@
         const res = await runQuery(modalArgs, 30);
         modalText = res.stdout + (res.stderr.trim() ? `\n${res.stderr}` : "");
       }
+      if (pollFailure) {
+        const failures = pollFailure.count;
+        diag.info("docker", `poll back after ${failures} failures`, { failures }, {
+          ...aboutSession(sessionId),
+          code: "poll-back",
+        });
+      }
       pollFailure = null;
     } catch (e) {
       failedRead(String(e));
@@ -682,11 +693,11 @@
    */
   const refresh = singleFlight(readNow);
 
-  /** A read failed: a strip in the panel, and — once per streak — a quiet note in the journal. */
+  /** A read failed: a strip in the panel, and — once per streak — an event of the diagnostics. */
   function failedRead(text: string) {
     const { failure, news } = pollFailed(pollFailure, text, Date.now());
     pollFailure = failure;
-    if (news) notifyError(text, { source: "docker", sessionId, quiet: true });
+    if (news) diag.warn("docker", `poll failed: ${text}`, undefined, { ...aboutSession(sessionId), code: "poll-failed" });
   }
 
   // ── Actions ────────────────────────────────────────────────────────────────

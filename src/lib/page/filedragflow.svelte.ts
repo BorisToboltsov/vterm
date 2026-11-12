@@ -10,6 +10,7 @@
 // sessions a drop is always a copy, through the copy dialog. The system is asked
 // to carry the files in one place (`handToSystem`), after the model said it can.
 
+import { nullWrittenByCall, writtenByCall } from "../api/call";
 import { dragDrop, dragEnd, dragOutBegin, dragOver, localKinds } from "../api";
 import { sideOf } from "../files/copyto";
 import { declinedMessage, dragOutBlocker, dragOutSpec, dragOutTold, type DragOutDeclined } from "../files/dragout";
@@ -96,6 +97,7 @@ export function createFileDragFlow(deps: FileDragDeps) {
       kinds = await localKinds(files.entries.map((e) => e.path));
     } catch {
       /* unknown: each is sent as a file, and the transfer says what is wrong */
+      writtenByCall();
     }
     return { ...files, entries: files.entries.map((e, i) => ({ ...e, isDir: kinds[i] ?? false })) };
   }
@@ -209,12 +211,12 @@ export function createFileDragFlow(deps: FileDragDeps) {
       // window under the pointer does the rest; over none of them, nothing.
       release: (files) =>
         void dragDrop(describeFiles(labelled(files)))
-          .catch(() => null)
+          .catch(nullWrittenByCall)
           .then((under) => {
             if (under === null) tellNotCarried(files);
-            return dragEnd().catch(() => {});
+            return dragEnd().catch(writtenByCall);
           }),
-      left: () => void dragEnd().catch(() => {}),
+      left: () => void dragEnd().catch(writtenByCall),
       out: handToSystem,
     });
     return () => onFileDrag(null);

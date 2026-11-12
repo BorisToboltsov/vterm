@@ -4,6 +4,7 @@
   // filter row (ADR 0050), cleared from its «⋯». Drawn under the bell
   // (`JournalPanel`) and in Settings → Journal; while it is on screen it watches
   // the journal (`watchJournal`): read, kept fresh, what was unread marked seen.
+  import { writtenByCall } from "../api/call";
   import { onMount } from "svelte";
   import Icon from "../ui/Icon.svelte";
   import type { IconName } from "../ui/icons";
@@ -162,6 +163,7 @@
       else await removeFromJournal(what.ids);
     } catch {
       /* the list stays as it is: nothing was removed */
+      writtenByCall();
     }
   }
 </script>

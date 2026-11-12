@@ -1,6 +1,6 @@
 // File operations: SFTP + local filesystem browsing, text read/write, transfers,
 // directory sync, server-tools install, remote lint, grep, and file pickers.
-import { invoke } from "@tauri-apps/api/core";
+import { call } from "./call";
 import { open, save } from "@tauri-apps/plugin-dialog";
 import type { FileEntry, TextFile, WriteResult } from "../types";
 import type { ShellUserReport } from "../files/fileuser";
@@ -12,7 +12,7 @@ import type { RemoteLintResult } from "../editor/remotelint";
 
 /** Who the terminal is now, and whom the file panel works as (ADR 0047). */
 export function shellUser(sessionId: string): Promise<ShellUserReport> {
-  return invoke<ShellUserReport>("shell_user", { sessionId });
+  return call<ShellUserReport>("shell_user", { sessionId });
 }
 
 /**
@@ -20,28 +20,28 @@ export function shellUser(sessionId: string): Promise<ShellUserReport> {
  * the panel reads (`fileUserFailure`): no password given, a wrong one, a refusal.
  */
 export function sftpOpenAs(sessionId: string, user: string, password: string | null): Promise<void> {
-  return invoke<void>("sftp_open_as", { sessionId, user, password });
+  return call<void>("sftp_open_as", { sessionId, user, password });
 }
 
 /** The file panel works as the login user again. */
 export function sftpOpenOwn(sessionId: string): Promise<void> {
-  return invoke<void>("sftp_open_own", { sessionId });
+  return call<void>("sftp_open_own", { sessionId });
 }
 
 export function sftpHome(sessionId: string): Promise<string> {
-  return invoke<string>("sftp_home", { sessionId });
+  return call<string>("sftp_home", { sessionId });
 }
 
 export function sftpList(sessionId: string, path: string): Promise<FileEntry[]> {
-  return invoke<FileEntry[]>("sftp_list", { sessionId, path });
+  return call<FileEntry[]>("sftp_list", { sessionId, path });
 }
 
 export function sftpMkdir(sessionId: string, path: string): Promise<void> {
-  return invoke<void>("sftp_mkdir", { sessionId, path });
+  return call<void>("sftp_mkdir", { sessionId, path });
 }
 
 export function sftpCreateFile(sessionId: string, path: string): Promise<void> {
-  return invoke<void>("sftp_create_file", { sessionId, path });
+  return call<void>("sftp_create_file", { sessionId, path });
 }
 
 /**
@@ -55,7 +55,7 @@ export function sftpReadText(
   sudo?: boolean,
   sudoPassword?: string,
 ): Promise<TextFile> {
-  return invoke<TextFile>("sftp_read_text", { sessionId, path, maxBytes, sudo, sudoPassword });
+  return call<TextFile>("sftp_read_text", { sessionId, path, maxBytes, sudo, sudoPassword });
 }
 
 /** Advisory check for the editor's temp-sibling save directory. */
@@ -63,17 +63,17 @@ export function sftpWriteAccess(
   sessionId: string,
   path: string,
 ): Promise<"writable" | "restricted" | "unknown"> {
-  return invoke("sftp_write_access", { sessionId, path });
+  return call("sftp_write_access", { sessionId, path });
 }
 
 /** Check sudo authentication before editing; later write permission can still differ. */
 export function sftpCheckSudo(sessionId: string, password: string): Promise<boolean> {
-  return invoke("sftp_check_sudo", { sessionId, password });
+  return call("sftp_check_sudo", { sessionId, password });
 }
 
 /** Open a LOCAL file as text in the editor (throws on large/binary files). */
 export function readLocalText(path: string, maxBytes?: number): Promise<TextFile> {
-  return invoke<TextFile>("read_local_text", { path, maxBytes });
+  return call<TextFile>("read_local_text", { path, maxBytes });
 }
 
 /**
@@ -86,12 +86,12 @@ export function sftpReadBytes(
   path: string,
   maxBytes?: number,
 ): Promise<string> {
-  return invoke<string>("sftp_read_bytes", { sessionId, path, maxBytes });
+  return call<string>("sftp_read_bytes", { sessionId, path, maxBytes });
 }
 
 /** Read a LOCAL file as base64 bytes (local half of `sftpReadBytes`). */
 export function readLocalBytes(path: string, maxBytes?: number): Promise<string> {
-  return invoke<string>("read_local_bytes", { path, maxBytes });
+  return call<string>("read_local_bytes", { path, maxBytes });
 }
 
 /**
@@ -106,7 +106,7 @@ export function writeLocalText(
   expectedSha256: string | null,
   encoding?: string,
 ): Promise<WriteResult> {
-  return invoke<WriteResult>("write_local_text", {
+  return call<WriteResult>("write_local_text", {
     path,
     content,
     eol,
@@ -122,27 +122,27 @@ export function saveEditorCopy(
   eol: "lf" | "crlf",
   encoding: string,
 ): Promise<void> {
-  return invoke("save_editor_copy", { path, content, eol, encoding });
+  return call("save_editor_copy", { path, content, eol, encoding });
 }
 
 /** Drain the queue of files vterm was asked to open (CLI args / macOS Opened). */
 export function takePendingOpens(): Promise<string[]> {
-  return invoke<string[]>("take_pending_opens");
+  return call<string[]>("take_pending_opens");
 }
 
 // ── Local filesystem browser (right panel for local-terminal tabs) ──────────────
 
 export function localHome(): Promise<string> {
-  return invoke<string>("local_home");
+  return call<string>("local_home");
 }
 
 export function localList(path: string): Promise<FileEntry[]> {
-  return invoke<FileEntry[]>("local_list", { path });
+  return call<FileEntry[]>("local_list", { path });
 }
 
 /** Which of `paths` are folders (files dropped on the window name only their paths). */
 export function localKinds(paths: string[]): Promise<boolean[]> {
-  return invoke<boolean[]>("local_kinds", { paths });
+  return call<boolean[]>("local_kinds", { paths });
 }
 
 /**
@@ -152,7 +152,7 @@ export function localKinds(paths: string[]): Promise<boolean[]> {
  * than guessing. SSH tabs have no local pid and still rely on OSC 7 / OSC 9;9.
  */
 export function localCwd(sessionId: string): Promise<string | null> {
-  return invoke<string | null>("local_cwd", { sessionId });
+  return call<string | null>("local_cwd", { sessionId });
 }
 
 /**
@@ -161,7 +161,7 @@ export function localCwd(sessionId: string): Promise<string | null> {
  * does not exist (yet).
  */
 export function watchLocalSubmits(sessionId: string, on: boolean): Promise<boolean> {
-  return invoke<boolean>("watch_local_submits", { sessionId, on });
+  return call<boolean>("watch_local_submits", { sessionId, on });
 }
 
 /**
@@ -170,29 +170,29 @@ export function watchLocalSubmits(sessionId: string, on: boolean): Promise<boole
  * line was that program's, not the shell's — or the OS would not say.
  */
 export function localSubmittedCwd(sessionId: string): Promise<string | null> {
-  return invoke<string | null>("local_submitted_cwd", { sessionId });
+  return call<string | null>("local_submitted_cwd", { sessionId });
 }
 
 export function localMkdir(path: string): Promise<void> {
-  return invoke<void>("local_mkdir", { path });
+  return call<void>("local_mkdir", { path });
 }
 
 export function localCreateFile(path: string): Promise<void> {
-  return invoke<void>("local_create_file", { path });
+  return call<void>("local_create_file", { path });
 }
 
 export function localDelete(path: string, isDir: boolean): Promise<void> {
-  return invoke<void>("local_delete", { path, isDir });
+  return call<void>("local_delete", { path, isDir });
 }
 
 /** Move a local file/folder to `to` (drag-to-move). Rejects if `to` exists. */
 export function localRename(from: string, to: string): Promise<void> {
-  return invoke<void>("local_rename", { from, to });
+  return call<void>("local_rename", { from, to });
 }
 
 /** Copy a local file/folder (recursively) to `to`. Rejects if `to` exists. */
 export function localCopy(from: string, to: string): Promise<void> {
-  return invoke<void>("local_copy", { from, to });
+  return call<void>("local_copy", { from, to });
 }
 
 // ── Directory sync (Phase 12.5) ─────────────────────────────────────────────────
@@ -207,7 +207,7 @@ export function sftpHashTree(
   excludes: string[],
   cancelId: string,
 ): Promise<HashTree> {
-  return invoke<HashTree>("sftp_hash_tree", { sessionId, path, excludes, cancelId });
+  return call<HashTree>("sftp_hash_tree", { sessionId, path, excludes, cancelId });
 }
 
 /**
@@ -216,12 +216,12 @@ export function sftpHashTree(
  * is still filtered by `diffTrees`. Both sides report counts on `sync://scan`.
  */
 export function localHashTree(path: string, excludes: string[], cancelId: string): Promise<HashTree> {
-  return invoke<HashTree>("local_hash_tree", { path, excludes, cancelId });
+  return call<HashTree>("local_hash_tree", { path, excludes, cancelId });
 }
 
 /** Detect the server's package manager + which optional tools are installed. */
 export function serverToolsStatus(sessionId: string): Promise<ToolsStatus> {
-  return invoke<ToolsStatus>("server_tools_status", { sessionId });
+  return call<ToolsStatus>("server_tools_status", { sessionId });
 }
 
 /** Run a tool install command on the server (one-click); returns its output. */
@@ -230,7 +230,7 @@ export function runToolInstall(
   command: string,
   sudoPassword?: string,
 ): Promise<string> {
-  return invoke<string>("run_tool_install", { sessionId, command, sudoPassword });
+  return call<string>("run_tool_install", { sessionId, command, sudoPassword });
 }
 
 /**
@@ -245,7 +245,7 @@ export function lintRemote(
   kind: string,
   opts: { name?: string; sudoPassword?: string } = {},
 ): Promise<RemoteLintResult> {
-  return invoke<RemoteLintResult>("lint_remote", {
+  return call<RemoteLintResult>("lint_remote", {
     sessionId,
     content,
     kind,
@@ -259,7 +259,7 @@ export function lintRemote(
  *  `sudoPassword` (reused from an open-as-root, never a fresh prompt) runs the dump under
  *  sudo so a root-only config tree still resolves. */
 export function nginxConfigFiles(sessionId: string, sudoPassword?: string): Promise<string[]> {
-  return invoke<string[]>("nginx_config_files", { sessionId, sudoPassword });
+  return call<string[]>("nginx_config_files", { sessionId, sudoPassword });
 }
 
 /** Content search under a remote directory (grep over SSH). */
@@ -272,7 +272,7 @@ export function sftpGrep(
   /** How many matches to return; absent — one page (`GREP_LIMIT`). The backend holds it within `GREP_MAX`. */
   limit?: number,
 ): Promise<GrepOutcome> {
-  return invoke<GrepOutcome>("sftp_grep", { sessionId, dir, query, caseInsensitive, fixed, limit: limit ?? null });
+  return call<GrepOutcome>("sftp_grep", { sessionId, dir, query, caseInsensitive, fixed, limit: limit ?? null });
 }
 
 /**
@@ -289,7 +289,7 @@ export function sftpSyncStart(
   remoteRoot: string,
   actions: SyncAction[],
 ): Promise<void> {
-  return invoke<void>("sftp_sync_start", {
+  return call<void>("sftp_sync_start", {
     sessionId,
     runId,
     localRoot,
@@ -312,7 +312,7 @@ export interface SyncRunView {
 
 /** The last sync run of a session — asked by a window that has just taken its tab over. */
 export function syncRunOf(sessionId: string): Promise<SyncRunView | null> {
-  return invoke<SyncRunView | null>("sync_run_of", { sessionId });
+  return call<SyncRunView | null>("sync_run_of", { sessionId });
 }
 
 /** Event name emitted when the OS asks vterm to open a file ("Open with vterm"). */
@@ -336,7 +336,7 @@ export function sftpWriteText(
     encoding?: string;
   } = {},
 ): Promise<WriteResult> {
-  return invoke<WriteResult>("sftp_write_text", {
+  return call<WriteResult>("sftp_write_text", {
     sessionId,
     path,
     content,
@@ -354,17 +354,17 @@ export function sftpDelete(
   path: string,
   isDir: boolean,
 ): Promise<void> {
-  return invoke<void>("sftp_delete", { sessionId, path, isDir });
+  return call<void>("sftp_delete", { sessionId, path, isDir });
 }
 
 /** Move a remote file/folder to `to` (drag-to-move). Rejects if `to` exists. */
 export function sftpRename(sessionId: string, from: string, to: string): Promise<void> {
-  return invoke<void>("sftp_rename", { sessionId, from, to });
+  return call<void>("sftp_rename", { sessionId, from, to });
 }
 
 /** Copy a remote file/folder (recursively) to `to`. Rejects if `to` exists. */
 export function sftpCopy(sessionId: string, from: string, to: string): Promise<void> {
-  return invoke<void>("sftp_copy", { sessionId, from, to });
+  return call<void>("sftp_copy", { sessionId, from, to });
 }
 
 // ── Transfers the backend owns (v1.12, ADR 0025) ────────────────────────────
@@ -433,12 +433,12 @@ export interface TransferJob {
 
 /** Start a transfer; resolves with its id as soon as the backend has taken it. */
 export function transferStart(spec: TransferSpec): Promise<string> {
-  return invoke<string>("transfer_start", { spec });
+  return call<string>("transfer_start", { spec });
 }
 
 /** The transfers this window shows right now (asked on start and on taking a tab over). */
 export function transferList(): Promise<TransferJob[]> {
-  return invoke<TransferJob[]>("transfer_list");
+  return call<TransferJob[]>("transfer_list");
 }
 
 /**
@@ -447,12 +447,12 @@ export function transferList(): Promise<TransferJob[]> {
  * Refused while a session of it is not connected; the job stays kept.
  */
 export function transferResume(id: string): Promise<void> {
-  return invoke<void>("transfer_resume", { id });
+  return call<void>("transfer_resume", { id });
 }
 
 /** Drop an interrupted transfer and its partial copies. */
 export function transferForget(id: string): Promise<void> {
-  return invoke<void>("transfer_forget", { id });
+  return call<void>("transfer_forget", { id });
 }
 
 /** Pick one or more local files to upload; returns absolute paths. */
@@ -495,5 +495,5 @@ export interface SftpProgress {
 
 /** Stop a transfer, a sync run or a tree hash by its id. */
 export function sftpCancel(transferId: string): Promise<void> {
-  return invoke<void>("sftp_cancel", { transferId });
+  return call<void>("sftp_cancel", { transferId });
 }

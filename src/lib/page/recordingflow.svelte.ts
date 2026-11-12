@@ -7,6 +7,8 @@
 // What it needs from the page arrives as getters, read at the moment of use —
 // the page's own state stays the page's.
 
+import { writtenByCall } from "../api/call";
+import { swallowed } from "../api/diag";
 import { getVersion } from "@tauri-apps/api/app";
 import {
   deleteRecording,
@@ -89,8 +91,9 @@ export function createRecordingFlow(deps: RecordingDeps) {
     const env: Record<string, string | number> = {};
     try {
       env.appVersion = await getVersion();
-    } catch {
+    } catch (e) {
       /* version unavailable */
+      swallowed("recording", "the app version is not known to the recording", e);
     }
     if (tab.kind === "ssh") {
       const srv = deps.servers().find((s) => s.id === tab.serverId);
@@ -109,6 +112,7 @@ export function createRecordingFlow(deps: RecordingDeps) {
         if (m.serverTime) env.serverTime = m.serverTime;
       } catch {
         /* metrics probe failed — keep profile-derived fields */
+        writtenByCall();
       }
     }
     return JSON.stringify(env);
@@ -143,6 +147,7 @@ export function createRecordingFlow(deps: RecordingDeps) {
         await stopRecording(id);
       } catch {
         /* session already gone — the file is flushed regardless */
+        writtenByCall();
       }
     }
     clearRecording(id);
@@ -231,7 +236,7 @@ export function createRecordingFlow(deps: RecordingDeps) {
   function applyPause(sessionId: string, paused: boolean) {
     if (isRecordingPaused(sessionId) === paused) return;
     setRecordingPausedState(sessionId, paused);
-    setRecordingPaused(sessionId, paused).catch(() => {});
+    setRecordingPaused(sessionId, paused).catch(writtenByCall);
   }
 
   /** (Re)arm the idle countdown that pauses a recording tab on screen. */
@@ -398,6 +403,7 @@ export function createRecordingFlow(deps: RecordingDeps) {
           await deleteRecording(path);
         } catch {
           /* keep going; avoid a toast storm on partial failure */
+          writtenByCall();
         }
       }
       notifyInfo(t("recordings.discarded"), { source: "recording" });

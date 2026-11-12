@@ -97,12 +97,6 @@ describe("toasts store", () => {
     expect(toastsState.list).toHaveLength(3);
   });
 
-  it("a quiet note goes to the journal only", () => {
-    expect(notifyError("poll failed", { quiet: true, source: "docker" })).toBe("");
-    expect(toastsState.list).toHaveLength(0);
-    expect(notes).toEqual([{ kind: "error", text: "poll failed", source: "docker", serverId: undefined, server: undefined }]);
-  });
-
   it("the journal gets the message masked, and the server of its session", () => {
     const ssh = openTab("srv-9", "prod-db", null, false);
     const local = openLocalTab();

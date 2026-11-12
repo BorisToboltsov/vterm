@@ -12,6 +12,7 @@
 // A stored layout reaches the store through `loadDocks` and nothing else: it
 // sanitizes a current layout and migrates the pre-1.1 keys (`docklayout.guard`).
 
+import { swallowed } from "../api/diag";
 import {
   clampSize,
   defaultDocks,
@@ -114,8 +115,9 @@ $effect.root(() => {
     const data = JSON.stringify(persistedLayout(layout.docks));
     try {
       localStorage.setItem(STORAGE_KEY, data);
-    } catch {
+    } catch (e) {
       /* storage unavailable — non-fatal */
+      swallowed("settings", "the docks' layout was not saved", e, "warn");
     }
   });
 });

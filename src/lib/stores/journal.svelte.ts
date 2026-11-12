@@ -5,6 +5,8 @@
 // Journal section of Settings), and again when it changed meanwhile. Every toast
 // is noted here first (`stores/toasts`).
 
+import { writtenByCall } from "../api/call";
+import { swallow } from "../api/diag";
 import { listen } from "@tauri-apps/api/event";
 import {
   JOURNAL_EVENT,
@@ -64,6 +66,7 @@ function reload(): Promise<void> {
         readAt = rev;
       } catch {
         /* the list on hand stays */
+        writtenByCall();
       }
     } while (again);
     reading = null;
@@ -77,8 +80,8 @@ export function startJournal(): () => void {
   let stopped = false;
   listen<JournalSummary>(JOURNAL_EVENT, (e) => heard(e.payload))
     .then((un) => (stopped ? un() : (stop = un)))
-    .catch(() => {});
-  journalSummary().then(heard).catch(() => {});
+    .catch(swallow("app", "the journal will not be heard in this window"));
+  journalSummary().then(heard).catch(writtenByCall);
   return () => {
     stopped = true;
     stop?.();
@@ -93,7 +96,7 @@ export function noteJournal(note: JournalNote): void {
   void Promise.resolve()
     .then(() => journalNote(note))
     .then((s) => s && heard(s))
-    .catch(() => {});
+    .catch(writtenByCall);
 }
 
 /**
@@ -113,6 +116,7 @@ export function watchJournal(): () => void {
         heard(await journalMarkRead(null));
       } catch {
         /* the dot stays until the next try */
+        writtenByCall();
       }
     }
   })();
@@ -155,5 +159,5 @@ export async function clearJournal(): Promise<void> {
 
 /** What the settings say (the main window tells the backend). */
 export function configureJournal(persist: boolean, days: number): void {
-  journalConfigure(persist, days).then(heard).catch(() => {});
+  journalConfigure(persist, days).then(heard).catch(writtenByCall);
 }

@@ -20,6 +20,7 @@
 //! recording or a log. Prompt text comes from the server and is shown as plain
 //! text by the frontend.
 
+use crate::diag::Unheard;
 use std::collections::HashMap;
 use std::sync::Mutex;
 
@@ -235,7 +236,8 @@ impl PendingPrompts {
     /// Stop a login that's waiting on the user (tab closed, disconnect, reconnect).
     pub fn cancel(&self, session_id: &str) {
         if let Some(tx) = self.0.locked().remove(session_id) {
-            let _ = tx.send(None);
+            tx.send(None)
+                .log_unheard("connection", "the answer to a login question");
         }
     }
 

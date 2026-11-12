@@ -1,6 +1,6 @@
 // Session recording (Phase 11): start/stop/pause/annotate + library CRUD +
 // export/import + file pickers.
-import { invoke } from "@tauri-apps/api/core";
+import { call } from "./call";
 import { open, save } from "@tauri-apps/plugin-dialog";
 import type { RecordingMeta } from "../types";
 
@@ -17,7 +17,7 @@ export function startRecording(
   maskPasswords: boolean,
   mode: string,
 ): Promise<string> {
-  return invoke<string>("start_recording", {
+  return call<string>("start_recording", {
     sessionId,
     title,
     cols,
@@ -31,17 +31,17 @@ export function startRecording(
 
 /** Stop recording a session; resolves to the file path if one was active. */
 export function stopRecording(sessionId: string): Promise<string | null> {
-  return invoke<string | null>("stop_recording", { sessionId });
+  return call<string | null>("stop_recording", { sessionId });
 }
 
 /** Pause or resume the active recording (tab switched away / idle). */
 export function setRecordingPaused(sessionId: string, paused: boolean): Promise<void> {
-  return invoke<void>("set_recording_paused", { sessionId, paused });
+  return call<void>("set_recording_paused", { sessionId, paused });
 }
 
 /** Write an audit annotation (e.g. an in-app config edit) into the recording. */
 export function annotateRecording(sessionId: string, text: string): Promise<void> {
-  return invoke<void>("annotate_recording", { sessionId, text });
+  return call<void>("annotate_recording", { sessionId, text });
 }
 
 /**
@@ -53,37 +53,37 @@ export function recordAudit(
   sessionId: string,
   entry: { op: string; body: string; exitCode: number },
 ): Promise<void> {
-  return invoke<void>("record_audit", { sessionId, ...entry });
+  return call<void>("record_audit", { sessionId, ...entry });
 }
 
 /** List stored recordings, newest first. */
 export function listRecordings(): Promise<RecordingMeta[]> {
-  return invoke<RecordingMeta[]>("list_recordings");
+  return call<RecordingMeta[]>("list_recordings");
 }
 
 /** Set a recording's title and description (rewrites its asciicast header). */
 export function setRecordingMeta(path: string, title: string, description: string): Promise<void> {
-  return invoke<void>("set_recording_meta", { path, title, description });
+  return call<void>("set_recording_meta", { path, title, description });
 }
 
 /** Name a broadcast bundle: writes `label` into every recording of `batchId`. */
 export function setBatchLabel(batchId: string, label: string): Promise<void> {
-  return invoke<void>("set_batch_label", { batchId, label });
+  return call<void>("set_batch_label", { batchId, label });
 }
 
 /** Delete a stored recording by path. */
 export function deleteRecording(path: string): Promise<void> {
-  return invoke<void>("delete_recording", { path });
+  return call<void>("delete_recording", { path });
 }
 
 /** Read a recording's raw asciicast content (for transcript export / player). */
 export function readRecording(path: string): Promise<string> {
-  return invoke<string>("read_recording", { path });
+  return call<string>("read_recording", { path });
 }
 
 /** Write exported text (transcript or .cast copy) to a user-chosen path. */
 export function exportRecording(path: string, content: string): Promise<void> {
-  return invoke<void>("export_recording", { path, content });
+  return call<void>("export_recording", { path, content });
 }
 
 /** Native "save as" dialog for an export; returns the chosen path or null. */
@@ -98,7 +98,7 @@ export function pickExportSavePath(defaultName: string): Promise<string | null> 
  * (not transcripts) replay correctly.
  */
 export function importRecording(srcPath: string): Promise<RecordingMeta> {
-  return invoke<RecordingMeta>("import_recording", { srcPath });
+  return call<RecordingMeta>("import_recording", { srcPath });
 }
 
 /** Native open dialog for a `.cast` recording to upload; returns the path or null. */

@@ -27,11 +27,12 @@ mod tests {
     fn a_poisoned_mutex_is_still_usable() {
         let m = Arc::new(Mutex::new(vec![1]));
         let held = Arc::clone(&m);
-        let _ = std::thread::spawn(move || {
+        let joined = std::thread::spawn(move || {
             let _guard = held.lock().unwrap();
             panic!("poison it");
         })
         .join();
+        assert!(joined.is_err(), "the thread panicked holding the lock");
         assert!(m.is_poisoned());
         m.locked().push(2);
         assert_eq!(*m.locked(), vec![1, 2]);

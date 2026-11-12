@@ -42,7 +42,7 @@ export const SETTINGS_SECTIONS: SettingsSection[] = [
   { id: "idle", keywords: "Screensaver idle inactivity timeout matrix parallax words weak signal server card no signal burn-in burn in OLED drift shift pixel заставка простой бездействие таймаут матрица параллакс слова слабый сигнал карточка сервера скринсейвер хранитель экрана выгорание сдвиг пиксели OLED" },
   { id: "security", keywords: "Security host key known_hosts policy strict trust accept безопасность ключ хоста политика" },
   { id: "backup", keywords: "Backup export import json restore резервная копия бэкап экспорт импорт восстановление" },
-  { id: "journal", keywords: "Journal messages notifications history toasts errors missed bell pin top bar keep clear retention days журнал сообщения уведомления история тосты ошибки пропущенные колокольчик булавка верхняя панель хранить очистить срок дни" },
+  { id: "journal", keywords: "Journal messages notifications history toasts errors missed bell pin top bar keep clear retention days diagnostics log logging level threshold warnings verbose debug export folder журнал сообщения уведомления история тосты ошибки пропущенные колокольчик булавка верхняя панель хранить очистить срок дни диагностика логи логирование уровень порог предупреждения подробно экспорт папка" },
   { id: "ai", keywords: "AI assistant LLM chat model endpoint api key qwen ollama vllm claude anthropic openai prod ИИ ассистент чат модель эндпоинт ключ помощник нейросеть" },
 ];
 

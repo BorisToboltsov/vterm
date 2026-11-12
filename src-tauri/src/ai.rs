@@ -335,19 +335,35 @@ fn stream_gate(app: &AppHandle, id: &str) -> Arc<aigate::StreamGate> {
         done_event(id),
         error_event(id),
     );
+    let failed = crate::diag::FirstFailure::new("ai", "emit the assistant's answer");
     Arc::new(aigate::StreamGate::new(Box::new(move |piece| {
-        let _ = match piece {
+        failed.note(match piece {
             Piece::Out(t) => app.emit(&out, t),
             Piece::Think(t) => app.emit(&think, t),
             Piece::Done(usage) => app.emit(&done, usage),
             Piece::Error(e) => app.emit(&error, e),
-        };
+        });
     })))
 }
 
 #[tauri::command]
 pub async fn ai_chat(app: AppHandle, req: AiChatRequest) -> AppResult<()> {
     let id = req.stream_id.clone();
+    // What was asked of whom — never the question, the context or the answer
+    // (ADR 0063): the endpoint's host, the model, how many messages.
+    let host = endpoint_host(&req.base_url);
+    let sid = req.session_id.as_deref().unwrap_or("");
+    tracing::info!(
+        source = "ai",
+        code = "ai-asked",
+        sid,
+        endpoint = %host,
+        provider = %req.provider,
+        model = %req.model,
+        messages = req.messages.len(),
+        "assistant asked"
+    );
+    let started = std::time::Instant::now();
     let notify = Arc::new(Notify::new());
     cancels().locked().insert(id.clone(), notify.clone());
     // Every piece of the answer goes through the gate: a handoff of its tab
@@ -363,6 +379,29 @@ pub async fn ai_chat(app: AppHandle, req: AiChatRequest) -> AppResult<()> {
     };
     cancels().locked().remove(&id);
 
+    let ms = started.elapsed().as_millis() as u64;
+    match &outcome {
+        Ok(usage) => tracing::info!(
+            source = "ai",
+            code = "ai-answered",
+            sid,
+            endpoint = %host,
+            tokens_in = usage.and_then(|u| u.input_tokens),
+            tokens_out = usage.and_then(|u| u.output_tokens),
+            ms,
+            "assistant answered"
+        ),
+        Err(e) => {
+            tracing::warn!(
+                source = "ai",
+                code = "ai-failed",
+                sid,
+                endpoint = %host,
+                ms,
+                "assistant failed: {e}"
+            )
+        }
+    }
     let result = match outcome {
         Ok(usage) => {
             // The done event carries the tally (or null): usage is terminal data,
@@ -380,6 +419,15 @@ pub async fn ai_chat(app: AppHandle, req: AiChatRequest) -> AppResult<()> {
     };
     aigate::close(&id);
     result
+}
+
+/// The host an endpoint URL names — no scheme, path, query or credentials:
+/// what the diagnostics may say about where the assistant's traffic went.
+pub fn endpoint_host(url: &str) -> String {
+    let rest = url.split_once("://").map_or(url, |(_, r)| r);
+    let authority = rest.split(['/', '?', '#']).next().unwrap_or("");
+    let host = authority.rsplit_once('@').map_or(authority, |(_, h)| h);
+    host.to_owned()
 }
 
 /// Stop an in-flight `ai_chat` stream (the chat's Stop button). No-op if the
@@ -567,6 +615,21 @@ fn finish_usage(u: AiUsage) -> Option<AiUsage> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn the_endpoint_is_named_by_its_host_alone() {
+        use super::endpoint_host;
+        assert_eq!(
+            endpoint_host("https://api.anthropic.com/v1"),
+            "api.anthropic.com"
+        );
+        assert_eq!(
+            endpoint_host("http://localhost:11434/v1?key=sk-x"),
+            "localhost:11434"
+        );
+        assert_eq!(endpoint_host("https://user:secret@llm.lan/v1"), "llm.lan");
+        assert_eq!(endpoint_host("llm.lan:8080"), "llm.lan:8080");
+    }
+
     use super::*;
 
     fn req() -> AiChatRequest {

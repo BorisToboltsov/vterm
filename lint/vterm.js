@@ -64,6 +64,23 @@ function insideAttribute(node) {
   return false;
 }
 
+/**
+ * Whether a name says it holds a secret, read by its words — `accessToken`,
+ * `db_password`, `apiKey` — so `tokensIn` (a count) and `passed` are not.
+ */
+function isSecretName(name) {
+  const words = String(name)
+    .replace(/([a-z0-9])([A-Z])/g, "$1_$2")
+    .toLowerCase()
+    .split(/[^a-z0-9]+/)
+    .filter(Boolean);
+  const SECRET = ["password", "passwd", "passphrase", "secret", "secrets", "token", "credential", "credentials", "cookie"];
+  return (
+    words.some((w) => SECRET.includes(w)) ||
+    words.some((w, i) => (w === "api" || w === "private") && words[i + 1] === "key")
+  );
+}
+
 const isMember = (n, prop) =>
   n?.type === "MemberExpression" && !n.computed && n.property.type === "Identifier" && n.property.name === prop;
 const directiveName = (node) => node.key.name.name ?? node.key.name;
@@ -719,6 +736,96 @@ const rules = {
           if (by.value === "\\$&" && /^\[.*\]$/.test(re.pattern) && !re.pattern.includes("\\\\")) {
             report(node, { why: "An escape that leaves the backslash out lets it through (js/incomplete-sanitization)." });
           }
+        },
+      };
+    },
+  ),
+
+  "invoke-in-call": rule(
+    "invoke() is imported in src/lib/api/call.ts alone",
+    "Call the backend through call() (src/lib/api/call.ts): it writes every rejected command to the diagnostics (ADR 0063), invoke() here would not.",
+    (context, report) =>
+      eachImport(context, (node, t) => {
+        if (t.pkg !== "@tauri-apps/api/core") return;
+        const named = (node.specifiers ?? []).some(
+          (s) =>
+            s.type === "ImportNamespaceSpecifier" ||
+            (s.type === "ImportSpecifier" && (s.imported.name ?? s.imported.value) === "invoke"),
+        );
+        if (named || node.type === "ImportExpression" || node.type === "ExportAllDeclaration") report(node);
+      }),
+  ),
+
+  "no-console": rule(
+    "The front end does not write to the console",
+    "The WebView's console is seen by nobody (only a dev build has one, each window its own, gone on reload): write through the diagnostics facade, diag.* in api/diag.ts (ADR 0063).",
+    (context, report) => ({
+      "Program:exit"(node) {
+        for (const ref of context.sourceCode.getScope(node).through) {
+          if (ref.identifier.name === "console") report(ref.identifier);
+        }
+      },
+    }),
+  ),
+
+  "diag-no-secret": rule(
+    "A diagnostics event carries no secret and no object handed over whole",
+    "An event's fields are an object literal of flat values, none of them a secret by name (password, passphrase, secret, token, API or private key, credential, cookie); its text names no secret either (ADR 0063). The writer's mask is the last line of defence, not the way.",
+    (context, report) => {
+      const LEVELS = new Set(["error", "warn", "info", "debug"]);
+      /** The argument positions of a call to the facade: [text, fields], or null when it is not one. */
+      const facadeArgs = (node) => {
+        const c = node.callee;
+        if (c.type === "MemberExpression" && !c.computed && c.object.type === "Identifier" && c.object.name === "diag" && LEVELS.has(c.property.name)) {
+          return [1, 2];
+        }
+        if (c.type === "Identifier" && c.name === "diagEvent") return [2, 3];
+        return null;
+      };
+      return {
+        CallExpression(node) {
+          const at = facadeArgs(node);
+          if (!at) return;
+          const [text, fields] = [node.arguments[at[0]], node.arguments[at[1]]];
+          if (text && some(context, text, (n) => (n.type === "Identifier" || n.type === "PrivateIdentifier") && isSecretName(n.name))) {
+            report(text);
+          }
+          if (!fields || (fields.type === "Identifier" && fields.name === "undefined")) return;
+          if (fields.type !== "ObjectExpression") return report(fields);
+          for (const prop of fields.properties) {
+            if (prop.type === "SpreadElement") report(prop);
+            else if (!prop.computed && isSecretName(prop.key.name ?? String(prop.key.value))) report(prop);
+            else if (prop.value && some(context, prop.value, (n) => n.type === "Identifier" && isSecretName(n.name))) report(prop);
+          }
+        },
+      };
+    },
+  ),
+
+  "no-silent-catch": rule(
+    "An error is handled or written, never dropped in silence",
+    "A swallowed error leaves no trace (ADR 0063): handle it — a branch, a fallback, a message — or write it with swallow()/swallowed() from api/diag.ts (warn when the user lost something, debug when it was expected). An empty catch, or one holding only a comment, is silence.",
+    (_, report) => {
+      /** A handler that does nothing: `() => {}`, `() => undefined`, `() => null`, `() => void 0`. */
+      const silent = (fn) => {
+        if (!fn || (fn.type !== "ArrowFunctionExpression" && fn.type !== "FunctionExpression")) return false;
+        const b = fn.body;
+        if (b.type === "BlockStatement") return b.body.length === 0;
+        return (
+          (b.type === "Identifier" && b.name === "undefined") ||
+          (b.type === "Literal" && b.value === null) ||
+          (b.type === "UnaryExpression" && b.operator === "void" && b.argument.type === "Literal")
+        );
+      };
+      return {
+        CatchClause(node) {
+          if (node.body.body.length === 0) report(node);
+        },
+        CallExpression(node) {
+          const c = node.callee;
+          if (c.type !== "MemberExpression" || c.computed) return;
+          if (c.property.name === "catch" && silent(node.arguments[0])) report(node);
+          if (c.property.name === "then" && silent(node.arguments[1])) report(node);
         },
       };
     },

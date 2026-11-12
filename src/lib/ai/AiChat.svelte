@@ -37,6 +37,8 @@
   import { aiModels } from "../api";
   import { writeClipboard } from "../app/clipboard";
   import { notifySuccess, notifyInfo } from "../stores/toasts.svelte";
+  import { diag, swallowed } from "../api/diag";
+  import { aboutSession } from "../stores/diag.svelte";
   import { askBlocker, chatBusy, ASK_BLOCK_MESSAGE, ASK_PRESETS } from "./aiask";
   import {
     aiChatState,
@@ -322,7 +324,9 @@
       if (tiers && getContext) {
         try {
           raw = await getContext();
-        } catch {
+        } catch (e) {
+          // Sent without it: the consent dialog shows what is left.
+          swallowed("ai", "the context was not collected: it is sent without it", e, "warn");
           raw = {};
         }
       }
@@ -342,10 +346,23 @@
     if (!consent) return;
     const { question, built, attached } = consent;
     consent = null;
+    // What left the machine, by its shape: never its text (ADR 0063).
+    diag.info(
+      "ai",
+      "context sent with consent",
+      { lines: built.lines, masked: built.redactions, sources: built.sources.join(",") },
+      { ...aboutSession(sessionId), code: "consent-given" },
+    );
     if (doSend(question, built.text) && attached) chat.attachment = null;
   }
 
   function cancelConsent() {
+    if (consent) {
+      diag.info("ai", "context not sent: consent declined", { lines: consent.built.lines }, {
+        ...aboutSession(sessionId),
+        code: "consent-declined",
+      });
+    }
     consent = null;
   }
 

@@ -312,12 +312,17 @@ fn memory_block(bytes: &[u8]) -> Result<STGMEDIUM> {
         let block = GlobalAlloc(GMEM_MOVEABLE, bytes.len())?;
         let at = GlobalLock(block);
         if at.is_null() {
-            let _ = GlobalFree(Some(block));
+            if let Err(e) = GlobalFree(Some(block)) {
+                tracing::debug!(source = "files", "free the drag's memory block: {e}");
+            }
             return Err(E_OUTOFMEMORY.into());
         }
         std::ptr::copy_nonoverlapping(bytes.as_ptr(), at.cast::<u8>(), bytes.len());
-        // "No longer locked" is reported the way a failure is; it is not one.
-        let _ = GlobalUnlock(block);
+        // "No longer locked" is reported the way a failure is; it is not one, so
+        // either answer means the block is ready to hand over.
+        match GlobalUnlock(block) {
+            Ok(()) | Err(_) => {}
+        }
         Ok(STGMEDIUM {
             tymed: TYMED_HGLOBAL.0 as u32,
             u: STGMEDIUM_0 { hGlobal: block },
@@ -522,7 +527,12 @@ fn made_elsewhere(stream: RemoteStream) -> Option<IStream> {
                 }
                 carried
             };
-            let _ = said.send(carried);
+            if said.send(carried).is_err() {
+                tracing::debug!(
+                    source = "files",
+                    "carry the file's stream: nobody waits any more"
+                );
+            }
         })
         .ok()?;
     let carried = heard.recv_timeout(MADE_WITHIN).ok()??;
@@ -642,7 +652,15 @@ pub fn begin(feed: Arc<Feed>, answer: impl FnOnce(bool)) {
     let mut effect = DROPEFFECT_NONE;
     // SAFETY: both objects outlive the call; OLE is initialised on this thread
     // by the windowing library, which registers the windows' own drop targets.
-    let _ = unsafe { DoDragDrop(&data, &source, DROPEFFECT_COPY, &mut effect) };
+    let answered = unsafe { DoDragDrop(&data, &source, DROPEFFECT_COPY, &mut effect) };
+    // A drop or a cancel is an answer, not a failure — and whose drop it was is
+    // told by `let_go`, not by the answer. Only a failure of the call is said.
+    if answered.is_err() {
+        tracing::warn!(
+            source = "files",
+            "the system's drag of files ended in an error: {answered:?}"
+        );
+    }
     // Let go of over a window of the app, the files are that window's: it is
     // no taker of streams, so the system has told it nothing — the app does.
     if let_go.get() {

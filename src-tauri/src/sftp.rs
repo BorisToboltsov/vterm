@@ -2,6 +2,7 @@
 //! on top of an open `SftpSession`.
 
 use crate::appwin::WindowSink;
+use crate::diag::Logged;
 use crate::error::{AppError, AppResult};
 use crate::partial::{self, Keep, Partial, Resume};
 use crate::textenc;
@@ -417,7 +418,9 @@ pub async fn write_text(sftp: &SftpSession, req: &TextWrite<'_>) -> AppResult<Wr
             .map_err(|e| AppError::BackupFailed(e.to_string()))?;
         if let Some(perm) = mode {
             if let Err(e) = sftp.set_metadata(bak.clone(), chmod_attrs(perm)).await {
-                let _ = sftp.remove_file(bak).await;
+                sftp.remove_file(bak)
+                    .await
+                    .log_debug("files", "the backup copy was not removed");
                 return Err(AppError::BackupFailed(format!(
                     "could not restrict {path}.bak to the original permissions: {e}"
                 )));
@@ -437,15 +440,22 @@ pub async fn write_text(sftp: &SftpSession, req: &TextWrite<'_>) -> AppResult<Wr
     // more than the mode. NOTE the `chmod_attrs` builder — see its doc comment;
     // `..Default::default()` here silently truncated every saved file to zero.
     if let Some(perm) = mode {
-        let _ = sftp.set_metadata(tmp.clone(), chmod_attrs(perm)).await;
+        sftp.set_metadata(tmp.clone(), chmod_attrs(perm))
+            .await
+            .log_warn("files", "the file's permissions were not applied");
     }
     // SSH_FXP_RENAME fails if the target exists (OpenSSH), so drop it first.
     // This is the only non-atomic window; the temp already holds the full content.
     if existing.is_some() {
-        let _ = sftp.remove_file(path).await;
+        sftp.remove_file(path)
+            .await
+            .log_debug("files", "the file was not removed");
     }
     if let Err(e) = sftp.rename(tmp.clone(), path).await {
-        let _ = sftp.remove_file(tmp).await;
+        sftp.remove_file(tmp).await.log_debug(
+            "files",
+            "the temporary file was not removed and stays beside the target",
+        );
         return Err(format!("rename onto {path}: {e}").into());
     }
 
@@ -653,7 +663,10 @@ pub(crate) async fn upload_staged(
     drop(dst);
     if let Err(e) = copied {
         if told.is_none() {
-            let _ = sftp.remove_file(tmp).await;
+            sftp.remove_file(tmp).await.log_debug(
+                "files",
+                "the temporary file was not removed and stays beside the target",
+            );
         }
         return Err(e);
     }
@@ -681,15 +694,23 @@ async fn commit_remote(
     // and the content is what the user asked for. NOTE the `chmod_attrs` builder
     // — a template here would truncate the file.
     if let Some(perm) = mode {
-        let _ = sftp.set_metadata(tmp.clone(), chmod_attrs(perm)).await;
+        sftp.set_metadata(tmp.clone(), chmod_attrs(perm))
+            .await
+            .log_warn("files", "the file's permissions were not applied");
     }
     // SSH_FXP_RENAME fails onto an existing target (OpenSSH): drop it first. The
     // only non-atomic window — the temp already holds the full content.
     if replaces {
-        let _ = sftp.remove_file(target).await;
+        sftp.remove_file(target).await.log_debug(
+            "files",
+            "the old file was not removed before the new one took its place",
+        );
     }
     if let Err(e) = sftp.rename(tmp.clone(), target).await {
-        let _ = sftp.remove_file(tmp).await;
+        sftp.remove_file(tmp).await.log_debug(
+            "files",
+            "the temporary file was not removed and stays beside the target",
+        );
         return Err(format!("rename onto {target}: {e}").into());
     }
     Ok(())
@@ -766,7 +787,10 @@ pub(crate) async fn relay_staged(
     drop(writer);
     if let Err(e) = copied {
         if told.is_none() {
-            let _ = dst.remove_file(tmp).await;
+            dst.remove_file(tmp).await.log_debug(
+                "files",
+                "the temporary file was not removed and stays beside the target",
+            );
         }
         return Err(e);
     }
@@ -858,7 +882,10 @@ pub(crate) async fn download_file(
     drop(dst);
     if let Err(e) = copied {
         if told.is_none() {
-            let _ = tokio::fs::remove_file(&tmp).await;
+            tokio::fs::remove_file(&tmp).await.log_debug(
+                "files",
+                "the temporary file was not removed and stays beside the target",
+            );
         }
         return Err(e);
     }
@@ -866,7 +893,9 @@ pub(crate) async fn download_file(
     // new file takes the server's permission bits (v1.34), as `scp` does. A
     // Windows disk has none to take.
     if let Ok(meta) = tokio::fs::metadata(local).await {
-        let _ = tokio::fs::set_permissions(&tmp, meta.permissions()).await;
+        tokio::fs::set_permissions(&tmp, meta.permissions())
+            .await
+            .log_warn("files", "the file's permissions were not applied");
     } else {
         give_mode(
             std::path::Path::new(&tmp),
@@ -875,7 +904,10 @@ pub(crate) async fn download_file(
         .await;
     }
     if let Err(e) = tokio::fs::rename(&tmp, local).await {
-        let _ = tokio::fs::remove_file(&tmp).await;
+        tokio::fs::remove_file(&tmp).await.log_debug(
+            "files",
+            "the temporary file was not removed and stays beside the target",
+        );
         return Err(format!("rename onto {local}: {e}").into());
     }
     Ok(())
@@ -897,7 +929,10 @@ pub(crate) async fn make_symlink(sftp: &SftpSession, target: &str, link: &str) -
         return Ok(());
     }
     if !there_before && sftp.read_link(target).await.ok().as_deref() == Some(link) {
-        let _ = sftp.remove_file(target).await;
+        sftp.remove_file(target).await.log_debug(
+            "files",
+            "the old file was not removed before the new one took its place",
+        );
     }
     Err(format!("symlink {link}: the server did not make the link that was asked for").into())
 }
@@ -908,8 +943,9 @@ async fn give_mode(path: &std::path::Path, mode: Option<u32>) {
     #[cfg(unix)]
     if let Some(bits) = mode {
         use std::os::unix::fs::PermissionsExt;
-        let _ =
-            tokio::fs::set_permissions(path, std::fs::Permissions::from_mode(bits & 0o777)).await;
+        tokio::fs::set_permissions(path, std::fs::Permissions::from_mode(bits & 0o777))
+            .await
+            .log_warn("files", "the file's permissions were not applied");
     }
     #[cfg(not(unix))]
     let _ = (path, mode);
@@ -1463,7 +1499,9 @@ pub(crate) mod live_sftp {
             .expect("reopen");
         assert_eq!(reopened.content, edited);
 
-        let _ = sftp.remove_file(path).await;
+        if let Err(e) = sftp.remove_file(path).await {
+            eprintln!("cleanup: {e}");
+        }
     }
 
     /// The "keep a .bak on the server" setting: where the copy lands, what it
@@ -1511,8 +1549,12 @@ pub(crate) mod live_sftp {
             "the .bak widened access to the secrets it copied"
         );
 
-        let _ = sftp.remove_file(bak).await;
-        let _ = sftp.remove_file(path).await;
+        if let Err(e) = sftp.remove_file(bak).await {
+            eprintln!("cleanup: {e}");
+        }
+        if let Err(e) = sftp.remove_file(path).await {
+            eprintln!("cleanup: {e}");
+        }
     }
 
     /// When the `.bak` cannot be made, the save must be ABANDONED — not completed
@@ -1564,8 +1606,12 @@ pub(crate) mod live_sftp {
             "the file was overwritten despite the backup failing"
         );
 
-        let _ = sftp.remove_dir(bak).await;
-        let _ = sftp.remove_file(path).await;
+        if let Err(e) = sftp.remove_dir(bak).await {
+            eprintln!("cleanup: {e}");
+        }
+        if let Err(e) = sftp.remove_file(path).await {
+            eprintln!("cleanup: {e}");
+        }
     }
 
     /// The `.bak` step must not fail a save for a file that does not exist yet —
@@ -1595,7 +1641,9 @@ pub(crate) mod live_sftp {
             "nothing existed to back up, so no .bak should have appeared"
         );
 
-        let _ = sftp.remove_file(path).await;
+        if let Err(e) = sftp.remove_file(path).await {
+            eprintln!("cleanup: {e}");
+        }
     }
 
     /// The truncation came from over-broad attributes, and the tempting overfix is
@@ -1637,7 +1685,9 @@ pub(crate) mod live_sftp {
             "secret = 2\n"
         );
 
-        let _ = sftp.remove_file(path).await;
+        if let Err(e) = sftp.remove_file(path).await {
+            eprintln!("cleanup: {e}");
+        }
     }
 
     /// Phase 39's encoding contract, verified over the wire rather than in memory:
@@ -1684,7 +1734,9 @@ pub(crate) mod live_sftp {
             "the file was not rewritten in its original encoding"
         );
 
-        let _ = sftp.remove_file(path).await;
+        if let Err(e) = sftp.remove_file(path).await {
+            eprintln!("cleanup: {e}");
+        }
     }
 
     /// Names in `DIR` that are staging temps of `path` — any left behind is the
@@ -1730,7 +1782,9 @@ pub(crate) mod live_sftp {
         assert_eq!(on_server, b"original\n");
         assert!(leftover_temps(&sftp, &path).await.is_empty());
 
-        let _ = sftp.remove_file(path).await;
+        if let Err(e) = sftp.remove_file(path).await {
+            eprintln!("cleanup: {e}");
+        }
     }
 
     /// A completed upload replaces the content but keeps the target's mode — the
@@ -1769,7 +1823,9 @@ pub(crate) mod live_sftp {
         assert_eq!(mode.map(|m| m & 0o777), Some(0o755));
         assert!(leftover_temps(&sftp, &path).await.is_empty());
 
-        let _ = sftp.remove_file(path).await;
+        if let Err(e) = sftp.remove_file(path).await {
+            eprintln!("cleanup: {e}");
+        }
     }
 
     /// A new file takes the source's permission bits both ways (v1.34), as `scp`
@@ -1782,7 +1838,9 @@ pub(crate) mod live_sftp {
         use std::os::unix::fs::PermissionsExt;
         let sftp = connect().await;
         let path = path_for("mode-up");
-        let _ = sftp.remove_file(path.clone()).await;
+        if let Err(e) = sftp.remove_file(path.clone()).await {
+            eprintln!("cleanup: {e}");
+        }
         let tmp = tempfile::tempdir().unwrap();
         let local = tmp.path().join("key");
         std::fs::write(&local, b"secret\n").unwrap();
@@ -1822,7 +1880,9 @@ pub(crate) mod live_sftp {
             0o640
         );
 
-        let _ = sftp.remove_file(path).await;
+        if let Err(e) = sftp.remove_file(path).await {
+            eprintln!("cleanup: {e}");
+        }
     }
 
     /// A copy from one connection to another (v1.12): the bytes arrive, a new
@@ -1838,7 +1898,9 @@ pub(crate) mod live_sftp {
         a.set_metadata(from.clone(), chmod_attrs(0o100_600))
             .await
             .expect("chmod");
-        let _ = b.remove_file(to.clone()).await;
+        if let Err(e) = b.remove_file(to.clone()).await {
+            eprintln!("cleanup: {e}");
+        }
 
         relay_staged(&Report::Silent, &a, &b, &from, &to, false, None, None)
             .await
@@ -1865,8 +1927,12 @@ pub(crate) mod live_sftp {
         let mode = b.metadata(to.clone()).await.expect("stat").permissions;
         assert_eq!(mode.map(|m| m & 0o777), Some(0o640));
 
-        let _ = a.remove_file(from).await;
-        let _ = b.remove_file(to).await;
+        if let Err(e) = a.remove_file(from).await {
+            eprintln!("cleanup: {e}");
+        }
+        if let Err(e) = b.remove_file(to).await {
+            eprintln!("cleanup: {e}");
+        }
     }
 
     /// A relay stopped mid-way: the file that was at the destination is byte for
@@ -1886,8 +1952,12 @@ pub(crate) mod live_sftp {
         assert_eq!(b.read(to.clone()).await.expect("read"), b"original\n");
         assert!(leftover_temps(&b, &to).await.is_empty());
 
-        let _ = a.remove_file(from).await;
-        let _ = b.remove_file(to).await;
+        if let Err(e) = a.remove_file(from).await {
+            eprintln!("cleanup: {e}");
+        }
+        if let Err(e) = b.remove_file(to).await {
+            eprintln!("cleanup: {e}");
+        }
     }
 
     /// An upload that was not told it may replace: a file dropped on the window
@@ -1919,7 +1989,9 @@ pub(crate) mod live_sftp {
         assert!(leftover_temps(&sftp, &path).await.is_empty());
 
         let fresh = path_for("upload-fresh");
-        let _ = sftp.remove_file(fresh.clone()).await;
+        if let Err(e) = sftp.remove_file(fresh.clone()).await {
+            eprintln!("cleanup: {e}");
+        }
         upload_staged(
             &Report::Silent,
             &sftp,
@@ -1933,8 +2005,12 @@ pub(crate) mod live_sftp {
         .expect("a new name needs no leave");
         assert_eq!(sftp.read(fresh.clone()).await.expect("read"), b"mine\n");
 
-        let _ = sftp.remove_file(path).await;
-        let _ = sftp.remove_file(fresh).await;
+        if let Err(e) = sftp.remove_file(path).await {
+            eprintln!("cleanup: {e}");
+        }
+        if let Err(e) = sftp.remove_file(fresh).await {
+            eprintln!("cleanup: {e}");
+        }
     }
 
     /// The download side of the same contract: a stopped download keeps the local
@@ -1985,6 +2061,8 @@ pub(crate) mod live_sftp {
         assert_eq!(std::fs::read(&local).unwrap().len(), 4 * CHUNK);
         assert_eq!(std::fs::read_dir(dir).unwrap().count(), 1);
 
-        let _ = sftp.remove_file(path).await;
+        if let Err(e) = sftp.remove_file(path).await {
+            eprintln!("cleanup: {e}");
+        }
     }
 }

@@ -2,8 +2,8 @@
 // takes, and the window shows it without being buried by it:
 //
 //  1. `notify` notes the message in the journal first — masked, for the journal
-//     is kept on disk — and only then decides whether there is a toast: a quiet
-//     note is the journal's alone, and is still a note.
+//     is kept on disk — and only then makes its toast. What is told nobody is not
+//     a message at all but an event of the diagnostics (ADR 0063).
 //  2. A window draws no more toasts than `fitToasts` lets it; the rest wait under
 //     one line. Drawing the whole queue is what buried the window under a burst.
 //  3. Taken off the bar, the bell does not take the journal with it: Settings →
@@ -14,8 +14,8 @@
 //  5. The journal's numbers are one in the frontend and the backend: its event,
 //     the ages it keeps, the most it keeps.
 //  6. A panel that polls its host (Docker, k8s) has one read in flight at a time
-//     and says a failed read in a strip, noted quietly — a toast per tick buried
-//     the window when the link dropped.
+//     and says a failed read in a strip, and as an event of the diagnostics once
+//     a streak — a toast per tick buried the window when the link dropped.
 //
 // A check is a function over the source that names what it found; each is shown
 // catching its own violation below.
@@ -73,13 +73,14 @@ const sources = (): Sources =>
 function noteViolations(toasts: string): string[] {
   const notify = body(code(toasts), "notify");
   const noted = notify.indexOf("noteJournal(");
-  const quiet = notify.indexOf("if (opts.quiet) return");
+  const toast = notify.indexOf("toastKey(");
   const out: string[] = [];
   if (noted < 0) out.push("notify does not note the message in the journal");
   else if (!/noteJournal\(\{[^}]*text: redactSecrets\(message\)\.text/.test(notify)) {
     out.push("notify notes the message unmasked");
   }
-  if (quiet < 0 || noted < 0 || quiet < noted) out.push("a quiet note skips the journal");
+  if (toast < 0 || noted < 0 || toast < noted) out.push("a toast comes before its note");
+  if (/opts\.quiet/.test(notify)) out.push("a message is told nobody");
   return out;
 }
 
@@ -157,7 +158,10 @@ function pollViolations(panel: string, name: string): string[] {
   const read = scriptBody(src, "readNow");
   if (!/catch \(e\) \{\s*failedRead\(String\(e\)\);/.test(read)) out.push(`${name} does not take a failed read to its strip`);
   if (/notify(Error|Info|Success)\(/.test(read)) out.push(`${name} toasts from its poll`);
-  if (!/notifyError\(text, \{[^}]*quiet: true \}\)/.test(scriptBody(src, "failedRead"))) out.push(`${name} notes a failed read aloud`);
+  const failed = scriptBody(src, "failedRead");
+  if (/notify(Error|Info|Success)\(/.test(failed) || !/diag\.warn\(/.test(failed)) {
+    out.push(`${name} says a failed read aloud, not to the diagnostics`);
+  }
   return out;
 }
 
@@ -197,17 +201,19 @@ describe("journal guard", () => {
 describe("journal guard — catches what it exists for", () => {
   const s = sources();
 
-  it("a message that never reaches the journal, or reaches it unmasked, or a quiet one that skips it", () => {
+  it("a message that never reaches the journal, reaches it unmasked or late, or is told nobody", () => {
     const line = "noteJournal({ kind, text: redactSecrets(message).text, source: opts.source, serverId, server });";
     expect(noteViolations(mutate(s.toasts, line, ""))).toEqual([
       "notify does not note the message in the journal",
-      "a quiet note skips the journal",
+      "a toast comes before its note",
     ]);
     expect(noteViolations(mutate(s.toasts, "text: redactSecrets(message).text", "text: message"))).toEqual([
       "notify notes the message unmasked",
     ]);
-    const early = mutate(s.toasts, line, "").replace("if (opts.quiet) return \"\";", `if (opts.quiet) return "";\n  ${line}`);
-    expect(noteViolations(early)).toEqual(["a quiet note skips the journal"]);
+    const key = "const key = toastKey(kind, message, opts.source, serverId);";
+    const late = mutate(mutate(s.toasts, line, ""), key, `${key}\n  ${line}`);
+    expect(noteViolations(late)).toEqual(["a toast comes before its note"]);
+    expect(noteViolations(mutate(s.toasts, key, `if (opts.quiet) return "";\n  ${key}`))).toEqual(["a message is told nobody"]);
   });
 
   it("the whole queue drawn", () => {
@@ -265,7 +271,11 @@ describe("journal guard — catches what it exists for", () => {
       "Docker does not take a failed read to its strip",
       "Docker toasts from its poll",
     ]);
-    const aloud = mutate(s.k8s, 'notifyError(text, { source: "k8s", sessionId, quiet: true });', 'notifyError(text, { source: "k8s", sessionId });');
-    expect(pollViolations(aloud, "k8s")).toEqual(["k8s notes a failed read aloud"]);
+    const aloud = mutate(
+      s.k8s,
+      'diag.warn("k8s", `poll failed: ${text}`, undefined, { ...aboutSession(sessionId), code: "poll-failed" });',
+      'notifyError(text, { source: "k8s", sessionId });',
+    );
+    expect(pollViolations(aloud, "k8s")).toEqual(["k8s says a failed read aloud, not to the diagnostics"]);
   });
 });

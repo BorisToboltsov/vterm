@@ -33,6 +33,8 @@ export const JOURNAL_SOURCES = [
   "settings",
   "update",
   "windows",
+  // The app itself: start-up, exit, an internal error (ADR 0063).
+  "app",
 ] as const;
 
 export type JournalSource = (typeof JOURNAL_SOURCES)[number];

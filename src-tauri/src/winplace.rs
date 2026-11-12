@@ -11,6 +11,7 @@
 //! Where the window system does not say where a window is (Wayland), the size
 //! is kept and the position is not.
 
+use crate::diag::Logged;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
@@ -156,9 +157,13 @@ pub fn areas_of(window: &tauri::WebviewWindow) -> Vec<Area> {
 /// a hidden window maximized first would be shown by it on some platforms.
 pub fn apply(window: &tauri::WebviewWindow, saved: Place, min: (u32, u32)) -> bool {
     let place = fit(saved, &areas_of(window), min);
-    let _ = window.set_size(tauri::PhysicalSize::new(place.width, place.height));
+    window
+        .set_size(tauri::PhysicalSize::new(place.width, place.height))
+        .log_debug("windows", "the window was not given its size");
     if let (Some(x), Some(y)) = (place.x, place.y) {
-        let _ = window.set_position(tauri::PhysicalPosition::new(x, y));
+        window
+            .set_position(tauri::PhysicalPosition::new(x, y))
+            .log_debug("windows", "the window was not moved to its place");
     }
     place.maximized
 }

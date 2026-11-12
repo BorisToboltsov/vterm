@@ -6,6 +6,7 @@
   // once; the two kinds differ only via the injected `adapter` (transport + the two
   // navigation semantics that genuinely diverge) and a few capability flags. See
   // filebrowser.ts for the contract and why this exists.
+  import { swallow, swallowed } from "../api/diag";
   import { onDestroy, onMount, tick, untrack, type Snippet } from "svelte";
   import { tooltip } from "../actions/tooltip";
   import { writeClipboard } from "../app/clipboard";
@@ -427,8 +428,9 @@
       try {
         start = await adapter.home();
         homePath = start;
-      } catch {
+      } catch (e) {
         /* fall back to "." */
+        swallowed("files", "the home folder was not found: the panel opens elsewhere", e);
       }
     }
     await load(start);
@@ -487,7 +489,7 @@
         adapter
           .home()
           .then((home) => (homePath = home))
-          .catch(() => {});
+          .catch(swallow("files", "the home folder was not found: the panel opens elsewhere"));
       }
     }
     if (cwd === path && error === "") syncTerminalCwd(path);

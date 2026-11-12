@@ -1,7 +1,7 @@
 // The app's windows (ADR 0017 and 0018, mirror of appwin.rs): moving a tab out
 // into a window of its own or into another open one, closing a window, and what
 // windows tell each other.
-import { invoke } from "@tauri-apps/api/core";
+import { call } from "./call";
 import { emit, type EventCallback, type UnlistenFn } from "@tauri-apps/api/event";
 import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
 import type { DragOutAnswer, DragOutSpec } from "../files/dragout";
@@ -69,17 +69,17 @@ export function announceServersDeleted(payload: ServersDeleted): Promise<void> {
 
 /** Close this (secondary) window; the backend ends its sessions with it. */
 export function closeWindow(): Promise<void> {
-  return invoke<void>("close_window");
+  return call<void>("close_window");
 }
 
 /** What this window would lose if the app quit now — reported as it changes. */
 export function reportWindowSummary(rows: QuitRow[]): Promise<void> {
-  return invoke<void>("report_window_summary", { rows });
+  return call<void>("report_window_summary", { rows });
 }
 
 /** Rows reported by every other window (unvalidated — see `mergeQuitRows`). */
 export function otherWindowsSummary(): Promise<unknown> {
-  return invoke<unknown>("other_windows_summary");
+  return call<unknown>("other_windows_summary");
 }
 
 // ── Which windows take tabs ───────────────────────────────────────────────────
@@ -91,7 +91,7 @@ export function otherWindowsSummary(): Promise<unknown> {
  * comes back as `WINDOWS_EVENT`, to this window too.
  */
 export function announceWindow(title: string, tabs: number): Promise<void> {
-  return invoke<void>("announce_window", { title, tabs });
+  return call<void>("announce_window", { title, tabs });
 }
 
 /** Every window's word on where files can be copied to (`announceCopyTargets`). */
@@ -104,7 +104,7 @@ export const TARGETS_EVENT = "window://targets";
  * not matter which window shows the tab.
  */
 export function announceCopyTargets(targets: unknown): Promise<void> {
-  return invoke<void>("announce_copy_targets", { targets });
+  return call<void>("announce_copy_targets", { targets });
 }
 
 // ── A tab dragged over another window ─────────────────────────────────────────
@@ -154,7 +154,7 @@ export interface DragAnswer {
  * `look` says. `tab` is what the other window needs to draw it.
  */
 export function dragOver(tab: unknown, look: DragLook | null = null): Promise<DragAnswer> {
-  return invoke<DragAnswer>("drag_over", { tab, look });
+  return call<DragAnswer>("drag_over", { tab, look });
 }
 
 /**
@@ -164,7 +164,7 @@ export function dragOver(tab: unknown, look: DragLook | null = null): Promise<Dr
  * or `dragEnd()` if it will not); null — dropped on none of the app's windows.
  */
 export function dragDrop(tab: unknown): Promise<string | null> {
-  return invoke<string | null>("drag_drop", { tab });
+  return call<string | null>("drag_drop", { tab });
 }
 
 /**
@@ -173,7 +173,7 @@ export function dragDrop(tab: unknown): Promise<string | null> {
  * drew the tab forgets it.
  */
 export function dragEnd(): Promise<void> {
-  return invoke<void>("drag_end");
+  return call<void>("drag_end");
 }
 
 /**
@@ -186,7 +186,7 @@ export function dragEnd(): Promise<void> {
  * drag stays the page's own.
  */
 export function dragOutBegin(spec: DragOutSpec): Promise<DragOutAnswer> {
-  return invoke<DragOutAnswer>("drag_out_begin", { spec });
+  return call<DragOutAnswer>("drag_out_begin", { spec });
 }
 
 // ── Moving a tab to another window ────────────────────────────────────────────
@@ -212,12 +212,12 @@ export interface DetachBegun {
 
 /** Step 1: hold the session's output — and an answer of the assistant streaming in it. */
 export function detachBegin(sessionId: string): Promise<DetachBegun> {
-  return invoke<DetachBegun>("detach_begin", { sessionId });
+  return call<DetachBegun>("detach_begin", { sessionId });
 }
 
 /** Roll step 1 back: the held output comes to this window after all. */
 export function detachAbort(sessionId: string): Promise<void> {
-  return invoke<void>("detach_abort", { sessionId });
+  return call<void>("detach_abort", { sessionId });
 }
 
 /**
@@ -226,12 +226,12 @@ export function detachAbort(sessionId: string): Promise<void> {
  * Rejects — with everything rolled back — if it does not.
  */
 export function detachCommit(sessionId: string, packet: string, opts: DetachOpts): Promise<string> {
-  return invoke<string>("detach_commit", { sessionId, packet, opts });
+  return call<string>("detach_commit", { sessionId, packet, opts });
 }
 
 /** In the window taking a tab: its packet (handed out once). */
 export function takeHandoff(): Promise<string | null> {
-  return invoke<string | null>("take_handoff");
+  return call<string | null>("take_handoff");
 }
 
 /** A window of the previous launch to open again, and the tabs it brings back (v1.36, ADR 0057). */
@@ -247,12 +247,12 @@ export interface ReopenWindow {
  * with the labels opened — the tabs of any other stay with the main window.
  */
 export function reopenWindows(reopen: ReopenWindow[], background: string | null): Promise<string[]> {
-  return invoke<string[]>("reopen_windows", { reopen, background });
+  return call<string[]>("reopen_windows", { reopen, background });
 }
 
 /** In a window reopened at launch: the tabs it brings back (handed out once); null otherwise. */
 export function takeRestore(): Promise<string | null> {
-  return invoke<string | null>("take_restore");
+  return call<string | null>("take_restore");
 }
 
 /**
@@ -261,10 +261,10 @@ export function takeRestore(): Promise<string | null> {
  * the tab when this window got as far as knowing it.
  */
 export function declineHandoff(sessionId: string | null = null): Promise<void> {
-  return invoke<void>("decline_handoff", { sessionId });
+  return call<void>("decline_handoff", { sessionId });
 }
 
 /** In the window taking a tab: its terminal is restored and listening — take the session. */
 export function attachSession(sessionId: string): Promise<void> {
-  return invoke<void>("attach_session", { sessionId });
+  return call<void>("attach_session", { sessionId });
 }

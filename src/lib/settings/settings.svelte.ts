@@ -4,6 +4,7 @@
 // access at import time is fine. UI theme changes are applied to the document
 // automatically whenever the relevant settings change.
 
+import { swallowed } from "../api/diag";
 import { DEFAULT_PROD_TINT, sanitizeProdTint, type ProdTint } from "../appearance/prodtint";
 import { DEFAULT_FONT, migrateFont, themeFont, type FontMode } from "../appearance/fonts";
 import {
@@ -846,8 +847,9 @@ export function applyActiveTheme(): void {
   }
   try {
     localStorage.setItem(CHROME_PANEL_KEY, panel);
-  } catch {
+  } catch (e) {
     /* storage unavailable — non-fatal */
+    swallowed("settings", "the panel colour for the first frame was not kept", e, "warn");
   }
 }
 
@@ -861,8 +863,9 @@ export function applyUiScale(): void {
   }
   try {
     localStorage.setItem(UI_SCALE_KEY, String(settings.uiScale));
-  } catch {
+  } catch (e) {
     /* storage unavailable — non-fatal */
+    swallowed("settings", "the interface scale for the first frame was not kept", e, "warn");
   }
 }
 
@@ -872,8 +875,9 @@ $effect.root(() => {
   $effect(() => {
     try {
       localStorage.setItem(STORAGE_KEY, JSON.stringify(settings));
-    } catch {
+    } catch (e) {
       /* storage unavailable — non-fatal */
+      swallowed("settings", "the settings were not saved: they last until the app quits", e, "warn");
     }
   });
 

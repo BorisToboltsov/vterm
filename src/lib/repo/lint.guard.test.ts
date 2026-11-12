@@ -58,8 +58,56 @@ const CASES: Record<string, { bad: [string, string][]; good: [string, string][] 
     ],
   },
   "invoke-in-api": {
-    bad: [["src/lib/ui/ZzProbe.svelte", svelte(`import { invoke } from "@tauri-apps/api/core";\nvoid invoke;`)]],
-    good: [["src/lib/api/zz_probe.ts", `import { invoke } from "@tauri-apps/api/core";\nexport const x = invoke;`]],
+    bad: [["src/lib/ui/ZzProbe.svelte", svelte(`import { Channel } from "@tauri-apps/api/core";\nvoid Channel;`)]],
+    good: [["src/lib/api/zz_probe.ts", `import { Channel } from "@tauri-apps/api/core";\nexport const x = Channel;`]],
+  },
+  "invoke-in-call": {
+    bad: [
+      ["src/lib/api/zz_probe.ts", `import { invoke } from "@tauri-apps/api/core";\nexport const x = invoke;`],
+      ["src/lib/api/zz_probe.ts", `import * as core from "@tauri-apps/api/core";\nexport const x = core;`],
+      ["src/lib/api/zz_probe.ts", `export const x = () => import("@tauri-apps/api/core");`],
+    ],
+    good: [
+      ["src/lib/api/call.ts", `import { invoke } from "@tauri-apps/api/core";\nexport const x = invoke;`],
+      ["src/lib/api/zz_probe.ts", `import { Channel } from "@tauri-apps/api/core";\nexport const x = Channel;`],
+    ],
+  },
+  "no-console": {
+    bad: [
+      ["src/lib/ui/zz_probe.ts", `export const x = () => console.log("here");`],
+      ["src/lib/ui/ZzProbe.svelte", svelte(`console.error("boom");`)],
+    ],
+    good: [
+      ["src/lib/ui/zz_probe.ts", `const console = { log: (s: string) => s };\nexport const x = console.log("mine");`],
+      ["src/lib/ui/zz_probe.ts", `// console.log is what the rule forbids\nexport const x = "console.log";`],
+    ],
+  },
+  "no-silent-catch": {
+    bad: [
+      ["src/lib/ui/zz_probe.ts", `export const x = (f: () => void) => {\n  try {\n    f();\n  } catch {\n    /* ignore */\n  }\n};`],
+      ["src/lib/ui/zz_probe.ts", `export const x = (p: Promise<void>) => p.catch(() => {});`],
+      ["src/lib/ui/zz_probe.ts", `export const x = (p: Promise<void>) => p.catch(() => undefined);`],
+      ["src/lib/ui/zz_probe.ts", `export const x = (p: Promise<number>) => p.catch(() => null);`],
+      ["src/lib/ui/zz_probe.ts", `export const x = (p: Promise<number>) => p.then((n) => n, () => {});`],
+    ],
+    good: [
+      ["src/lib/ui/zz_probe.ts", `export const x = (f: () => number) => {\n  try {\n    return f();\n  } catch {\n    return 0;\n  }\n};`],
+      ["src/lib/ui/zz_probe.svelte.ts", `import { swallow } from "../api/diag";\nexport const x = (p: Promise<void>) => p.catch(swallow("app", "do it"));`],
+      ["src/lib/ui/zz_probe.ts", `export const x = (p: Promise<string>) => p.catch(() => "");`],
+    ],
+  },
+  "diag-no-secret": {
+    bad: [
+      ["src/lib/ui/zz_probe.svelte.ts", `import { diag } from "../api/diag";\nexport const x = (password: string) => diag.warn("connection", "login", { password });`],
+      ["src/lib/ui/zz_probe.svelte.ts", `import { diag } from "../api/diag";\nexport const x = (o: object) => diag.info("files", "saved", o as never);`],
+      ["src/lib/ui/zz_probe.svelte.ts", `import { diag } from "../api/diag";\nexport const x = (o: object) => diag.info("files", "saved", { ...o });`],
+      ["src/lib/ui/zz_probe.svelte.ts", `import { diag } from "../api/diag";\nexport const x = (apiKey: string) => diag.error("ai", \`key \${apiKey} refused\`);`],
+      ["src/lib/ui/zz_probe.svelte.ts", `import { diagEvent } from "../api/diag";\nexport const x = (t: string) => diagEvent("info", "ai", "x", { accessToken: t });`],
+    ],
+    good: [
+      ["src/lib/ui/zz_probe.svelte.ts", `import { diag } from "../api/diag";\nexport const x = (path: string, n: number) => diag.warn("files", "listing failed", { path, tokensIn: n });`],
+      ["src/lib/ui/zz_probe.svelte.ts", `import { diag } from "../api/diag";\nexport const x = (e: string) => diag.warn("docker", \`poll failed: \${e}\`, undefined, { sid: "s" });`],
+    ],
   },
   "opener-on-click": {
     bad: [["src/lib/ui/ZzProbe.svelte", svelte(`import { openUrl } from "@tauri-apps/plugin-opener";\nvoid openUrl;`)]],

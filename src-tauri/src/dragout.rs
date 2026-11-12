@@ -31,6 +31,7 @@
 //! app the files are still drawn by it, and let go of there they are the app's
 //! own drop, as before.
 
+use crate::diag::Unheard;
 use crate::error::AppResult;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -93,6 +94,18 @@ impl OutAnswer {
         why: None,
     };
     fn declined(why: Declined) -> Self {
+        // The system not taking it (dropped back on the app) is the user's
+        // gesture; anything else is a reason the drag was refused.
+        if why == Declined::NotTaken {
+            tracing::debug!(source = "files", "drag out: the system did not take it");
+        } else {
+            tracing::info!(
+                source = "files",
+                code = "dragout-refused",
+                why = ?why,
+                "drag out refused"
+            );
+        }
         Self {
             taken: false,
             why: Some(why),
@@ -565,6 +578,11 @@ pub async fn drag_out_begin(
     app.run_on_main_thread(move || begin(&handle, &source, spec, answer))
         .map_err(|e| crate::error::AppError::Message(format!("drag out: {e}")))?;
     Ok(if began.await.unwrap_or(false) {
+        tracing::info!(
+            source = "files",
+            code = "dragout-taken",
+            "drag out: files handed to the system"
+        );
         OutAnswer::TAKEN
     } else {
         OutAnswer::declined(Declined::NotTaken)
@@ -580,7 +598,9 @@ type Began = tokio::sync::oneshot::Sender<bool>;
 fn begin(app: &AppHandle, window: &WebviewWindow, spec: OutSpec, answer: Began) {
     // The label the app itself draws over the desktop steps aside.
     crate::dragghost::hide(app);
-    let _ = answer.send(macos::begin(app, window, spec));
+    answer
+        .send(macos::begin(app, window, spec))
+        .log_unheard("files", "the answer about dragging files out");
 }
 
 #[cfg(windows)]
@@ -588,13 +608,17 @@ fn begin(app: &AppHandle, window: &WebviewWindow, spec: OutSpec, answer: Began) 
     crate::dragghost::hide(app);
     let feed = std::sync::Arc::new(feed::Feed::new(app, window.label(), spec));
     windows::begin(feed, move |began| {
-        let _ = answer.send(began);
+        answer
+            .send(began)
+            .log_unheard("files", "the answer whether the system took the drag");
     });
 }
 
 #[cfg(not(any(target_os = "macos", windows)))]
 fn begin(_app: &AppHandle, _window: &WebviewWindow, _spec: OutSpec, answer: Began) {
-    let _ = answer.send(false);
+    answer
+        .send(false)
+        .log_unheard("files", "the answer that this system takes no drag");
 }
 
 #[cfg(test)]

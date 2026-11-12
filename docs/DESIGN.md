@@ -293,8 +293,24 @@ Uppercase-микротекст — `text-caption uppercase tracking-wider` (и �
 - **«Настройки → Журнал»** ([JournalSettings](../src/lib/notifications/JournalSettings.svelte)) — последняя
   группа: заголовок раздела с булавкой справа (как в «Утилитах»: `pin` 14 в `rounded p-1`,
   `text-muted`, у закреплённого `text-accent`), под ним `text-meta text-muted` со значком журнала —
-  есть ли кнопка журнала на панели; хранение и «Очистить журнал…»; ниже тот же список в рамке
-  `h-[26rem] rounded border border-edge bg-panel-alt`.
+  есть ли кнопка журнала на панели; под ним `SegmentedControl` слоёв «Сообщения · Диагностика»
+  (у диагностики — `InfoHint`); слой «Сообщения» — хранение и «Очистить журнал…», ниже тот же список
+  в рамке `h-[26rem] rounded border border-edge bg-panel-alt`.
+- **Слой «Диагностика»** ([DiagSettings](../src/lib/diag/DiagSettings.svelte),
+  [DiagList](../src/lib/diag/DiagList.svelte)) — «Записывать» `select` как у срока журнала, под ним
+  `text-meta text-muted` — что пишется сейчас; ниже «Размер на диске» — такой же `select` (`mt-3`);
+  сбой записи — `text-meta text-bad`. Ряд кнопок
+  `rounded border border-edge px-2.5 py-1 text-xs` со значком 12 («Открыть папку» `folder`,
+  «Экспорт…» `download`), «Очистить диагностику…» — `border-danger text-danger`, размер на диске —
+  `text-meta text-muted`. Список в той же рамке: сверху полоса «что пишется» с «Обновить» (`refresh`
+  13), строка фильтра `ListHeader` (счёт фасетов — от бэкенда), группы по дням `GroupHeader`.
+  У события с кодом — заголовок обычным текстом, а текст события под ним `font-mono text-meta
+  text-muted line-clamp-1`; без кода текст события — `font-mono line-clamp-2`.
+  Строка события: значок уровня 14 — `alert` `text-bad` (ошибка), `alert` `text-warn`
+  (предупреждение), `info` `text-accent` (сведения), `code` `text-muted` (подробность); текст
+  `font-mono line-clamp-2`, по щелчку целиком с полями `text-meta`; справа время, `eye` 12 — было
+  сообщением, «×N» в `rounded border border-edge`. Внизу «Более ранние события» `text-accent` и
+  строка «Показано: N из M» с «Копировать показанные».
 - **Доступ к сохранению в редакторе** — компактная текстовая метка рядом с «Сохранить»;
   «Нужны права» служит кнопкой проверки sudo. Ошибка сохранения раскрывает привязанную к этой
   же строке карточку с коротким сообщением и действиями sudo/локальной копии; иконки и цвета

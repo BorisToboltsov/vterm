@@ -1,0 +1,21 @@
+[
+  { "input": "export PGPASSWORD=hunter2", "output": "export PGPASSWORD=‹redacted›" },
+  { "input": "api_key: \"abc123def\"", "output": "api_key: \"‹redacted›\"" },
+  { "input": "mysql --password=s3cr3t -u root", "output": "mysql --password=‹redacted› -u root" },
+  { "input": "Authorization: Bearer abcdefgh12345678", "output": "Authorization: Bearer ‹redacted›" },
+  { "input": "git clone https://deploy:pa55word@git.example.com/repo.git", "output": "git clone https://deploy:‹redacted›@git.example.com/repo.git" },
+  { "input": "key AKIAABCDEFGHIJKLMNOP in config", "output": "key ‹redacted› in config" },
+  {
+    "input": "-----BEGIN OPENSSH PRIVATE KEY-----\nb3BlbnNzaC1rZXk\n-----END OPENSSH PRIVATE KEY-----",
+    "output": "-----BEGIN OPENSSH PRIVATE KEY-----‹redacted›-----END OPENSSH PRIVATE KEY-----"
+  },
+  { "input": "Password:  letmein", "output": "Password:  ‹redacted›" },
+  {
+    "input": "token eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxIn0.c2lnbmF0dXJl here",
+    "output": "token ‹redacted› here"
+  },
+  { "input": "ghp_abcdefghijklmnopqrstuvwxyz0123 leaked", "output": "‹redacted› leaked" },
+  { "input": "xoxb-1234567890-abcdef in slack", "output": "‹redacted› in slack" },
+  { "input": "sk_live_abcdefghij1234 stripe", "output": "‹redacted› stripe" },
+  { "input": "connect to deploy@10.0.0.5:22 failed: connection refused", "output": "connect to deploy@10.0.0.5:22 failed: connection refused" }
+]

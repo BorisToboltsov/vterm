@@ -209,6 +209,13 @@ export interface FacetValue {
 }
 
 /**
+ * Per facet, each value and how many items it would show — counted by whoever
+ * holds the items, when the list on hand is only a page of them (the
+ * diagnostics, counted by the backend: ADR 0063).
+ */
+export type FacetCounts = Readonly<Record<string, Readonly<Record<string, number>>>>;
+
+/**
  * The values a facet offers, each with the number of items it would show: the
  * field and the other facets apply, the facet itself does not — so a picked
  * value does not make the others read 0. A picked value stays listed at 0.
@@ -218,14 +225,19 @@ export function facetValues<T>(
   schema: ListSchema<T>,
   filter: ListFilter,
   facet: string,
+  counted?: FacetCounts,
 ): FacetValue[] {
   const spec = schema.facets?.find((f) => f.id === facet);
   if (!spec) return [];
   const counts = new Map<string, number>();
   for (const v of spec.order ?? []) counts.set(v, 0);
-  for (const item of filterItems(items, schema, filter, facet)) {
-    const v = spec.value(item);
-    if (v !== "") counts.set(v, (counts.get(v) ?? 0) + 1);
+  if (counted) {
+    for (const [v, n] of Object.entries(counted[facet] ?? {})) if (v !== "") counts.set(v, n);
+  } else {
+    for (const item of filterItems(items, schema, filter, facet)) {
+      const v = spec.value(item);
+      if (v !== "") counts.set(v, (counts.get(v) ?? 0) + 1);
+    }
   }
   for (const v of picked(filter, facet)) if (!counts.has(v)) counts.set(v, 0);
   const listed = new Set(spec.order ?? []);
@@ -400,11 +412,12 @@ export function facetValueMenu<T>(
   facet: string,
   text: ListMenuText,
   onpick: (next: ListFilter) => void,
+  counted?: FacetCounts,
 ): MenuAction[] {
   const now = picked(filter, facet);
   return [
     { label: text.all, checked: now.length === 0, onSelect: () => onpick(pickFacet(filter, schema, facet, null)) },
-    ...facetValues(items, schema, filter, facet).map(
+    ...facetValues(items, schema, filter, facet, counted).map(
       ({ value, count }): MenuAction => ({
         label: text.value(facet, value),
         hint: String(count),
@@ -441,12 +454,13 @@ export function facetMenu<T>(
   filter: ListFilter,
   text: ListMenuText,
   onpick: (next: ListFilter) => void,
+  counted?: FacetCounts,
 ): MenuItem[] {
   const menu: MenuItem[] = (schema.facets ?? []).map((f) => ({
     kind: "submenu",
     key: f.id,
     label: picked(filter, f.id).length > 0 ? facetLabel(schema, filter, f.id, text) : `${text.facet(f.id)}: ${text.all}`,
-    items: facetValueMenu(items, schema, filter, f.id, text, onpick),
+    items: facetValueMenu(items, schema, filter, f.id, text, onpick, counted),
   }));
   if (activeFacets(filter).length > 0) {
     menu.push({ kind: "separator" }, { icon: "close", label: text.reset, onSelect: () => onpick(clearFacets(filter)) });

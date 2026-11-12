@@ -15,6 +15,7 @@
 // not on the bar yet, so it is pinned where it lands, and nothing happens away
 // from the bar).
 
+import { swallowed } from "../api/diag";
 import {
   cancelOnEscape,
   holdSelection,
@@ -111,8 +112,9 @@ function stopListening(): void {
   if (candidate && topbarDrag.id !== null) {
     try {
       candidate.el.releasePointerCapture(candidate.pointerId);
-    } catch {
+    } catch (e) {
       /* already released */
+      swallowed("app", "the pointer was not released", e);
     }
   }
   candidate = null;
@@ -125,8 +127,9 @@ function onMove(e: PointerEvent): void {
     topbarDrag.id = candidate.id;
     try {
       candidate.el.setPointerCapture(candidate.pointerId);
-    } catch {
+    } catch (e) {
       /* the element may be gone; window listeners still see the pointer */
+      swallowed("app", "the pointer was not captured: the drag follows it from the window", e);
     }
   }
   topbarDrag.x = e.clientX - candidate.grabX;

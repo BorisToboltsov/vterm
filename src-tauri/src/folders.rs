@@ -4,6 +4,7 @@
 //! assigns a server to a folder. Pure helpers (`normalize_path`, `reprefixed`) are
 //! unit-tested. Extracted from `lib.rs` in Phase 18.2.
 
+use crate::diag::Logged;
 use tauri::State;
 
 use crate::error::{AppError, AppResult};
@@ -133,7 +134,10 @@ pub async fn delete_folder_with_servers(path: String, state: State<'_, AppState>
     // Best-effort keychain wipe + live-session teardown for each removed server.
     let mut sessions = state.sessions.lock().await;
     for id in &removed_ids {
-        let _ = secrets::delete_all(id);
+        secrets::delete_all(id).log_warn(
+            "servers",
+            "the server's saved passwords were not removed from the keychain",
+        );
         sessions.remove(id);
     }
     Ok(())

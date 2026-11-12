@@ -26,6 +26,7 @@
     isFiltered,
     NO_FILTER,
     viewMenu,
+    type FacetCounts,
     type ListFilter,
     type ListOrder,
     type ListSchema,
@@ -46,6 +47,7 @@
     onmenu,
     fold = undefined,
     extra = [],
+    counts = undefined,
     testid = "list-header",
     children,
   }: {
@@ -68,6 +70,8 @@
     fold?: (collapsed: boolean) => void;
     /** The list's own rows of the «View» menu (tags, hidden files, columns). */
     extra?: MenuItem[];
+    /** The facets' counts, when `items` is only a page of the list (the diagnostics). */
+    counts?: FacetCounts;
     testid?: string;
     /** Before the eye: the list's own buttons (the log view's «Clear»). */
     children?: Snippet;
@@ -92,7 +96,7 @@
         kind: "submenu", key: "list-filters", icon: "filter", label: t("list.filters"),
         items: [
           { icon: "search", label: t("list.find"), onSelect: focusFilter },
-          ...facetMenu(items, schema, filter, text, onfilter),
+          ...facetMenu(items, schema, filter, text, onfilter, counts),
           { kind: "separator" },
           { icon: "close", label: t("list.resetAll"), disabled: !narrowed, onSelect: () => onfilter(NO_FILTER) },
         ],
@@ -132,7 +136,7 @@
           : ''}"
         aria-haspopup="menu"
         data-testid="{testid}-facet-{f.id}"
-        onclick={(e) => open(e, facetValueMenu(items, schema, filter, f.id, text, onfilter))}
+        onclick={(e) => open(e, facetValueMenu(items, schema, filter, f.id, text, onfilter, counts))}
       >
         <span class="min-w-0 truncate">{facetLabel(schema, filter, f.id, text)}</span>
         <Icon name="chevronDown" size={10} class="shrink-0" />
@@ -161,7 +165,7 @@
       aria-haspopup="menu"
       use:tooltip={t("list.filters")}
       data-testid="{testid}-funnel"
-      onclick={(e) => open(e, facetMenu(items, schema, filter, text, onfilter))}
+      onclick={(e) => open(e, facetMenu(items, schema, filter, text, onfilter, counts))}
     >
       <Icon name="filter" size={13} />
       {#if picked > 0}<span class="text-caption tabular-nums">{picked}</span>{/if}

@@ -1,6 +1,7 @@
 // Session recording commands of the bridge layer (asciicast v2, `recording.rs`):
 // start/stop/pause, audit annotations and the recordings library.
 
+use crate::diag::Logged;
 use crate::error::{AppError, AppResult};
 use crate::{netprobe, recording, session_arc, AppState};
 use tauri::State;
@@ -163,7 +164,10 @@ pub async fn stop_recording(
                 .map(|d| d.as_secs())
                 .unwrap_or(0);
             if let Some(updated) = recording::with_ended_at(&content, ended) {
-                let _ = std::fs::write(p, updated);
+                std::fs::write(p, updated).log_warn(
+                    "recording",
+                    "the recording's title and description were not saved",
+                );
             }
         }
     }
@@ -343,7 +347,10 @@ pub fn set_batch_label(batch_id: String, label: String) -> AppResult<()> {
             continue;
         }
         if let Some(updated) = recording::with_batch_label(&content, &label) {
-            let _ = std::fs::write(&p, updated);
+            std::fs::write(&p, updated).log_warn(
+                "recording",
+                "the recording's title and description were not saved",
+            );
         }
     }
     Ok(())

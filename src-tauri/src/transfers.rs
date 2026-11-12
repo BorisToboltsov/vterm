@@ -24,6 +24,7 @@
 //! only what was left and the cut-off file from its last checkpoint. A job the
 //! user stopped is not kept, and neither is one whose tab has closed.
 
+use crate::diag::Logged;
 use crate::error::{AppError, AppResult};
 use crate::localfile;
 use crate::partial::{Keep, Partial};
@@ -450,10 +451,16 @@ impl End {
     async fn mkdir(&self, dir: &str) {
         match self {
             End::Local => {
-                let _ = tokio::fs::create_dir_all(dir).await;
+                tokio::fs::create_dir_all(dir).await.log_debug(
+                    "transfer",
+                    "the destination folder was not created (the copy says why)",
+                );
             }
             End::Remote(s) => {
-                let _ = s.create_dir(dir).await;
+                s.create_dir(dir).await.log_debug(
+                    "transfer",
+                    "the destination folder was not created (the copy says why)",
+                );
             }
         }
     }
@@ -514,10 +521,14 @@ impl End {
     async fn remove(&self, path: &str) {
         match self {
             End::Local => {
-                let _ = tokio::fs::remove_file(path).await;
+                tokio::fs::remove_file(path)
+                    .await
+                    .log_debug("transfer", "a partial copy was not removed");
             }
             End::Remote(s) => {
-                let _ = s.remove_file(path).await;
+                s.remove_file(path)
+                    .await
+                    .log_debug("transfer", "a partial copy was not removed");
             }
         }
     }
@@ -994,7 +1005,8 @@ fn base_name(path: &str) -> String {
 pub(crate) fn send(app: &AppHandle, view: &JobView, origin: &str) {
     let windows = app.state::<crate::appwin::Windows>();
     for label in audience(view, origin, |session| windows.owner_of(session)) {
-        let _ = app.emit_to(label.as_str(), EVENT, view);
+        app.emit_to(label.as_str(), EVENT, view)
+            .log_debug("transfer", "a window was not told about a transfer");
     }
 }
 
@@ -1016,6 +1028,15 @@ pub async fn run(
     resumed: Option<Left>,
 ) -> JobView {
     let started = std::time::Instant::now();
+    tracing::info!(
+        source = "transfer",
+        code = "transfer-started",
+        job = %spec.id,
+        items = spec.items.len(),
+        resumed = resumed.is_some(),
+        "transfer started: {}",
+        audit_op(&spec, true)
+    );
     let last_told = AtomicU64::new(0);
     let tell = |view: &JobView, minor: bool| {
         app.state::<Jobs>().put(view);
@@ -1083,6 +1104,7 @@ pub async fn run(
         }
     }
     send(app, &done, &origin);
+    note_end(&spec, &done, started.elapsed().as_millis() as u64);
 
     let mut body = audit_body(&spec, &done);
     if resumed.is_some() {
@@ -1099,6 +1121,61 @@ pub async fn run(
         }
     }
     done
+}
+
+/// How a job's end is written: a failure the user must look at is a warning,
+/// a stop of theirs or a finished job information.
+fn end_verdict(done: &JobView) -> (crate::diag::Level, &'static str, &'static str) {
+    use crate::diag::Level;
+    match done.state {
+        State::Done if done.failed == 0 => (Level::Info, "transfer done", "transfer-done"),
+        State::Done | State::Failed => (
+            Level::Warn,
+            "transfer ended with failed files",
+            "transfer-failed",
+        ),
+        State::Interrupted => (
+            Level::Warn,
+            "transfer cut off by its session",
+            "transfer-cut",
+        ),
+        State::Cancelled => (Level::Info, "transfer stopped", "transfer-stopped"),
+        State::Queued | State::Running => (
+            Level::Warn,
+            "transfer ended unfinished",
+            "transfer-unfinished",
+        ),
+    }
+}
+
+/// The end of a job, as the diagnostics keep it.
+fn note_end(spec: &Spec, done: &JobView, ms: u64) {
+    let (level, what, code) = end_verdict(done);
+    let error = done.error.as_deref().unwrap_or("");
+    match level {
+        crate::diag::Level::Warn => tracing::warn!(
+            source = "transfer",
+            code,
+            job = %spec.id,
+            bytes = done.transferred,
+            files = done.file_count,
+            failed = done.failed,
+            skipped = done.skipped,
+            resumable = done.resumable,
+            ms,
+            "{what}: {error}"
+        ),
+        _ => tracing::info!(
+            source = "transfer",
+            code,
+            job = %spec.id,
+            bytes = done.transferred,
+            files = done.file_count,
+            skipped = done.skipped,
+            ms,
+            "{what}"
+        ),
+    }
 }
 
 /// A kept job is dropped: its partial copies are taken off its destination,
@@ -1132,6 +1209,43 @@ pub async fn forget_session(app: &AppHandle, session_id: &str) {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn a_jobs_end_is_a_warning_only_when_the_user_must_look() {
+        use super::{end_verdict, JobView, State};
+        use crate::diag::Level;
+        let spec = super::Spec {
+            id: "j1".into(),
+            src: super::Side {
+                session: None,
+                local: true,
+                label: String::new(),
+            },
+            dst: super::Side {
+                session: Some("s".into()),
+                local: false,
+                label: String::new(),
+            },
+            items: Vec::new(),
+            dest_dir: "/srv".into(),
+        };
+        let at = |state: State, failed: u32| JobView {
+            state,
+            failed,
+            ..JobView::start(&spec)
+        };
+        assert_eq!(end_verdict(&at(State::Done, 0)).0, Level::Info);
+        assert_eq!(end_verdict(&at(State::Done, 2)).0, Level::Warn);
+        assert_eq!(end_verdict(&at(State::Failed, 1)).0, Level::Warn);
+        assert_eq!(end_verdict(&at(State::Interrupted, 0)).0, Level::Warn);
+        assert_eq!(end_verdict(&at(State::Cancelled, 0)).0, Level::Info);
+        let (_, events) =
+            crate::diag::capture(|| super::note_end(&spec, &at(State::Failed, 1), 1200));
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].source.as_deref(), Some("transfer"));
+        assert_eq!(events[0].fields["failed"], 1);
+        assert_eq!(events[0].fields["ms"], 1200);
+    }
+
     use super::*;
 
     /// A job carried out as `run` ends it: stopped by the user, it leaves no
@@ -2116,7 +2230,9 @@ mod live_sftp {
         );
 
         for dir in [&from, &to] {
-            let _ = sftp::remove(&a, dir, true).await;
+            if let Err(e) = sftp::remove(&a, dir, true).await {
+                eprintln!("cleanup: {e}");
+            }
         }
     }
 
@@ -2187,7 +2303,9 @@ mod live_sftp {
             "the temp became the file"
         );
         for path in [&from, &to] {
-            let _ = a.remove_file(path.clone()).await;
+            if let Err(e) = a.remove_file(path.clone()).await {
+                eprintln!("cleanup: {e}");
+            }
         }
     }
 
@@ -2258,7 +2376,9 @@ mod live_sftp {
         assert_eq!(mode.map(|m| m & 0o777), Some(0o600));
 
         for dir in [&from, &to] {
-            let _ = sftp::remove(&a, dir, true).await;
+            if let Err(e) = sftp::remove(&a, dir, true).await {
+                eprintln!("cleanup: {e}");
+            }
         }
     }
 }

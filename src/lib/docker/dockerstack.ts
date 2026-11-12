@@ -105,7 +105,8 @@ export function parseStackPs(raw: string): (ServiceContainer & { service: string
       try {
         items.push(JSON.parse(line) as unknown);
       } catch {
-        /* a line that is not an object is not a container */
+        // A line that is not an object is not a container: it is skipped.
+        continue;
       }
     }
   }

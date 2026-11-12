@@ -331,6 +331,18 @@ PR в `main`. Patch 1.25.9: находки Security и PR Dependabot после 
   6. Гейты `windowhandoff.guard` (раздел 9), Rust `the_assistants_answer_goes_only_through_its_gate_and_moves_with_its_tab`,
   `a_sync_run_follows_its_session_not_the_window_that_started_it`, `vterm/owned-imports`. Номер
   даст выпуск.
+- **⬜ Диагностика — второй слой журнала (ADR 0063).** Что делала программа, а не что она
+  сказала: события `error`/`warn`/`info`/`debug` в файл бэкенда — от порога, который выбирает
+  пользователь, просмотр — в «Настройки → Журнал» рядом с сообщениями. Этапы — своими PR в
+  `main`, по порядку:
+  - **🔜 1 — фундамент и слой в журнале:** `diag.rs` (очередь, ротация, маска, `diag_query`),
+    фасад фронта и `call()`, паники и необработанные исключения, тихие записи — в диагностику,
+    порог записи, экспорт; гейты clippy `print_*`, `vterm/no-console`, `vterm/invoke-in-call`,
+    `vterm/diag-no-secret`, `diag.guard`.
+  - **🔜 2 — ничего не глушится:** все пустые `catch` и `let _ =` над `Result` — одним PR,
+    `let_underscore_must_use`, `unused_result_ok` и `vterm/no-silent-catch` строгие.
+  - **🔜 3 — запуск, окна, соединение, обновление.** **🔜 4 — файлы и переносы.** **🔜 5 —
+    драйверы и мониторинг.** **🔜 6 — ИИ и границы.**
 - **✅ 1.33 — восстановление после перезапуска целиком (ADR 0057).** Запись вкладки — с
   каталогом оболочки (`shellCwd`), доком (`dock`: каталог, панель файлов, scope k8s), файлами и их
   зонами (`docs`, `views`), окно — с раскладкой до сетки (`beforeTile`); `SAVE_VERSION` тот же.

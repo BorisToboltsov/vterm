@@ -17,6 +17,7 @@
 //! age and by count (`prune`). The text arrives masked: the window runs it
 //! through the same masking the assistant's context gets before it notes it.
 
+use crate::diag::Logged;
 use crate::error::AppResult;
 use crate::locks::Locked;
 use serde::{Deserialize, Serialize};
@@ -405,7 +406,7 @@ impl Journal {
     /// Something changed: mark it and wake the writer.
     fn changed(&self) {
         self.shared.dirty.store(true, Ordering::SeqCst);
-        let _ = self.wake.locked().send(());
+        self.wake.locked().send(()).log_debug("app", "an answer");
     }
 
     fn days(&self) -> u32 {
@@ -478,7 +479,8 @@ fn write_behind(shared: &Shared, wake: &Receiver<()>, delay: Duration) {
 
 /// Tell every window the journal changed.
 fn announce(app: &AppHandle, summary: Summary) -> Summary {
-    let _ = app.emit(EVENT, summary);
+    app.emit(EVENT, summary)
+        .log_debug("app", "the windows were not told the journal changed");
     summary
 }
 
@@ -492,6 +494,15 @@ pub fn journal_note(
     journal: State<'_, Journal>,
     note: Note,
 ) -> Summary {
+    // Every message is an event of the diagnostics too (ADR 0063): its layer is
+    // the whole story — what was shown and what happened around it.
+    crate::diag::shown(
+        note.kind,
+        &note.text,
+        note.source.as_deref(),
+        (note.server_id.as_deref(), note.server.as_deref()),
+        window.label(),
+    );
     let summary = journal.note(note, Some(window.label().to_owned()));
     announce(&app, summary)
 }

@@ -1,81 +1,81 @@
 // Server profiles, folder tree, and config backup export/import.
-import { invoke } from "@tauri-apps/api/core";
+import { call } from "./call";
 import { open, save } from "@tauri-apps/plugin-dialog";
 import type { NewServerProfile, ServerProfile } from "../types";
 
 // ── Server profiles ───────────────────────────────────────────────────────────
 
 export function listServers(): Promise<ServerProfile[]> {
-  return invoke<ServerProfile[]>("list_servers");
+  return call<ServerProfile[]>("list_servers");
 }
 
 export function addServer(profile: NewServerProfile): Promise<ServerProfile> {
-  return invoke<ServerProfile>("add_server", { profile });
+  return call<ServerProfile>("add_server", { profile });
 }
 
 export function updateServer(
   id: string,
   profile: NewServerProfile,
 ): Promise<ServerProfile> {
-  return invoke<ServerProfile>("update_server", { id, profile });
+  return call<ServerProfile>("update_server", { id, profile });
 }
 
 export function deleteServer(id: string): Promise<void> {
-  return invoke<void>("delete_server", { id });
+  return call<void>("delete_server", { id });
 }
 
 /** Save a server's free-form notes (Markdown). Dedicated to the notes window so it
  *  never clobbers a concurrent profile edit; returns the updated profile. */
 export function setServerNotes(id: string, notes: string): Promise<ServerProfile> {
-  return invoke<ServerProfile>("set_server_notes", { id, notes });
+  return call<ServerProfile>("set_server_notes", { id, notes });
 }
 
 /** Save how path sync starts on a server (`storedPathSync`, null = ask). Its own
  *  command, like the notes, so the path-sync question never writes back a stale
  *  copy of the profile; returns the updated profile. */
 export function setServerPathSync(id: string, mode: string | null): Promise<ServerProfile> {
-  return invoke<ServerProfile>("set_server_path_sync", { id, mode });
+  return call<ServerProfile>("set_server_path_sync", { id, mode });
 }
 
 /** Forget any stored password/passphrase for a server (including its proxy's). */
 export function forgetSecrets(id: string): Promise<void> {
-  return invoke<void>("forget_secrets", { id });
+  return call<void>("forget_secrets", { id });
 }
 
 /** Store a server's own secret (password or key passphrase) in the OS keychain;
  *  the kind follows the server's auth method. Returns the updated profile — the
  *  saved-secret hint it carries is the one the backend just wrote. */
 export function saveServerSecret(serverId: string, secret: string): Promise<ServerProfile> {
-  return invoke<ServerProfile>("save_server_secret", { serverId, secret });
+  return call<ServerProfile>("save_server_secret", { serverId, secret });
 }
 
 /** Store a server's proxy/jump host secret (password or passphrase) in the OS
  *  keychain. The secret kind follows the proxy's own auth method. */
 export function saveProxySecret(serverId: string, secret: string): Promise<void> {
-  return invoke<void>("save_proxy_secret", { serverId, secret });
+  return call<void>("save_proxy_secret", { serverId, secret });
 }
 
 // ── Folders ─────────────────────────────────────────────────────────────────
 
 /** All folder paths ("/"-separated, e.g. "Production/EU"). */
 export function listFolders(): Promise<string[]> {
-  return invoke<string[]>("list_folders");
+  return call<string[]>("list_folders");
 }
 
 /** Create a folder (and any missing ancestors); returns the full folder list. */
 export function addFolder(path: string): Promise<string[]> {
-  return invoke<string[]>("add_folder", { path });
+  return call<string[]>("add_folder", { path });
 }
 
 /** Delete a folder and its descendants; servers inside move to the root. */
 export function deleteFolder(path: string): Promise<void> {
-  return invoke<void>("delete_folder", { path });
+  return call<void>("delete_folder", { path });
 }
 
 /** Delete a folder and its descendants **together with every server inside**
  *  (their saved secrets and live sessions are dropped too). */
 export function deleteFolderWithServers(path: string): Promise<void> {
-  return invoke<void>("delete_folder_with_servers", { path });
+  return call<void>("delete_folder_with_servers", { path });
 }
 
 /** Move a folder (with its subtree) under newParent (null/empty = root). */
@@ -83,12 +83,12 @@ export function moveFolder(
   path: string,
   newParent: string | null,
 ): Promise<void> {
-  return invoke<void>("move_folder", { path, newParent });
+  return call<void>("move_folder", { path, newParent });
 }
 
 /** Rename a folder in place (keeps its parent), renaming its whole subtree. */
 export function renameFolder(path: string, newName: string): Promise<void> {
-  return invoke<void>("rename_folder", { path, newName });
+  return call<void>("rename_folder", { path, newName });
 }
 
 /** Move a server into a folder (null/empty = root). */
@@ -96,7 +96,7 @@ export function setServerGroup(
   id: string,
   group: string | null,
 ): Promise<ServerProfile> {
-  return invoke<ServerProfile>("set_server_group", { id, group });
+  return call<ServerProfile>("set_server_group", { id, group });
 }
 
 // ── Backup (export / import) ───────────────────────────────────────────────────
@@ -143,12 +143,12 @@ export interface ImportResult {
  * exported — they stay in the OS keychain.
  */
 export function exportBackup(path: string, kind: BackupKind, settings: unknown): Promise<void> {
-  return invoke<void>("export_backup", { path, kind, settings });
+  return call<void>("export_backup", { path, kind, settings });
 }
 
 /** What the backup at `path` holds (`.zip` archive or legacy `.json`); nothing is written. */
 export function readBackup(path: string): Promise<BackupContents> {
-  return invoke<BackupContents>("read_backup", { path });
+  return call<BackupContents>("read_backup", { path });
 }
 
 /**
@@ -161,7 +161,7 @@ export function importBackup(
   catalog: ImportCatalog | null,
   recordings: boolean,
 ): Promise<ImportResult> {
-  return invoke<ImportResult>("import_backup", { path, catalog, recordings });
+  return call<ImportResult>("import_backup", { path, catalog, recordings });
 }
 
 /** Native "save as" dialog for a backup archive; returns the chosen path or null. */

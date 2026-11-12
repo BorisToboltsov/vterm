@@ -12,6 +12,7 @@
 // (`previewPanels`), so the other tabs slide apart to make room. The layout
 // itself changes once, on release.
 
+import { swallowed } from "../api/diag";
 import {
   cancelOnEscape,
   holdSelection,
@@ -135,8 +136,9 @@ function stopListening(): void {
   if (candidate && dockDrag.panel !== null) {
     try {
       candidate.el.releasePointerCapture(candidate.pointerId);
-    } catch {
+    } catch (e) {
       /* already released */
+      swallowed("app", "the pointer was not released", e);
     }
   }
   candidate = null;
@@ -149,8 +151,9 @@ function onMove(e: PointerEvent): void {
     dockDrag.panel = candidate.panel;
     try {
       candidate.el.setPointerCapture(candidate.pointerId);
-    } catch {
+    } catch (e) {
       /* the element may be gone; window listeners still see the pointer */
+      swallowed("app", "the pointer was not captured: the drag follows it from the window", e);
     }
   }
   dockDrag.x = e.clientX - candidate.grabX;

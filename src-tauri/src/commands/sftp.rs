@@ -1,6 +1,7 @@
 // File commands of the bridge layer: SFTP browsing and editing, directory sync,
 // search, server tools and the transfer jobs (`transfers.rs`).
 
+use crate::diag::{Logged, Unheard};
 use crate::error::{AppError, AppResult};
 use crate::locks::Locked;
 use crate::sftp::FileEntry;
@@ -98,6 +99,26 @@ pub async fn sftp_open_as(
 ) -> AppResult<()> {
     let session = session_arc(&state, &session_id).await?;
     let res = session.sftp_as(&user, sudo_secret(password)).await;
+    match &res {
+        Ok(()) => {
+            tracing::info!(
+                source = "files",
+                code = "file-user",
+                sid = %session_id,
+                user = %user,
+                "file panel works as another user"
+            )
+        }
+        Err(e) => {
+            tracing::info!(
+                source = "files",
+                code = "file-user-refused",
+                sid = %session_id,
+                user = %user,
+                "file panel stays as it was: {e}"
+            )
+        }
+    }
     record_sftp(&session, &format!("as {}", git::shell_quote(&user)), &res);
     res
 }
@@ -285,6 +306,18 @@ pub async fn sftp_write_text(
     } else {
         sftp::write_text(&sftp, &req).await
     };
+    if let Ok(written) = &res {
+        tracing::info!(
+            source = "editor",
+            code = "file-saved",
+            sid = %session_id,
+            path = %path,
+            bytes = content.len(),
+            sudo = sudo == Some(true),
+            size = written.size,
+            "file saved"
+        );
+    }
     // Audit the edit as a byte-sized save (the content itself is never recorded).
     record_sftp(
         &session,
@@ -426,7 +459,10 @@ pub async fn lint_remote(
     sftp::write_bytes(&sftp, &tmp, content.as_bytes()).await?;
     let sudo_password = sudo_secret(sudo_password);
     let out = sync::run_lint(&session, &tool, &tmp, secret_str(&sudo_password)).await;
-    let _ = sftp.remove_file(tmp.clone()).await;
+    sftp.remove_file(tmp.clone()).await.log_debug(
+        "files",
+        "the temporary file was not removed and stays beside the target",
+    );
     // Replace both the full temp path and its basename with `FILE`, since validators
     // vary in which they print.
     let base = tmp.rsplit('/').next().unwrap_or(&tmp).to_string();
@@ -468,9 +504,10 @@ pub async fn run_tool_install(
     let cmd = format!("{} 2>&1", servertools::sudoize(&command));
     let pw = sync::sudo_stdin(secret_str(&sudo_secret(sudo_password)));
     let event = ssh::install_output_event(&session_id);
+    let failed = crate::diag::FirstFailure::new("editor", "emit the install's output");
     session
         .run_command_stdin_streaming(&cmd, &pw, |chunk| {
-            let _ = app.emit(&event, String::from_utf8_lossy(chunk).into_owned());
+            failed.note(app.emit(&event, String::from_utf8_lossy(chunk).into_owned()));
         })
         .await
 }
@@ -518,7 +555,37 @@ pub async fn sftp_sync_start(
         let _slot = slot;
         let op = sync::sync_mirror_op(&local_root, &remote_root, actions.len());
         let body = sync::sync_mirror_body(&actions);
+        let started = std::time::Instant::now();
+        tracing::info!(
+            source = "sync",
+            code = "sync-started",
+            sid = %session_id,
+            "sync run started: {op}"
+        );
         let res = sync::apply(&sink, &sftp, &local_root, &remote_root, actions, cancel).await;
+        let ms = started.elapsed().as_millis() as u64;
+        match &res {
+            Ok(s) => tracing::info!(
+                source = "sync",
+                code = "sync-ended",
+                sid = %session_id,
+                uploaded = s.uploaded,
+                downloaded = s.downloaded,
+                deleted = s.deleted,
+                stopped = s.stopped,
+                ms,
+                "sync run ended"
+            ),
+            Err(e) => {
+                tracing::warn!(
+                    source = "sync",
+                    code = "sync-failed",
+                    sid = %session_id,
+                    ms,
+                    "sync run failed: {e}"
+                )
+            }
+        }
         let state = app.state::<AppState>();
         state.cancels.locked().remove(&running.run_id);
         let (code, detail) = match &res {
@@ -718,7 +785,9 @@ pub(crate) async fn launch_transfer(
     tokio::spawn(async move {
         let done = transfers::run(&app, spec, src, dst, cancel, origin, queued, resumed).await;
         app.state::<AppState>().cancels.locked().remove(&id);
-        let _ = ended.send(done);
+        ended
+            .send(done)
+            .log_unheard("files", "the answer about dragging files out");
     });
     Ok(wait)
 }

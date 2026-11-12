@@ -9,6 +9,7 @@
 
 // ── Nothing is selected while something is dragged ───────────────────────────
 
+import { swallowed } from "../api/diag";
 /** On `<html>` from a press that may become a drag until the pointer is let go (app.css). */
 export const DRAGGING_CLASS = "dragging";
 
@@ -230,8 +231,9 @@ export function resizableHandle(node: HTMLElement, params: ResizableParams) {
     active = false;
     try {
       node.releasePointerCapture(e.pointerId);
-    } catch {
+    } catch (e) {
       /* capture may already be released */
+      swallowed("app", "the pointer was not released", e);
     }
     p.onEnd?.();
   }

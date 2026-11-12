@@ -1,6 +1,7 @@
 <script lang="ts">
   // Small reusable "copy to clipboard" button used across the Utilities panel
   // (Phase 33). Shows a transient check after copying; disabled while empty.
+  import { swallowed } from "../api/diag";
   import Icon from "./Icon.svelte";
   import { t } from "../i18n";
 
@@ -26,8 +27,9 @@
       await navigator.clipboard.writeText(text);
       copied = true;
       setTimeout(() => (copied = false), 1500);
-    } catch {
+    } catch (e) {
       /* clipboard blocked — selectable text is the fallback */
+      swallowed("app", "the text was not copied to the clipboard", e);
     }
   }
 </script>

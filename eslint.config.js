@@ -73,6 +73,12 @@ export default defineConfig(
   { plugins: { vterm } },
   own("layers", ["src/lib/**/*.ts", "src/lib/**/*.svelte"]),
   own("invoke-in-api", SOURCE, ["src/lib/api/**"]),
+  // Every rejected command is written by call() (ADR 0063): invoke is its alone.
+  own("invoke-in-call", SOURCE, ["src/lib/api/call.ts"]),
+  own("no-console", SOURCE),
+  own("no-silent-catch", SOURCE),
+  // The facade passes its callers' fields on; every caller is held here.
+  own("diag-no-secret", SOURCE, ["src/lib/api/diag.ts"]),
   // Each of these opens a link on the user's click, after checking it.
   own("opener-on-click", SOURCE, [
     "src/lib/stores/linkopen.svelte.ts",

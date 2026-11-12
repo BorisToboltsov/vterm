@@ -1,4 +1,6 @@
 <script lang="ts">
+  import { nullWrittenByCall, writtenByCall } from "#lib/api/call.ts";
+  import { swallow, swallowed } from "#lib/api/diag.ts";
   import { onMount, untrack, tick } from "svelte";
   import { tooltip } from "#lib/actions/tooltip.ts";
   import { fade } from "svelte/transition";
@@ -246,6 +248,7 @@
   import type { CommandItem } from "#lib/app/command.ts";
   import { notifyError, notifySuccess, notifyInfo } from "#lib/stores/toasts.svelte.ts";
   import { configureJournal, openJournal, startJournal } from "#lib/stores/journal.svelte.ts";
+  import { startDiag } from "#lib/stores/diag.svelte.ts";
   import { JOURNAL_ICON } from "#lib/notifications/journal.ts";
   import {
     applyJob,
@@ -832,8 +835,8 @@
   function doBroadcast(frame: string, targets: string[], cmd: string) {
     const bytes = new TextEncoder().encode(frame);
     for (const id of targets) {
-      writeToTerminal(id, bytes).catch(() => {});
-      if (isRecording(id)) annotateRecording(id, `broadcast: ${cmd}`).catch(() => {});
+      writeToTerminal(id, bytes).catch(writtenByCall);
+      if (isRecording(id)) annotateRecording(id, `broadcast: ${cmd}`).catch(writtenByCall);
       // Input reached this session: its recording is not idle.
       recFlow.activity(id);
     }
@@ -902,6 +905,7 @@
           raw.recording = extractTranscript(await readRecording(path));
         } catch {
           /* recording unreadable — skip this tier */
+          writtenByCall();
         }
       }
     }
@@ -971,7 +975,7 @@
       notifyError(t("page.commandUnquotable"), { source: "terminal" });
       return;
     }
-    void writeToTerminal(id, new TextEncoder().encode(submitLine(cmd))).catch(() => {});
+    void writeToTerminal(id, new TextEncoder().encode(submitLine(cmd))).catch(writtenByCall);
   }
 
   /** Ask the assistant to read the host's metrics snapshot (Phase 41). */
@@ -997,6 +1001,7 @@
       lines.push(`OS: ${m.prettyName || m.os}`, `Hostname: ${m.hostname}`, `Kernel: ${m.kernel}`);
     } catch {
       /* metrics probe failed — keep profile-derived fields */
+      writtenByCall();
     }
     return lines.join("\n");
   }
@@ -1364,7 +1369,7 @@
       updates: t("menu.updates"),
       monitoring: t("menu.monitoring"),
       quit: t("menu.quit"),
-    }).catch(() => {});
+    }).catch(writtenByCall);
   });
 
   function onGlobalKey(e: KeyboardEvent) {
@@ -1484,7 +1489,7 @@
     if (isMainWindow) void updateStartup().then((status) => {
       if (status === "updated") notifySuccess(t("updates.updated"), { source: "update" });
       else if (status) notifyError(t(updateError(status)), { source: "update" });
-    }).catch(() => {});
+    }).catch(writtenByCall);
     listenHere("menu://monitoring", () => openMonitoring()).then((u) => unlisteners.push(u));
     // Close confirmation: the main window is asked about quitting, any other one
     // about closing itself. The guard is armed only once the listener is in
@@ -1495,7 +1500,7 @@
         unlisteners.push(u);
         return armCloseGuard();
       })
-      .catch(() => {});
+      .catch(swallow("windows", "the close question was not armed: closing will not ask"));
     // This window's SFTP progress feed → shared store (read by SFTP panel + status
     // bar), plus the sync-run store (the dialog's per-row bars; ignores non-sync ids).
     listenHere<SftpProgress>("sftp://progress", (e) => {
@@ -1514,7 +1519,7 @@
         unlisteners.push(u);
         return refreshTransfers();
       })
-      .catch(() => {});
+      .catch(swallow("transfer", "transfers will not be heard in this window"));
     // Sync compare counters (files hashed per side) → the session's sync job.
     listenHere<{ id: string; files: number }>("sync://scan", (e) =>
       applyScanProgress(e.payload),
@@ -1526,6 +1531,9 @@
     // The journal of notifications is one for all the windows (ADR 0062): each
     // hears it changed, for the bell's dot and its open list.
     unlisteners.push(startJournal());
+    // The diagnostics (ADR 0063): the threshold, this window's uncaught errors,
+    // and — the main window — the backend's panics, said once a minute at most.
+    unlisteners.push(startDiag(isMainWindow));
     listen<SettingsBroadcast>(SETTINGS_EVENT, (e) => applySettingsFrom(e.payload)).then((u) =>
       unlisteners.push(u),
     );
@@ -1558,7 +1566,7 @@
         unlisteners.push(...us);
         windows.listening();
       })
-      .catch(() => {});
+      .catch(swallow("windows", "the other windows will not be heard"));
     if (isMainWindow) {
       // A config file that failed to parse was quarantined during the backend's
       // startup load. Reported without a TTL: "your server list is gone and here
@@ -1573,7 +1581,7 @@
       // running. The main window's alone — a second one would open them twice.
       takePendingOpens()
         .then((paths) => paths.forEach(handleOpenFile))
-        .catch(() => {});
+        .catch(writtenByCall);
       listenHere<string>(OPEN_FILE_EVENT, (e) => handleOpenFile(e.payload)).then((u) =>
         unlisteners.push(u),
       );
@@ -1585,7 +1593,7 @@
         const back = await restoreFlow.restoreWindow();
         if (back === null) void windows.adoptHandoff();
         else if (back > 0) windowHasHadTab = true;
-        else void closeWindow().catch(() => {});
+        else void closeWindow().catch(writtenByCall);
       })();
     }
     // Files the system drags over the window from the desktop (v1.13). One
@@ -1595,9 +1603,10 @@
       getCurrentWebview()
         .onDragDropEvent((ev) => fileDrags.heardDesktop(ev.payload))
         .then((u) => unlisteners.push(u))
-        .catch(() => {});
-    } catch {
+        .catch(swallow("files", "files dropped on the window will not be heard"));
+    } catch (e) {
       /* no webview (browser preview) — nothing is dragged in */
+      swallowed("files", "files dropped on the window will not be heard", e);
     }
     // Global Cmd/Ctrl + V/C/X/A for every text input (capture phase, so it works
     // even inside modals and before any field-local handler). See clipboardKeys.ts.
@@ -1631,7 +1640,7 @@
   // the main window's quit confirmation can list it.
   $effect(() => {
     if (isMainWindow) return;
-    void reportWindowSummary(quitRowsNow()).catch(() => {});
+    void reportWindowSummary(quitRowsNow()).catch(writtenByCall);
   });
 
   // A secondary window exists for its tabs: once it has taken its first one, it
@@ -1639,7 +1648,7 @@
   let windowHasHadTab = $state(false);
   $effect(() => {
     if (!isMainWindow && windowHasHadTab && tabsState.list.length === 0) {
-      void closeWindow().catch(() => {});
+      void closeWindow().catch(writtenByCall);
     }
   });
 
@@ -1656,7 +1665,7 @@
     settingsBroadcastTimer = setTimeout(() => {
       if (json === syncedSettings) return;
       syncedSettings = json;
-      void broadcastSettings({ from: windowLabel, json }).catch(() => {});
+      void broadcastSettings({ from: windowLabel, json }).catch(writtenByCall);
     }, 150);
   });
 
@@ -1802,6 +1811,7 @@
       }
     } catch {
       /* no backend (browser preview) — nothing to show */
+      writtenByCall();
     }
   }
 
@@ -1975,7 +1985,7 @@
     // The session ends here — not when its terminal unmounts (ADR 0017). The one
     // exception is a tab handed to another window (`keepSession`): that window
     // owns the session now, and the backend would refuse this one anyway.
-    if (!keepSession) void disconnect(sessionId).catch(() => {});
+    if (!keepSession) void disconnect(sessionId).catch(writtenByCall);
     // What was kept of it for the next launch: the tab is closed, it does not come back.
     // A tab handed to another window keeps it — it lives on there.
     if (!keepSession) restoreFlow.forget(sessionId);
@@ -2294,7 +2304,7 @@
     if (!pollsLocalCwd(findTab(id)?.kind, !!pathSync.following[id], gitShown)) return;
     let stopped = false;
     const tick = async () => {
-      const path = await localCwd(id).catch(() => null);
+      const path = await localCwd(id).catch(nullWrittenByCall);
       // Untracked compare: writing the same value back would re-run this effect.
       if (!stopped && path && untrack(() => terminalCwd[id]) !== path) {
         terminalCwd[id] = path;
@@ -2380,6 +2390,7 @@
       if (tool && !tool.installed) installTool = { sessionId: sid, tool };
     } catch {
       /* ignore — the toast already told the user it's missing */
+      writtenByCall();
     }
   }
 
@@ -2532,7 +2543,7 @@
     try {
       await deleteServer(id);
       // Its tabs in other windows close too (their own teardown, their own windows).
-      void announceServersDeleted({ from: windowLabel, ids: [id] }).catch(() => {});
+      void announceServersDeleted({ from: windowLabel, ids: [id] }).catch(writtenByCall);
       servers = servers.filter((s) => s.id !== id);
       if (selectedId === id) selectedId = servers[0]?.id ?? null;
       notifySuccess(t("page.serverDeleted", { alias }), { source: "servers" });
@@ -2550,7 +2561,7 @@
     for (const s of victims) for (const sid of tabsForServer(s.id)) closeTabFully(sid);
     try {
       await deleteFolderWithServers(path);
-      void announceServersDeleted({ from: windowLabel, ids: [...removed] }).catch(() => {});
+      void announceServersDeleted({ from: windowLabel, ids: [...removed] }).catch(writtenByCall);
       servers = servers.filter((s) => !removed.has(s.id));
       folders = await listFolders();
       if (selectedId && removed.has(selectedId)) selectedId = servers[0]?.id ?? null;
@@ -3396,7 +3407,7 @@
                             void writeToTerminal(
                               tab.sessionId,
                               new TextEncoder().encode(submitLine(cmd)),
-                            ).catch(() => {});
+                            ).catch(writtenByCall);
                           }, LOGIN_PROMPT_DELAY_MS);
                         }
                       }

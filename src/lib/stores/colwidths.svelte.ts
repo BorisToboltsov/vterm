@@ -9,6 +9,7 @@
 // too, under `vterm.columns.hidden`: what fits the width is decided anew on every
 // resize (`../ui/colfit.ts`), what the user hid is a setting.
 
+import { swallowed } from "../api/diag";
 import {
   clampColumn,
   listColumnWidth,
@@ -79,16 +80,18 @@ $effect.root(() => {
     const data = JSON.stringify(columns.widths);
     try {
       localStorage.setItem(STORAGE_KEY, data);
-    } catch {
+    } catch (e) {
       /* storage unavailable — non-fatal */
+      swallowed("settings", "the column widths were not saved", e, "warn");
     }
   });
   $effect(() => {
     const data = JSON.stringify(columns.hidden);
     try {
       localStorage.setItem(HIDDEN_KEY, data);
-    } catch {
+    } catch (e) {
       /* storage unavailable — non-fatal */
+      swallowed("settings", "the hidden columns were not saved", e, "warn");
     }
   });
 });

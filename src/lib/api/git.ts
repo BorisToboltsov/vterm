@@ -1,6 +1,6 @@
 // Git panel API (Phase 29). One thin wrapper over the `git_run` backend command;
 // the frontend builds argument vectors and parses output in `git.ts`.
-import { invoke } from "@tauri-apps/api/core";
+import { call } from "./call";
 import type { ExecOutput } from "../types";
 
 /** Captured result of one `git` invocation — the drivers' common shape. */
@@ -20,5 +20,5 @@ export function gitRun(
   timeoutSecs = 30,
   mirror = false,
 ): Promise<GitOutput> {
-  return invoke<GitOutput>("git_run", { sessionId, cwd, args, timeoutSecs, mirror });
+  return call<GitOutput>("git_run", { sessionId, cwd, args, timeoutSecs, mirror });
 }

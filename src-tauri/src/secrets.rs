@@ -27,20 +27,48 @@ fn read(service: &str, id: &str) -> Option<Zeroizing<String>> {
     match Entry::new(service, id).and_then(|e| e.get_password()) {
         Ok(value) => Some(Zeroizing::new(value)),
         Err(Error::NoEntry) => None,
-        Err(_) => None,
+        // Read as «no secret saved»: the login asks for it. Why — said here.
+        Err(e) => {
+            tracing::warn!(
+                source = "storage",
+                code = "keychain-failed",
+                service,
+                account = id,
+                "keychain read failed: {e}"
+            );
+            None
+        }
     }
 }
 
 fn write(service: &str, id: &str, value: &str) -> AppResult<()> {
     Entry::new(service, id)
         .and_then(|e| e.set_password(value))
-        .map_err(|e| format!("keychain write failed: {e}").into())
+        .map_err(|e| {
+            tracing::warn!(
+                source = "storage",
+                code = "keychain-failed",
+                service,
+                account = id,
+                "keychain write failed: {e}"
+            );
+            format!("keychain write failed: {e}").into()
+        })
 }
 
 fn delete(service: &str, id: &str) -> AppResult<()> {
     match Entry::new(service, id).and_then(|e| e.delete_credential()) {
         Ok(()) | Err(Error::NoEntry) => Ok(()),
-        Err(e) => Err(format!("keychain delete failed: {e}").into()),
+        Err(e) => {
+            tracing::warn!(
+                source = "storage",
+                code = "keychain-failed",
+                service,
+                account = id,
+                "keychain delete failed: {e}"
+            );
+            Err(format!("keychain delete failed: {e}").into())
+        }
     }
 }
 

@@ -105,8 +105,12 @@ mod tests {
             .expect("a child to run");
         assert!(has_children(std::process::id()));
         assert!(!has_children(child.id()));
-        let _ = child.kill();
-        let _ = child.wait();
+        if let Err(e) = child.kill() {
+            eprintln!("cleanup: {e}");
+        }
+        if let Err(e) = child.wait() {
+            eprintln!("cleanup: {e}");
+        }
     }
 
     #[test]

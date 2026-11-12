@@ -5,6 +5,8 @@
   // live in sshkeygen.ts; this component is just the form + collision handling +
   // result view. When `ongenerated` is provided (server form), the done screen
   // offers "use this key"; otherwise it just closes.
+  import { writtenByCall } from "../api/call";
+  import { swallowed } from "../api/diag";
   import Modal from "../ui/Modal.svelte";
   import ConfirmDialog from "../ui/ConfirmDialog.svelte";
   import Icon from "../ui/Icon.svelte";
@@ -153,6 +155,7 @@
       taken = await keyPathExists(path);
     } catch {
       /* keep the last-known value on a transient failure */
+      writtenByCall();
     }
     if (taken) {
       exists = taken;
@@ -185,8 +188,9 @@
       await navigator.clipboard.writeText(result.publicKey);
       copied = true;
       setTimeout(() => (copied = false), 1500);
-    } catch {
+    } catch (e) {
       /* clipboard blocked — the field is selectable as a fallback */
+      swallowed("app", "the text was not copied to the clipboard", e);
     }
   }
 

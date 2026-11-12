@@ -8,6 +8,7 @@
 // installed once on the document — covers them all. Reads go through the native
 // backend clipboard, so no WebKit "Paste" permission prompt appears (clipboard.ts).
 
+import { swallowed } from "../api/diag";
 import { chordLetter } from "../app/appshortcuts";
 import { readClipboard, writeClipboard } from "../app/clipboard";
 
@@ -95,8 +96,9 @@ export function replaceSelection(node: Editable, text: string): void {
     const caret = node.value.length - tail.length;
     try {
       node.setSelectionRange(caret, caret);
-    } catch {
+    } catch (e) {
       /* selection not supported (e.g. number input) — value is still set */
+      swallowed("app", "the caret did not stay after a paste", e);
     }
   } else {
     node.value = text;

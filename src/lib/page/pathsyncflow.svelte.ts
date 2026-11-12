@@ -8,6 +8,7 @@
 // `start` alone — by hand, from the question, on connect — so no path can skip
 // the setup command or type it without the answer that allows it.
 
+import { writtenByCall } from "../api/call";
 import { setServerPathSync, writeToTerminal } from "../api";
 import { t } from "../i18n";
 import type { PathSyncAsk } from "../pathsync/PathSyncDialog.svelte";
@@ -73,7 +74,7 @@ export function createPathSyncFlow(deps: PathSyncDeps) {
    */
   function start(id: string, typeSetup: boolean) {
     if (typeSetup) {
-      writeToTerminal(id, new TextEncoder().encode(submitLine(OSC7_SETUP)), true).catch(() => {});
+      writeToTerminal(id, new TextEncoder().encode(submitLine(OSC7_SETUP)), true).catch(writtenByCall);
       integrated[id] = true;
     }
     following[id] = true;

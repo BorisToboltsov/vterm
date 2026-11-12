@@ -2,7 +2,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 // readClipboard reads natively via the backend first; mock that wrapper.
 const readClipboardText = vi.fn<() => Promise<string>>();
-vi.mock("../api", () => ({ readClipboardText: () => readClipboardText() }));
+const os = vi.hoisted(() => ({ name: "macos" }));
+vi.mock("../api", () => ({ readClipboardText: () => readClipboardText(), hostOs: async () => os.name }));
 
 import { readClipboard, writeClipboard } from "./clipboard";
 
@@ -69,5 +70,22 @@ describe("readClipboard", () => {
       clipboard: { readText: vi.fn().mockRejectedValue(new Error("blocked")) },
     });
     expect(await readClipboard()).toBe("");
+  });
+});
+
+describe("readClipboard where there is no native reader", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+    os.name = "macos";
+  });
+
+  it("does not ask the backend off macOS: a paste there is no failure to write", async () => {
+    vi.resetModules();
+    os.name = "linux";
+    readClipboardText.mockReset();
+    vi.stubGlobal("navigator", { clipboard: { readText: vi.fn().mockResolvedValue("web") } });
+    const fresh = await import("./clipboard");
+    expect(await fresh.readClipboard()).toBe("web");
+    expect(readClipboardText).not.toHaveBeenCalled();
   });
 });

@@ -12,6 +12,8 @@
 // losing them loses only what was typed, and a stored table is read back
 // through `loadTables`, which drops what does not read as a row. Runs don't
 // persist: their sessions end with the app.
+import { writtenByCall } from "../api/call";
+import { swallowed } from "../api/diag";
 import {
   checkCount,
   checkTargets,
@@ -178,8 +180,9 @@ export function rememberFacts(key: string, facts: HostFacts): void {
   netcheckState.known = next;
   try {
     localStorage.setItem(KNOWN_KEY, JSON.stringify(next));
-  } catch {
+  } catch (e) {
     /* storage blocked — the facts just won't outlive the app */
+    swallowed("netcheck", "the hosts' names and addresses were not kept", e, "warn");
   }
 }
 
@@ -230,8 +233,9 @@ export function setMethod(host: string, choice: MethodChoice): void {
   netcheckState.methods = next;
   try {
     localStorage.setItem(METHOD_KEY, JSON.stringify(next));
-  } catch {
+  } catch (e) {
     /* storage blocked — the choice just won't persist */
+    swallowed("netcheck", "the chosen check method was not kept", e, "warn");
   }
 }
 
@@ -240,8 +244,9 @@ export function rememberRules(host: string, text: string): void {
   netcheckState.history = pushHistory(netcheckState.history, host, text);
   try {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(netcheckState.history));
-  } catch {
+  } catch (e) {
     /* storage blocked — history just won't persist */
+    swallowed("netcheck", "the access-check history was not kept", e, "warn");
   }
 }
 
@@ -368,7 +373,7 @@ export function stopWaiting(home: string): void {
 export function stopRun(home: string): void {
   delete netcheckState.waiting[home];
   for (const h of runOf(home)?.hosts ?? []) {
-    if (h.state === "running" && h.cancelId) void sftpCancel(h.cancelId).catch(() => {});
+    if (h.state === "running" && h.cancelId) void sftpCancel(h.cancelId).catch(writtenByCall);
   }
 }
 
@@ -445,7 +450,7 @@ function audit(h: HostRun, rules: NetRule[], at: string, timeout: number, retry:
       : h.state === "done" && h.report
         ? netcheckAudit(rules, h.report, reportWords(h.report.method, timeout), at, retry)
         : netcheckFailureAudit(rules, h.error || t("util.probe.noOutput"), retry);
-  void recordAudit(h.sessionId, entry).catch(() => {});
+  void recordAudit(h.sessionId, entry).catch(writtenByCall);
 }
 
 $effect.root(() => {
@@ -453,8 +458,9 @@ $effect.root(() => {
     const data = JSON.stringify(saveTables({ rows: netcheckState.rows, picked: netcheckState.picked }));
     try {
       localStorage.setItem(TABLES_KEY, data);
-    } catch {
+    } catch (e) {
       /* storage blocked — the tables just won't outlive the app */
+      swallowed("netcheck", "the access-check tables were not kept", e, "warn");
     }
   });
 });

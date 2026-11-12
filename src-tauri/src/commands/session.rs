@@ -10,6 +10,7 @@ use serde::Serialize;
 use std::sync::Arc;
 use std::time::Duration;
 use tauri::{AppHandle, State};
+use tracing::Instrument;
 
 /// Tells the frontend whether it must prompt for a secret before connecting.
 #[derive(Serialize)]
@@ -193,7 +194,15 @@ pub async fn connect_session(
         proxy,
     };
 
-    let session = ssh::connect(
+    // Every event of the connect carries the tab and its server (ADR 0063).
+    let span = tracing::info_span!(
+        "session",
+        sid = %session_id,
+        server_id = %profile.id,
+        server = %profile.alias
+    );
+    let started = std::time::Instant::now();
+    let connected = ssh::connect(
         app,
         session_id.clone(),
         &profile.host,
@@ -202,7 +211,39 @@ pub async fn connect_session(
         cred,
         opts,
     )
-    .await?;
+    .instrument(span.clone())
+    .await;
+    let entered = span.enter();
+    let ms = started.elapsed().as_millis() as u64;
+    let session = match connected {
+        Ok(session) => {
+            tracing::info!(source = "connection", code = "connected", ms, "connected");
+            session
+        }
+        Err(e) => {
+            // A refused password or a cancelled login is an answer, not a fault.
+            if matches!(
+                e,
+                AppError::AuthRejected | AppError::AuthCancelled | AppError::ProxyAuthRejected
+            ) {
+                tracing::info!(
+                    source = "connection",
+                    code = "login-refused",
+                    ms,
+                    "login refused: {e}"
+                );
+            } else {
+                tracing::warn!(
+                    source = "connection",
+                    code = "connect-failed",
+                    ms,
+                    "connect failed: {e}"
+                );
+            }
+            return Err(e);
+        }
+    };
+    drop(entered);
 
     // Persist the secret only after authentication succeeded (so a wrong typed
     // secret is never written to the keychain). By now the session is live, so a

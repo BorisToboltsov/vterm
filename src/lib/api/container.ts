@@ -2,7 +2,7 @@
 // command; the frontend builds argument vectors and parses output in `docker.ts`.
 // Both transports (SSH + local) go through this one command — the backend
 // dispatches by session kind, like `git_run`.
-import { invoke } from "@tauri-apps/api/core";
+import { call } from "./call";
 import type { ExecOutput } from "../types";
 
 /** Captured result of one `docker` invocation — the drivers' common shape. */
@@ -22,7 +22,7 @@ export function containerRun(
   timeoutSecs = 20,
   mirror = false,
 ): Promise<ContainerOutput> {
-  return invoke<ContainerOutput>("container_run", { sessionId, args, timeoutSecs, mirror });
+  return call<ContainerOutput>("container_run", { sessionId, args, timeoutSecs, mirror });
 }
 
 /**
@@ -36,15 +36,15 @@ export function dockerLogin(
   url: string,
   args: string[],
 ): Promise<ContainerOutput> {
-  return invoke<ContainerOutput>("docker_login", { sessionId, url, args });
+  return call<ContainerOutput>("docker_login", { sessionId, url, args });
 }
 
 /** Store a Docker registry password in the OS keychain (keyed by url). */
 export function setRegistrySecret(url: string, secret: string): Promise<void> {
-  return invoke<void>("set_registry_secret", { url, secret });
+  return call<void>("set_registry_secret", { url, secret });
 }
 
 /** Forget a stored Docker registry password. */
 export function deleteRegistrySecret(url: string): Promise<void> {
-  return invoke<void>("delete_registry_secret", { url });
+  return call<void>("delete_registry_secret", { url });
 }

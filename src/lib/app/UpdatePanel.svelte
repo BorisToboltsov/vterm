@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { writtenByCall } from "../api/call";
   import { onMount } from "svelte";
   import { openUrl } from "@tauri-apps/plugin-opener";
   import { checkUpdate, downloadUpdate, updateSnapshot, type UpdateRelease } from "../api/updater";
@@ -14,7 +15,7 @@
   let percent = $state<number | null>(null);
   const notes = $derived(renderMarkdown(release?.notes ?? ""));
   onMount(() => {
-    void updateSnapshot().then((snapshot) => { if (!busy && !release) { release = snapshot; ready = snapshot?.ready ?? false; } }).catch(() => {});
+    void updateSnapshot().then((snapshot) => { if (!busy && !release) { release = snapshot; ready = snapshot?.ready ?? false; } }).catch(writtenByCall);
   });
   async function check() {
     if (busy) return;

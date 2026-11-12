@@ -1,0 +1,4 @@
+# Печать и dbg! — только в тестах: в приложении событие пишется через `tracing`
+# в диагностику (ADR 0063, `[lints.clippy]` в Cargo.toml).
+allow-print-in-tests = true
+allow-dbg-in-tests = true
