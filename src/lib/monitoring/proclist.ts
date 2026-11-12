@@ -11,6 +11,25 @@ import { NO_GROUPS, type ListOrder, type ListSchema } from "../ui/listview";
 
 const num = (v: number | null | undefined) => v ?? 0;
 
+/**
+ * A process's CPU against the whole machine, 0–100 (v1.35): its % of one core over
+ * all the cores — what the list's bar is drawn against. A bar against one core
+ * was full for 101 % and for 512 % alike. Null — not read yet, or the cores are
+ * not known (a bar against a guessed ceiling would be a made-up share).
+ */
+export function machineShare(cpu: number | null, cores: number | null | undefined): number | null {
+  if (cpu == null || !Number.isFinite(cpu) || cores == null || !(cores > 0)) return null;
+  return Math.min(100, Math.max(0, cpu / cores));
+}
+
+/** How many cores' worth of work a % of one core is: 512 % — 5.1 cores. */
+export const coresBusy = (cpu: number): number => cpu / 100;
+
+/** The ceiling of a process's CPU chart: every core busy; null when the cores are not known. */
+export function cpuCeiling(cores: number | null | undefined): number | null {
+  return cores != null && cores > 0 ? cores * 100 : null;
+}
+
 /** How the Processes section filters and orders its list. */
 export const PROC_SCHEMA: ListSchema<ProcRow> = {
   text: (p) => `${p.comm} ${p.user} ${p.pid}`,

@@ -20,6 +20,7 @@
 // plain-click path, and "open in new window" for a WebView means a new WebView.
 
 import { swallow, swallowed } from "../api/diag";
+import { reducedMotion } from "../ui/motion";
 import { openUrl } from "@tauri-apps/plugin-opener";
 
 const HTTP = /^https?:\/\//i;
@@ -44,8 +45,7 @@ function handle(e: MouseEvent) {
       const id = decodeURIComponent(href.slice(1));
       const target = id ? container?.querySelector(`[id="${id}"]`) : null;
       if (target instanceof HTMLElement) {
-        const reduce = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
-        target.scrollIntoView({ behavior: reduce ? "auto" : "smooth", block: "start" });
+        target.scrollIntoView({ behavior: reducedMotion() ? "auto" : "smooth", block: "start" });
       }
     } catch (e) {
       /* not a resolvable anchor — stay inert */

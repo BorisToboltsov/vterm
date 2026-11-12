@@ -209,7 +209,7 @@ vterm/
 ├── src/                        # фронтенд (SvelteKit, SPA)
 │   ├── routes/                 # +layout · +page.svelte (оркестратор)
 │   ├── app.css                 # токены @theme, глобальные правила
-│   ├── app.html                # первый кадр темы, style-nonce для CodeMirror
+│   ├── app.html                # первый кадр: тема, масштаб, анимации (`data-motion`); style-nonce для CodeMirror
 │   └── lib/                    # папка — подсистема или слой; тесты рядом с модулем (ADR 0045)
 │       ├── types.ts            # зеркало моделей Rust — единственный файл в корне
 │       ├── terminal/           # терминал: ввод, вставка, поиск, подсветка, ссылки, синхронный ввод

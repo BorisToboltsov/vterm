@@ -11,7 +11,10 @@
          theme's panel colour from localStorage so the first paint matches the active
          theme (see settings.svelte.ts CHROME_PANEL_KEY). Signature-theme depth is a
          top overlay (ThemeOverlay.svelte), not a first-paint concern. It also sets the
-         interface scale (uiscale.ts UI_SCALE_KEY): the layout would jump otherwise. -->
+         interface scale (uiscale.ts UI_SCALE_KEY): the layout would jump otherwise. And
+         whether the app moves (motion.ts ANIMATIONS_KEY, ADR 0066): the user's choice
+         on `data-animations`, the decision with the system's answer under it on
+         `data-motion` — the CSS guard keys on that, never on the media query. -->
     <style>
       html,
       body {
@@ -30,6 +33,20 @@
         if (u) document.documentElement.style.fontSize = u + "%";
       } catch (e) {
         /* localStorage unavailable — the static dark background above still applies */
+      }
+      var d = document.documentElement;
+      var a = null;
+      try {
+        a = localStorage.getItem("vterm.animations");
+      } catch (e) {
+        /* localStorage unavailable — the system decides */
+      }
+      if (a === "on" || a === "off") d.setAttribute("data-animations", a);
+      if (
+        a === "off" ||
+        (a !== "on" && window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches)
+      ) {
+        d.setAttribute("data-motion", "reduce");
       }
     </script>
     %sveltekit.head%

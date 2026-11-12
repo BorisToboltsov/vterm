@@ -1,7 +1,7 @@
 import { render } from "@testing-library/svelte";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import Chart from "./Chart.svelte";
-import type { Sample } from "./chartgeom";
+import { DOT_REACH, type Sample } from "./chartgeom";
 
 const smp = (vals: (number | null)[], from = 0): Sample[] => vals.map((v, i) => ({ s: from + i, v }));
 
@@ -50,6 +50,22 @@ describe("Chart", () => {
       },
     });
     expect(container.textContent).toContain("5M");
+  });
+
+  it("keeps a line at its ceiling under the scale's name, not through it", () => {
+    const { container } = render(Chart, {
+      props: {
+        lines: [{ samples: smp([480, 495, 500]), color: "red", fill: true }],
+        seq: 2,
+        scaleLabel: true,
+        format: (v: number) => `${v}%`,
+        height: 40,
+      },
+    });
+    const label = [...container.querySelectorAll("text")].find((x) => x.textContent === "500%")!;
+    const dot = container.querySelector("circle")!;
+    // The number's baseline is above the highest the line — and its marker — can go.
+    expect(Number(label.getAttribute("y"))).toBeLessThan(Number(dot.getAttribute("cy")) - DOT_REACH);
   });
 
   it("stacks layers into bands with the total on top", () => {

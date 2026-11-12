@@ -76,6 +76,7 @@ export const DIAG_CODES = [
   "unhandled-rejection",
   "command-failed",
   "webview-ready",
+  "reduced-motion",
   "connecting",
   "connected",
   "login-refused",

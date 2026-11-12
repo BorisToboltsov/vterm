@@ -7,7 +7,7 @@
   // shows the unit apart from the number, dimmer (`unit`).
   import { onDestroy, untrack } from "svelte";
   import { retarget, RING_MS, still, tweenAt, type Tween } from "../ui/tween";
-  import { motionMs, prefersReducedMotion } from "../ui/motion";
+  import { motionMs, reducedMotion } from "../ui/motion";
 
   let {
     value,
@@ -35,7 +35,7 @@
   } = $props();
 
   // svelte-ignore state_referenced_locally
-  const ms = motionMs(duration, prefersReducedMotion());
+  const ms = motionMs(duration, reducedMotion());
   let tw = $state.raw<Tween>(still(null));
   let now = $state(0);
   let raf = 0;

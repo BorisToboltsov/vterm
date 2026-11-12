@@ -15,13 +15,13 @@ import {
   type Box,
   type Rect,
 } from "../ui/fluidfit";
-import { MOTION_BASE, motionMs, prefersReducedMotion } from "../ui/motion";
+import { MOTION_BASE, motionMs, reducedMotion } from "../ui/motion";
 
 /** The glide's curve: quick off the mark, settling softly. */
 export const GLIDE_EASING = "cubic-bezier(0.2, 0.7, 0.2, 1)";
 
 /** How long a glide runs now — not at all with reduced motion. */
-export const glideMs = (): number => motionMs(MOTION_BASE, prefersReducedMotion());
+export const glideMs = (): number => motionMs(MOTION_BASE, reducedMotion());
 
 /** A block's layout box (offsets ignore transforms, so a glide on it does not count). */
 const boxOf = (b: HTMLElement): Box => ({
@@ -200,7 +200,7 @@ export function createRowGlide(
       const el = row();
       // Another row (the bar drawn for another session) moves from nowhere.
       if (!was || !el || was.row !== el || !el.isConnected) return;
-      const ms = motionMs(base, prefersReducedMotion());
+      const ms = motionMs(base, reducedMotion());
       if (!ms) return;
       for (const anim of [...running]) anim.cancel();
       const now = new Map(items(el).map((item) => [item.dataset.rowKey ?? "", item] as const));

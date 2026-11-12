@@ -2,7 +2,9 @@
   // The Processes section (v1.33): every process of the host, while this section
   // is on screen (`fetch_metrics_detail` with `processes`). CPU is % of one core
   // over the last poll — the growth of each process's ticks, counted in Rust —
-  // not `ps`'s lifetime average. The list narrows and orders through the lists'
+  // not `ps`'s lifetime average. So 512 % is five cores' worth (v1.35): the column
+  // says "% of a core", its bar is drawn against all the cores (`machineShare`),
+  // and the picked process's chart runs up to every core busy (`cpuCeiling`). The list narrows and orders through the lists'
   // model (ADR 0050, `proclist.ts`), can be drawn as a tree by parent, and is a
   // window over the rows (`windowRange`), so thousands of processes cost a
   // screenful of DOM. A click reads that process's details once
@@ -11,6 +13,7 @@
   import MonCard from "./MonCard.svelte";
   import MonHeader from "./MonHeader.svelte";
   import Meter from "./Meter.svelte";
+  import TweenNumber from "./TweenNumber.svelte";
   import Icon from "../ui/Icon.svelte";
   import ContextMenu from "../ui/ContextMenu.svelte";
   import FilteredEmpty from "../ui/FilteredEmpty.svelte";
@@ -23,7 +26,7 @@
   import { series } from "./monhistory";
   import type { MonActions, MonView } from "./monsections";
   import { SERIES } from "./monpalette";
-  import { PROC_ORDER, PROC_SCHEMA, procTree, type TreeRow } from "./proclist";
+  import { coresBusy, cpuCeiling, machineShare, PROC_ORDER, PROC_SCHEMA, procTree, type TreeRow } from "./proclist";
   import { applyView, filterSummary, nextSort, NO_FILTER, type ListFilter } from "../ui/listview";
   import { listMenuText, type ListLabels } from "../ui/listtext";
   import type { MenuItem, OpenMenu } from "../ui/ctxmenu";
@@ -127,6 +130,9 @@
   // The pick follows the list: the newest reading of the same pid.
   const current = $derived(picked ? (rows.find((r) => r.pid === picked!.pid) ?? picked) : null);
   const linux = $derived(/linux/i.test(v.metrics.os));
+  const cores = $derived(v.metrics.cpuCount);
+  const pct = (n: number) => `${Math.round(n)}%`;
+  const memPct = (n: number) => `${n.toFixed(1)}%`;
   const COLS = "grid-cols-[3.75rem_minmax(0,1fr)_6rem_7rem_4.5rem_4.5rem_3.5rem_4.5rem_5.5rem]";
 </script>
 
@@ -174,7 +180,7 @@
     <SortTitle label={t("mon.col.pid")} sorted={sortedBy("pid")} onsort={orderBy("pid")} />
     <SortTitle label={t("mon.col.name")} sorted={sortedBy("name")} onsort={orderBy("name")} />
     <SortTitle label={t("mon.col.user")} sorted={sortedBy("user")} onsort={orderBy("user")} />
-    <SortTitle label={t("mon.col.cpu")} sorted={sortedBy("cpu")} onsort={orderBy("cpu")} align="right" />
+    <SortTitle label={t("mon.cpuOfCore")} sorted={sortedBy("cpu")} onsort={orderBy("cpu")} align="right" />
     <SortTitle label={t("mon.col.mem")} sorted={sortedBy("mem")} onsort={orderBy("mem")} align="right" />
     <SortTitle label={t("mon.col.rss")} sorted={sortedBy("rss")} onsort={orderBy("rss")} align="right" />
     <SortTitle label={t("mon.col.threads")} sorted={sortedBy("threads")} onsort={orderBy("threads")} align="right" />
@@ -217,7 +223,7 @@
               </span>
               <span class="truncate text-muted">{p.user}</span>
               <span class="flex items-center gap-1.5">
-                <Meter pct={p.cpu == null ? null : Math.min(100, p.cpu)} color={SERIES.cpu} class="h-1" />
+                <Meter pct={machineShare(p.cpu, cores)} color={SERIES.cpu} class="h-1" />
                 <span class="w-10 shrink-0 text-right tabular-nums">{p.cpu == null ? "—" : p.cpu.toFixed(1)}</span>
               </span>
               <span class="text-right tabular-nums">{p.mem.toFixed(1)}</span>
@@ -260,14 +266,45 @@
     {#if !hasHistory}
       <p class="text-meta text-muted">{t("mon.procNoHistory")}</p>
     {:else}
+    <!-- The value now above each chart, the scale on its left (3Б, v1.35): the
+         numbers never sit where the line runs. CPU runs up to every core busy. -->
     <div class="grid grid-cols-2 gap-3">
       <div>
-        <div class="mb-0.5 text-caption uppercase tracking-wider text-muted">{t("mon.cpuSinceOpen")}</div>
-        <Chart lines={[{ samples: series(v.hist, `proc.${current.pid}.cpu`), color: SERIES.cpu, fill: true }]} seq={v.seq} floor={1} scaleLabel format={(n) => `${Math.round(n)}%`} height={40} />
+        <div class="mb-0.5 flex flex-wrap items-baseline gap-x-2">
+          <span class="text-caption uppercase tracking-wider text-muted">{t("mon.cpuSinceOpen")}</span>
+          <TweenNumber value={current.cpu} format={pct} class="text-xs font-semibold text-text" testid="proc-cpu-now" />
+          {#if current.cpu != null && cores != null}
+            <span class="text-caption tabular-nums text-muted" data-testid="proc-cores-busy"
+              >{t("mon.coresBusy", { n: coresBusy(current.cpu).toFixed(1), total: cores })}</span
+            >
+          {/if}
+        </div>
+        <Chart
+          lines={[{ samples: series(v.hist, `proc.${current.pid}.cpu`), color: SERIES.cpu, fill: true }]}
+          seq={v.seq}
+          max={cpuCeiling(cores) ?? undefined}
+          floor={1}
+          ticks
+          scaleLabel={cpuCeiling(cores) == null}
+          format={pct}
+          height={64}
+          testid="proc-cpu-chart"
+        />
       </div>
       <div>
-        <div class="mb-0.5 text-caption uppercase tracking-wider text-muted">{t("mon.memSinceOpen")}</div>
-        <Chart lines={[{ samples: series(v.hist, `proc.${current.pid}.mem`), color: SERIES.ram, fill: true }]} seq={v.seq} floor={1} scaleLabel format={(n) => `${n.toFixed(1)}%`} height={40} />
+        <div class="mb-0.5 flex flex-wrap items-baseline gap-x-2">
+          <span class="text-caption uppercase tracking-wider text-muted">{t("mon.memSinceOpen")}</span>
+          <TweenNumber value={current.mem} format={memPct} class="text-xs font-semibold text-text" testid="proc-mem-now" />
+        </div>
+        <Chart
+          lines={[{ samples: series(v.hist, `proc.${current.pid}.mem`), color: SERIES.ram, fill: true }]}
+          seq={v.seq}
+          floor={1}
+          ticks
+          format={memPct}
+          height={64}
+          testid="proc-mem-chart"
+        />
       </div>
     </div>
     {/if}

@@ -1,10 +1,11 @@
 import { fireEvent, render, screen } from "@testing-library/svelte";
 import { flushSync } from "svelte";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import AppearanceSettings from "./AppearanceSettings.svelte";
 import { resetSettings, settings } from "../settings/settings.svelte";
 
 afterEach(() => {
+  vi.unstubAllGlobals();
   resetSettings();
   flushSync();
 });
@@ -63,5 +64,40 @@ describe("terminal font on screen", () => {
     render(AppearanceSettings);
     expect(screen.getByTestId("font-size-on-screen").textContent).toContain("16 px (13 × 125%)");
     expect(screen.getByRole("spinbutton", { name: /Terminal font size/ })).toHaveValue(13);
+  });
+});
+
+describe("animations (ADR 0066)", () => {
+  /** A system with its reduced-motion switch at `reduces`. */
+  const systemStill = (reduces: boolean) =>
+    vi.stubGlobal("matchMedia", (q: string) => ({
+      matches: q.includes("prefers-reduced-motion: reduce") && reduces,
+      addEventListener: () => {},
+      removeEventListener: () => {},
+    }));
+  const option = (name: string) => screen.getByRole("radio", { name });
+
+  it("offers the three choices and takes one", async () => {
+    systemStill(false);
+    render(AppearanceSettings);
+    expect(option("As the system").getAttribute("aria-checked")).toBe("true");
+    await fireEvent.click(option("Off"));
+    expect(settings.animations).toBe("off");
+    await fireEvent.click(option("Always"));
+    expect(settings.animations).toBe("on");
+  });
+
+  it("says the system is what keeps the app still — and only then", async () => {
+    systemStill(true);
+    render(AppearanceSettings);
+    expect(screen.getByTestId("animations-by-system")).toBeTruthy();
+    await fireEvent.click(option("Always"));
+    expect(screen.queryByTestId("animations-by-system")).toBeNull();
+  });
+
+  it("is quiet on a system that does not ask", () => {
+    systemStill(false);
+    render(AppearanceSettings);
+    expect(screen.queryByTestId("animations-by-system")).toBeNull();
   });
 });

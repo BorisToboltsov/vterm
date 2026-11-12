@@ -787,7 +787,7 @@
 
 <style>
   /* Sync status strip: cheap transform-only animations, disabled under
-     prefers-reduced-motion (global motion guard, Phase 27/28). */
+     reduced motion (global motion guard, Phase 27/28; ADR 0066). */
   .git-indet {
     animation: git-slide 1.1s ease-in-out infinite;
   }
@@ -807,13 +807,11 @@
       transform: rotate(360deg);
     }
   }
-  @media (prefers-reduced-motion: reduce) {
-    .git-indet {
-      animation: none;
-      width: 100%;
-    }
-    .git-spin {
-      animation: none;
-    }
+  :global(:root[data-motion="reduce"]) .git-indet {
+    animation: none;
+    width: 100%;
+  }
+  :global(:root[data-motion="reduce"]) .git-spin {
+    animation: none;
   }
 </style>

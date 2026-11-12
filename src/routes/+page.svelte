@@ -289,7 +289,7 @@
   } from "#lib/stores/recordings.svelte.ts";
   import type { SftpProgress, SyncRunView, TransferJob } from "#lib/api/index.ts";
   import { SYNC_RUN_EVENT } from "#lib/api/index.ts";
-  import { activeChromePanel, applyImportedSettings, settings, uiPx } from "#lib/settings/settings.svelte.ts";
+  import { activeChromePanel, applyImportedSettings, settings, uiPx, watchMotion } from "#lib/settings/settings.svelte.ts";
   import { t } from "#lib/i18n/index.ts";
   import {
     setMenuLanguage,
@@ -1536,6 +1536,9 @@
     // The diagnostics (ADR 0063): the threshold, this window's uncaught errors,
     // and — the main window — the backend's panics, said once a minute at most.
     unlisteners.push(startDiag(isMainWindow));
+    // Motion follows the system's switch while the app runs; the main window says
+    // in the diagnostics when the system is what keeps the app still (ADR 0066).
+    unlisteners.push(watchMotion(isMainWindow));
     listen<SettingsBroadcast>(SETTINGS_EVENT, (e) => applySettingsFrom(e.payload)).then((u) =>
       unlisteners.push(u),
     );
