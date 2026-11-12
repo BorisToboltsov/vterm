@@ -33,3 +33,31 @@ misconfigurations:
       written in the file would make it refuse any other. Every other KSV rule
       holds: non-root, read-only root filesystem, no capabilities, seccomp
       RuntimeDefault, requests and limits.
+secrets:
+  - id: aws-access-key-id
+    paths:
+      - src/lib/ai/redact.cases.json
+    statement: >-
+      Not a secret: src/lib/ai/redact.cases.json holds the shared examples the
+      secret mask is held to on both sides — redactSecrets in the frontend and
+      the diagnostics writer's mask (src-tauri/src/diag/mask.rs, ADR 0063). Each
+      input is a made-up value shaped like a real token, so the mask is shown
+      catching that shape; a value nobody issued cannot leak.
+  - id: slack-access-token
+    paths:
+      - src/lib/ai/redact.cases.json
+    statement: >-
+      Not a secret: src/lib/ai/redact.cases.json holds the shared examples the
+      secret mask is held to on both sides — redactSecrets in the frontend and
+      the diagnostics writer's mask (src-tauri/src/diag/mask.rs, ADR 0063). Each
+      input is a made-up value shaped like a real token, so the mask is shown
+      catching that shape; a value nobody issued cannot leak.
+  - id: stripe-secret-token
+    paths:
+      - src/lib/ai/redact.cases.json
+    statement: >-
+      Not a secret: src/lib/ai/redact.cases.json holds the shared examples the
+      secret mask is held to on both sides — redactSecrets in the frontend and
+      the diagnostics writer's mask (src-tauri/src/diag/mask.rs, ADR 0063). Each
+      input is a made-up value shaped like a real token, so the mask is shown
+      catching that shape; a value nobody issued cannot leak.
