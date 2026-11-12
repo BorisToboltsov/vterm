@@ -32,6 +32,7 @@ import {
   dirsToList,
   DOUBLE_CLICK_MS,
   headerDir,
+  isSecurityContext,
   lineCandidates,
   lineText,
   listingCommand,
@@ -256,7 +257,7 @@ export function createFileLinks(term: LinkTerminal, host: FileLinkHost): FileLin
           // command's own line: that is the prompt and what was typed.
           if (!host.local && cmd && dir === null && first !== start) {
             const taken = (from: number, to: number) => spans.some((s) => s.from < to && from < s.to);
-            for (const n of unplacedNames(line.text)) {
+            for (const n of unplacedNames(line.text, cmd.context)) {
               if (taken(n.from, n.to)) continue;
               links.push({
                 range: spanRange(line, n.from, n.to, cols, first),
@@ -311,7 +312,9 @@ export function createFileLinks(term: LinkTerminal, host: FileLinkHost): FileLin
       const spans = await confirmed(name, dir, fallback, style);
       const whole = spans.find((s) => s.from === 0 && s.to === name.length);
       if (whole) return whole.target;
-      if (!host.local && cmd && dir === null && first !== start && resolveName(name, null, style) === null) {
+      // `ls -Z`'s context is no name: nothing to sync for.
+      const context = cmd?.context === true && isSecurityContext(name);
+      if (!host.local && cmd && dir === null && first !== start && !context && resolveName(name, null, style) === null) {
         return { kind: "unplaced" };
       }
       return null;

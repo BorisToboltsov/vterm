@@ -11,7 +11,8 @@ vi.mock("../stores/toasts.svelte", () => toasts);
 
 import { createPathSyncFlow, type PathSyncFlow } from "./pathsyncflow.svelte";
 import { settings } from "../settings/settings.svelte";
-import { OSC7_SETUP } from "../pathsync/shellintegration";
+import { OSC7_SETUP, SETUP_ANSWER_MS } from "../pathsync/shellintegration";
+import { captureDiag, setDiagThreshold } from "../api/diag";
 import { submitLine } from "../terminal/terminput";
 import type { Tab } from "../stores/tabs.svelte";
 import type { ServerProfile } from "../types";
@@ -130,12 +131,21 @@ describe("path sync flow: turning it on", () => {
   });
 
   it("the setup is typed once per shell", () => {
-    const { flow, cleanup } = harness([tab("a")], [server("srv-a", "manual")]);
+    const cwd: Record<string, string> = {};
+    const { flow, cleanup } = harness([tab("a")], [server("srv-a", "manual")], cwd);
     flow.enable("a");
     flow.toggle("a");
     flow.toggle("a");
     expect(typed()).toEqual([["a", SETUP]]);
     expect(flow.needsSetup("a")).toBe(false);
+    // The shell answers it with its folder: the setup stays taken.
+    cwd.a = "/home/u";
+    vi.advanceTimersByTime(SETUP_ANSWER_MS);
+    expect([flow.following.a, flow.integrated("a")]).toEqual([true, true]);
+    flow.toggle("a");
+    flow.toggle("a");
+    expect(typed()).toEqual([["a", SETUP]]);
+    expect(toasts.notifyError).not.toHaveBeenCalled();
     cleanup();
   });
 
@@ -147,6 +157,108 @@ describe("path sync flow: turning it on", () => {
       flow.following.a = true;
     };
     expect(typeof neverRun).toBe("function");
+    cleanup();
+  });
+});
+
+describe("path sync flow: a setup the shell never answered", () => {
+  it("goes off with a word why, and turning it on again types the setup again", () => {
+    const { flow, cleanup } = harness([tab("a")], [server("srv-a", "manual")]);
+    flow.toggle("a");
+    vi.advanceTimersByTime(SETUP_ANSWER_MS - 1);
+    expect(flow.following.a).toBe(true);
+    vi.advanceTimersByTime(1);
+    expect(flow.following.a).toBe(false);
+    expect(flow.integrated("a")).toBe(false);
+    expect(flow.needsSetup("a")).toBe(true);
+    expect(toasts.notifyError).toHaveBeenCalledTimes(1);
+    expect(String(toasts.notifyError.mock.calls[0][0])).toContain("bash");
+    expect(toasts.notifyError.mock.calls[0][1]).toEqual({ source: "terminal", sessionId: "a" });
+    flow.toggle("a");
+    expect(flow.following.a).toBe(true);
+    expect(typed()).toEqual([
+      ["a", SETUP],
+      ["a", SETUP],
+    ]);
+    cleanup();
+  });
+
+  it("a question still asked shows the setup again", () => {
+    const { flow, cleanup } = harness([tab("a")], [server("srv-a", null)]);
+    flow.enable("a");
+    void flow.answer("once");
+    vi.advanceTimersByTime(SETUP_ANSWER_MS);
+    flow.enable("a");
+    expect(flow.ask?.needsSetup).toBe(true);
+    cleanup();
+  });
+
+  it("turned off before the answer was due: nothing said, the next turn-on types it again", () => {
+    setDiagThreshold("debug");
+    const heard = captureDiag();
+    try {
+      const { flow, cleanup } = harness([tab("a")], [server("srv-a", "manual")]);
+      flow.toggle("a");
+      flow.toggle("a");
+      vi.advanceTimersByTime(SETUP_ANSWER_MS);
+      expect(toasts.notifyError).not.toHaveBeenCalled();
+      expect(heard.events().map((e) => [e.level, e.source, e.sid])).toEqual([["debug", "terminal", "a"]]);
+      expect(heard.events()[0].text).toContain("typed again");
+      flow.toggle("a");
+      expect(typed()).toEqual([
+        ["a", SETUP],
+        ["a", SETUP],
+      ]);
+      cleanup();
+    } finally {
+      heard.stop();
+    }
+  });
+
+  it("a setup that did not reach the terminal goes off at once and says why", async () => {
+    api.writeToTerminal.mockRejectedValueOnce(new Error("no session"));
+    const { flow, cleanup } = harness([tab("a")], [server("srv-a", "manual")]);
+    flow.toggle("a");
+    await vi.advanceTimersByTimeAsync(0);
+    expect(flow.following.a).toBe(false);
+    expect(flow.needsSetup("a")).toBe(true);
+    expect(toasts.notifyError).toHaveBeenCalledTimes(1);
+    expect(String(toasts.notifyError.mock.calls[0][0])).toContain("no session");
+    // The wait went with it: nothing is said twice.
+    vi.advanceTimersByTime(SETUP_ANSWER_MS);
+    expect(toasts.notifyError).toHaveBeenCalledTimes(1);
+    cleanup();
+  });
+
+  it("'always' on connect goes off the same way in a shell that does not take it", () => {
+    const { flow, cleanup } = harness([tab("a")], [server("srv-a", "auto")]);
+    flow.connected(tab("a"), { attach: false, pendingCommand: false });
+    vi.advanceTimersByTime(DELAY + SETUP_ANSWER_MS);
+    expect(flow.following.a).toBe(false);
+    expect(toasts.notifyError).toHaveBeenCalledTimes(1);
+    cleanup();
+  });
+
+  it("the end of the session ends the wait", () => {
+    const { flow, cleanup } = harness([tab("a"), tab("b")], [server("srv-a", "manual"), server("srv-b", "manual")]);
+    flow.toggle("a");
+    flow.toggle("b");
+    flow.closed("a");
+    flow.forget("b");
+    vi.advanceTimersByTime(SETUP_ANSWER_MS);
+    expect(toasts.notifyError).not.toHaveBeenCalled();
+    cleanup();
+  });
+
+  it("a tab from another window goes on waiting for an answer its shell has not given", () => {
+    const cwd: Record<string, string> = { done: "/srv" };
+    const { flow, cleanup } = harness([tab("w"), tab("done")], [server("srv-w", "manual"), server("srv-done", "manual")], cwd);
+    flow.adopt("w", { following: true, integrated: true });
+    flow.adopt("done", { following: true, integrated: true });
+    vi.advanceTimersByTime(SETUP_ANSWER_MS);
+    expect([flow.following.w, flow.integrated("w")]).toEqual([false, false]);
+    expect([flow.following.done, flow.integrated("done")]).toEqual([true, true]);
+    expect(toasts.notifyError).toHaveBeenCalledTimes(1);
     cleanup();
   });
 });

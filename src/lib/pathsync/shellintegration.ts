@@ -31,14 +31,24 @@ export function osc7SetupDisplay(): string {
 }
 
 /**
+ * How long the shell has to answer {@link OSC7_SETUP} with its folder. The command
+ * ends by reporting it, so a shell that took it answers at once; one that did not
+ * — not bash/zsh (csh, PowerShell on a Windows server), or a program holding the
+ * terminal (vim, a REPL, a password prompt) — never does, and the setup counts as
+ * not typed: path sync goes off with a word why, and turning it on types it again.
+ */
+export const SETUP_ANSWER_MS = 6000;
+
+/**
  * Whether enabling "follow terminal" still has to ask the user to run
  * {@link OSC7_SETUP} in their shell (Phase 39.3).
  *
  * False for a **local** tab whatever the shell does: its cwd is polled from the OS,
  * so there is nothing to set up and no dialog to show. False for an SSH tab that
  * already announced a cwd (the shell emits OSC 7 by itself — many Linux hosts ship
- * `/etc/profile.d/vte.sh`) or where we already typed the snippet this session.
- * Only the remaining case — an SSH tab whose shell has said nothing — needs asking.
+ * `/etc/profile.d/vte.sh`) or where we typed the snippet this session and the shell
+ * has not yet had {@link SETUP_ANSWER_MS} to answer it. Only the remaining case —
+ * an SSH tab whose shell has said nothing — needs asking.
  */
 export function needsShellSetup(
   kind: "ssh" | "local" | undefined,

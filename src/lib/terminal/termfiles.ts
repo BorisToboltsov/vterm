@@ -516,6 +516,9 @@ export interface ListingCommand {
    *  and the headers are read from. Absent when the listing ran where the
    *  line was sent. */
   cd?: string;
+  /** `ls -Z`: each name comes after its security context (`user:role:type:level`,
+   *  `?` without SELinux). Absent otherwise. */
+  context?: true;
 }
 
 const LISTERS = "ls|ll|la|l|dir|vdir|gci|get-childitem|exa|eza|lsd";
@@ -560,6 +563,7 @@ export function listingCommand(line: string, style: PathStyle): ListingCommand |
 function listing(rest: string, style: PathStyle): ListingCommand {
   const paths: string[] = [];
   let recursive = false;
+  let context = false;
   let options = true;
   for (const a of args(rest)) {
     if (options && a === "--") {
@@ -575,13 +579,17 @@ function listing(rest: string, style: PathStyle): ListingCommand {
         a === "--recursive" ||
         (style === "windows" && (/^\/s$/i.test(a) || /^-recurse$/i.test(a)));
       if (deep) recursive = true;
+      // `ls -Z`/`-lZ`/`--context` (GNU ls, eza): the context before each name.
+      if (/^-[a-zA-Z]*Z/.test(a) || a === "--context") context = true;
       continue;
     }
     paths.push(a);
   }
   const glob = paths.some((p) => /[*?[]/.test(p));
   const several = recursive || glob || paths.length > 1;
-  return { dir: !several && paths.length === 1 ? paths[0] : null, several };
+  const out: ListingCommand = { dir: !several && paths.length === 1 ? paths[0] : null, several };
+  if (context) out.context = true;
+  return out;
 }
 
 /**
@@ -634,14 +642,21 @@ const LONG_DATE =
   /(?:\s(?:\p{L}{3,5}\.?\s+\d{1,2}|\d{1,2}\s+\p{L}{3,5}\.?)\s+(?:\d{1,2}:\d{2}|\d{4})|\s\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?(?:\s+[+-]\d{4})?)\s+(?=\S)/u;
 const LONG_LINE = /^[-bcdlpsDn?][-rwxsStTlL]{9}[.+@]?\s/;
 const NOT_A_NAME = /^(?:[\d.,:]+[KMGTPkmgtp]?i?B?|total|итого)$/;
+// What `ls -Z` prints before a name: an SELinux context `user:role:type` with
+// its level (`s0`, `s0-s0:c0.c1023`), or `?` where there is none.
+const CONTEXT = /^(?:\?|[^\s:]+:[^\s:]+:[^\s:]+(?::\S+)?)$/;
+
+/** Whether `word` is the security context `ls -Z` prints before a name. */
+export const isSecurityContext = (word: string): boolean => CONTEXT.test(word);
 
 /**
  * The names in a line of a listing whose folder is unknown: after the date
  * of an `ls -l` line (without its `-> target`), else each word that does not
- * read as a number. Nothing is confirmed here — these spans only offer path
- * sync, which is what would let them be confirmed.
+ * read as a number — nor, under `ls -Z` (`context`), as a security context.
+ * Nothing is confirmed here — these spans only offer path sync, which is what
+ * would let them be confirmed.
  */
-export function unplacedNames(text: string): { from: number; to: number }[] {
+export function unplacedNames(text: string, context = false): { from: number; to: number }[] {
   if (LONG_LINE.test(text)) {
     const m = LONG_DATE.exec(text);
     if (!m) return [];
@@ -651,7 +666,10 @@ export function unplacedNames(text: string): { from: number; to: number }[] {
     return to > from ? [{ from, to }] : [];
   }
   return words(text)
-    .filter((w) => !NOT_A_NAME.test(text.slice(w.start, w.end)))
+    .filter((w) => {
+      const word = text.slice(w.start, w.end);
+      return !NOT_A_NAME.test(word) && !(context && isSecurityContext(word));
+    })
     .map((w) => ({ from: w.start, to: w.end }));
 }
 
