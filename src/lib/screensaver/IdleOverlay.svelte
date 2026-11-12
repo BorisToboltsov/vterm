@@ -96,7 +96,7 @@
     tweenAt,
     type Tween,
   } from "../ui/tween";
-  import { motionMs } from "../ui/motion";
+  import { motionMs, reducedMotion } from "../ui/motion";
   import type { Metrics } from "../api";
   import { feedOf, pollEveryMs, watchMetrics } from "../stores/metricsfeed.svelte";
   import { diskFree, fmtBytes, fmtPct, fmtRate, fmtUptime, memPct } from "../monitoring/format";
@@ -137,8 +137,7 @@
     onnosignaldismiss?: () => void;
   } = $props();
 
-  const reduce =
-    typeof matchMedia === "function" && matchMedia("(prefers-reduced-motion: reduce)").matches;
+  const reduce = reducedMotion();
 
   let active = $state(false);
   let canvas = $state<HTMLCanvasElement>();

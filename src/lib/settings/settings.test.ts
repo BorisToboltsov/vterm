@@ -1,5 +1,5 @@
 import { flushSync } from "svelte";
-import { beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   activeChromePanel,
   activeFontSize,
@@ -12,9 +12,13 @@ import {
   clampK8sRefresh,
   resetSettings,
   settings,
+  stillBySystem,
   uiPx,
+  watchMotion,
 } from "./settings.svelte";
 import { UI_SCALE_KEY } from "../appearance/uiscale";
+import { ANIMATIONS_KEY, reducedMotion } from "../ui/motion";
+import { captureDiag } from "../api/diag";
 import { DEFAULT_THEME_ID, getTheme } from "../appearance/themes";
 
 const STORAGE_KEY = "vterm.settings";
@@ -59,6 +63,94 @@ describe("interface scale", () => {
     expect(settings.uiScale).toBe(100);
     applyImportedSettings({});
     expect(settings.uiScale).toBe(100);
+  });
+});
+
+describe("animations (ADR 0066)", () => {
+  /** A system whose reduced-motion switch the test flips, heard like the real one. */
+  function systemMotion(reduces: boolean) {
+    const heard = new Set<() => void>();
+    const state = { reduces };
+    vi.stubGlobal("matchMedia", (q: string) => ({
+      get matches() {
+        return q.includes("prefers-reduced-motion: reduce") && state.reduces;
+      },
+      addEventListener: (_: string, f: () => void) => heard.add(f),
+      removeEventListener: (_: string, f: () => void) => heard.delete(f),
+    }));
+    return {
+      flip(next: boolean) {
+        state.reduces = next;
+        for (const f of heard) f();
+      },
+      heard,
+    };
+  }
+  const root = () => document.documentElement.dataset;
+
+  afterEach(() => vi.unstubAllGlobals());
+
+  it("follows the system by default", () => {
+    expect(settings.animations).toBe("system");
+  });
+
+  it("puts the choice and the decision on the document and keeps it for the first frame", () => {
+    systemMotion(true);
+    settings.animations = "on";
+    flushSync();
+    expect(root().animations).toBe("on");
+    expect(root().motion).toBeUndefined();
+    expect(reducedMotion()).toBe(false);
+    expect(localStorage.getItem(ANIMATIONS_KEY)).toBe("on");
+    settings.animations = "system";
+    flushSync();
+    expect(root().motion).toBe("reduce");
+    expect(reducedMotion()).toBe(true);
+    settings.animations = "off";
+    systemMotion(false);
+    flushSync();
+    expect(root().motion).toBe("reduce");
+  });
+
+  it("follows the system's switch while the app runs, and stops on the stop", () => {
+    const sys = systemMotion(false);
+    settings.animations = "system";
+    flushSync();
+    const stop = watchMotion(false);
+    expect(root().motion).toBeUndefined();
+    sys.flip(true);
+    expect(root().motion).toBe("reduce");
+    stop();
+    expect(sys.heard.size).toBe(0);
+  });
+
+  it("the main window says so when the system is what keeps the app still — only then", () => {
+    const sys = systemMotion(true);
+    const cap = captureDiag();
+    try {
+      watchMotion(false)();
+      expect(cap.events()).toEqual([]);
+      settings.animations = "on";
+      watchMotion(true)();
+      expect(cap.events()).toEqual([]);
+      settings.animations = "system";
+      expect(stillBySystem()).toBe(true);
+      const stop = watchMotion(true);
+      expect(cap.events().map((e) => e.code)).toEqual(["reduced-motion"]);
+      sys.flip(false);
+      sys.flip(true);
+      expect(cap.events().map((e) => e.code)).toEqual(["reduced-motion", "reduced-motion"]);
+      stop();
+    } finally {
+      cap.stop();
+    }
+  });
+
+  it("takes only a known choice from a backup", () => {
+    applyImportedSettings({ animations: "off" });
+    expect(settings.animations).toBe("off");
+    applyImportedSettings({ animations: "sometimes" });
+    expect(settings.animations).toBe("system");
   });
 });
 

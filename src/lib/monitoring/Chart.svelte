@@ -15,9 +15,11 @@
     bandPath,
     edgeDot,
     HISTORY,
+    LABEL_BAND,
     linePath,
     monotonePath,
     niceCeil,
+    plotBox,
     runs,
     stack,
     timeMarks,
@@ -29,8 +31,9 @@
   } from "./chartgeom";
   import { fmtAgo } from "./format";
   import { LINE_MS, retarget, SCALE_MS, STATUS_MS, still, tweenAt, type Tween } from "../ui/tween";
-  import { motionMs, prefersReducedMotion } from "../ui/motion";
+  import { motionMs, reducedMotion } from "../ui/motion";
   import { t } from "../i18n";
+  import { uiPx } from "../settings/settings.svelte";
 
   type Line = { samples: readonly Sample[]; color: string; fill?: boolean; width?: number; dashed?: boolean };
 
@@ -94,7 +97,7 @@
 
   const uid = $props.id();
   let width = $state(0);
-  const reduce = prefersReducedMotion();
+  const reduce = reducedMotion();
   // svelte-ignore state_referenced_locally
   const lineMs = motionMs(bar ? STATUS_MS : LINE_MS, reduce);
   // svelte-ignore state_referenced_locally
@@ -133,12 +136,14 @@
   onDestroy(() => cancelAnimationFrame(raf));
 
   const GUTTER = 30;
-  const MARKS_H = 14;
   const left = $derived(ticks ? GUTTER : 0);
   // Room on the right for the newest point's marker, above and below the line.
   const plotW = $derived(Math.max(0, width - left - (bar ? 2.5 : 5)));
-  const top = $derived(bar ? 2 : 4);
-  const plotH = $derived(Math.max(4, height - top - (bar ? 2 : 3) - (marks ? MARKS_H : 0)));
+  // The scale's name has a band of its own above the lines (`plotBox`): a line
+  // near its ceiling no longer runs through the number.
+  const box = $derived(plotBox({ height, bar, marks, label: scaleLabel ? uiPx(LABEL_BAND) : 0 }));
+  const top = $derived(box.top);
+  const plotH = $derived(box.height);
   const axis = $derived(tweenAt(axisTw, now, lineMs));
   const scale = $derived(tweenAt(scaleTw, now, scaleMs) ?? target);
 
@@ -274,8 +279,8 @@
           {/if}
         {/each}
       </g>
-      {#if scaleLabel}
-        <text x={left + plotW} y={top + 9} text-anchor="end" class="fill-muted text-caption tabular-nums">{format(scale)}</text>
+      {#if box.labelY != null}
+        <text x={left + plotW} y={box.labelY} text-anchor="end" class="fill-muted text-caption tabular-nums">{format(scale)}</text>
       {/if}
       {#if marks}
         {#each timeMarks(slots, interval) as m, i (i)}

@@ -16,6 +16,37 @@
 // the guard *looks* like it covers everything. The fix is to make the duration
 // itself reduce-motion-aware and route every transition directive through here;
 // the lint rule `vterm/motion-duration` keeps that true for transitions added later.
+//
+// Whether to move at all is the user's call first (v1.35, ADR 0066): the setting
+// "Animations" — as the system says (default), always, or never. Windows reports
+// reduced motion whenever "Animation effects" is off, which a VM, a remote
+// desktop or "best performance" turn off without anyone asking for it, and the
+// whole app went still there. The choice rides on `<html data-animations>` (the
+// settings store and the first frame in app.html put it there), so this module —
+// pure, no store — reads it with the system's answer each time it is asked. CSS
+// keys on the result, `<html data-motion="reduce">`, never on the media query.
+
+/** How the app moves: as the system asks, always, or never (`settings.animations`). */
+export const ANIMATION_MODES = ["system", "on", "off"] as const;
+export type AnimationMode = (typeof ANIMATION_MODES)[number];
+export const DEFAULT_ANIMATIONS: AnimationMode = "system";
+
+/** localStorage key read by the boot script in `app.html`: the first frame already
+ *  moves — or keeps still — as the user chose. */
+export const ANIMATIONS_KEY = "vterm.animations";
+
+/** The system's own reduced-motion query; read here and in app.html, nowhere else. */
+export const REDUCED_MOTION_QUERY = "(prefers-reduced-motion: reduce)";
+
+/** A stored value made safe to use: one of the modes, anything else the default. */
+export function sanitizeAnimationMode(raw: unknown): AnimationMode {
+  return (ANIMATION_MODES as readonly unknown[]).includes(raw) ? (raw as AnimationMode) : DEFAULT_ANIMATIONS;
+}
+
+/** Whether the app keeps still: the user's choice, and the system's when the choice is its. */
+export function motionReduced(mode: AnimationMode, systemReduces: boolean): boolean {
+  return mode === "off" || (mode === "system" && systemReduces);
+}
 
 /** Short transition (row states, dialog entry) — mirrors `--motion-fast` in app.css. */
 export const MOTION_FAST = 120;
@@ -32,10 +63,35 @@ export function motionMs(base: number, reduced: boolean): number {
   return Number.isFinite(base) && base > 0 ? base : 0;
 }
 
-/** Reads the OS/browser reduced-motion preference (false where matchMedia is absent). */
-export function prefersReducedMotion(): boolean {
+/** Whether the system asks for reduced motion (false where matchMedia is absent). */
+export function systemReducesMotion(): boolean {
   if (typeof globalThis.matchMedia !== "function") return false;
-  return globalThis.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  return globalThis.matchMedia(REDUCED_MOTION_QUERY)?.matches === true;
+}
+
+/** Calls `fn` with the system's answer whenever it changes; returns the stop. Nothing
+ *  where matchMedia is absent — there is no answer to follow. */
+export function onSystemMotion(fn: (reduces: boolean) => void): () => void {
+  if (typeof globalThis.matchMedia !== "function") return () => {};
+  const query = globalThis.matchMedia(REDUCED_MOTION_QUERY);
+  if (typeof query?.addEventListener !== "function") return () => {};
+  const heard = () => fn(query.matches);
+  query.addEventListener("change", heard);
+  return () => query.removeEventListener("change", heard);
+}
+
+/** The user's choice as the document carries it; the default before anything set it. */
+export function animationMode(): AnimationMode {
+  return sanitizeAnimationMode(globalThis.document?.documentElement?.dataset.animations);
+}
+
+/**
+ * Whether the app keeps still right now: the choice and the system's answer, read
+ * on every call — a transition, a count, a glide asks it as it starts, so a change
+ * of either takes effect from the next one.
+ */
+export function reducedMotion(): boolean {
+  return motionReduced(animationMode(), systemReducesMotion());
 }
 
 /**
@@ -44,7 +100,7 @@ export function prefersReducedMotion(): boolean {
  * open/close rather than frozen at module load.
  */
 export function motion(base: number = MOTION_FAST): { duration: number } {
-  return { duration: motionMs(base, prefersReducedMotion()) };
+  return { duration: motionMs(base, reducedMotion()) };
 }
 
 /**

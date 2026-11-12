@@ -1,7 +1,7 @@
 <script lang="ts">
   // Appearance settings section: terminal theme picker (swatch chips + custom
-  // palette), the interface scale, and font picker (grouped + live preview) plus
-  // size/line-height.
+  // palette), the interface scale, animations (ADR 0066), and font picker
+  // (grouped + live preview) plus size/line-height.
   // Extracted from SettingsPanel.svelte in Phase 18.5. Reads/writes the settings
   // store directly, like AiSettingsSection.
   import {
@@ -17,8 +17,21 @@
   import DisclosureRow from "../ui/DisclosureRow.svelte";
   import { t, type MessageKey } from "../i18n";
   import { slide } from "svelte/transition";
-  import { motion, MOTION_BASE } from "../ui/motion";
+  import { onDestroy } from "svelte";
+  import SegmentedControl from "../ui/SegmentedControl.svelte";
+  import { ANIMATION_MODES, motion, MOTION_BASE, onSystemMotion, systemReducesMotion, type AnimationMode } from "../ui/motion";
   import { themeFont } from "./fonts";
+
+  // Animations (ADR 0066): as the system asks, always, or never. When the choice
+  // is the system's and the system asks for stillness, say so here — the switch
+  // that did it is in the OS, where nobody looks for an app's animations.
+  const ANIMATION_LABEL: Record<AnimationMode, MessageKey> = {
+    system: "settings.animationsSystem",
+    on: "settings.animationsOn",
+    off: "settings.animationsOff",
+  };
+  let systemStill = $state(systemReducesMotion());
+  onDestroy(onSystemMotion((reduces) => (systemStill = reduces)));
 
   // Theme picker groups (visual swatch chips instead of a plain dropdown). The
   // group label is a message key, resolved reactively in the markup.
@@ -248,6 +261,22 @@ print(greet("world"))  # => 12345`;
       <span class="invisible text-sm" aria-hidden="true">A</span>
     </div>
     <p class="mt-1 text-meta text-muted">{t("settings.uiScaleHint")}</p>
+  </div>
+
+  <div class="mb-2 rounded border border-edge px-3 py-2" data-testid="animations">
+    <div class="flex flex-wrap items-center gap-2 text-xs text-muted">
+      <span class="flex-1">{t("settings.animations")}</span>
+      <SegmentedControl
+        bind:value={settings.animations}
+        options={ANIMATION_MODES.map((m) => ({ value: m, label: t(ANIMATION_LABEL[m]) }))}
+        label={t("settings.animations")}
+        testid="animations-mode"
+      />
+    </div>
+    <p class="mt-1 text-meta text-muted">{t("settings.animationsHint")}</p>
+    {#if settings.animations === "system" && systemStill}
+      <p class="mt-1 text-meta text-warn" data-testid="animations-by-system">{t("settings.animationsBySystem")}</p>
+    {/if}
   </div>
 
   <div class="mb-2">

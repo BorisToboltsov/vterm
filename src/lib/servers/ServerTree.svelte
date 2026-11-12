@@ -667,7 +667,7 @@
 
 <style>
   /* A connecting tab's dot gently breathes. Cheap transform/opacity only; the
-     global prefers-reduced-motion guard (app.css) collapses it to no motion. */
+     global reduced-motion guard (app.css) collapses it to no motion. */
   .pulse-dot {
     animation: conn-breathe 1.8s ease-in-out infinite;
   }

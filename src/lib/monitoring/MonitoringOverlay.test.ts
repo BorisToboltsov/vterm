@@ -1,5 +1,5 @@
 import { fireEvent, render, screen, within } from "@testing-library/svelte";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, onTestFinished, vi } from "vitest";
 import type { Extras, LiveExtras, Metrics, MetricsDetail, PendingUpdates, ProcessDetail } from "../api";
 
 const fetchMetrics = vi.fn();
@@ -480,6 +480,29 @@ describe("MonitoringOverlay — sections", () => {
     expect(within(card).getByText("hidden from this user")).toBeInTheDocument();
     await fireEvent.click(within(card).getByText("top -p 1234 in the terminal"));
     expect(onRunInTerminal).toHaveBeenCalledWith(["top", "-p", "1234"]);
+  });
+
+  it("Processes: CPU is % of a core, its bar against every core; the picked one counts its cores", async () => {
+    // jsdom lays nothing out: the chart draws once it has a width, as in the window.
+    const desc = Object.getOwnPropertyDescriptor(HTMLElement.prototype, "clientWidth");
+    Object.defineProperty(HTMLElement.prototype, "clientWidth", { configurable: true, get: () => 305 });
+    onTestFinished(() => {
+      if (desc) Object.defineProperty(HTMLElement.prototype, "clientWidth", desc);
+    });
+    // 4 cores: 200 % is two of them — half the machine, not a full bar.
+    const busy = [row(1, 0, "systemd", 0.1), row(1234, 1, "nginx", 200), row(1300, 1234, "nginx-worker", 3, "www")];
+    fetchMetricsDetail.mockResolvedValue({ ...detail, processes: busy });
+    fetchProcessDetail.mockResolvedValue(null);
+    const sec = await openOn("processes");
+    const rows = await within(sec).findAllByTestId("proc-row");
+    expect(within(sec).getByText("CPU, % of a core")).toBeInTheDocument();
+    const bar = (r: HTMLElement) => r.querySelector("[data-pct]")?.getAttribute("data-pct");
+    expect(rows.map(bar)).toEqual(["50", "1", "0"]);
+    await fireEvent.click(rows[0]);
+    const card = await within(sec).findByTestId("proc-detail");
+    expect(await within(card).findByTestId("proc-cores-busy")).toHaveTextContent("≈ 2.0 of 4 cores");
+    // The chart's ceiling is every core busy, on the left — not a corner label under the line.
+    expect(within(card).getByTestId("proc-cpu-chart")).toHaveTextContent("400%");
   });
 
   it("Processes: a process that has ended says so", async () => {

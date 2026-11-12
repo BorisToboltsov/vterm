@@ -201,9 +201,7 @@
       opacity: 0.3;
     }
   }
-  @media (prefers-reduced-motion: reduce) {
-    .lt-pulse {
-      animation: none;
-    }
+  :global(:root[data-motion="reduce"]) .lt-pulse {
+    animation: none;
   }
 </style>

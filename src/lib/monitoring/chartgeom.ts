@@ -39,6 +39,38 @@ export interface Pt {
   y: number;
 }
 
+/** The band the scale's name takes above the lines, at 100 % (`uiPx` scales it): the
+ *  caption, and room for the newest point's marker (3 px and its 2 px ring) under it. */
+export const LABEL_BAND = 14;
+/** How far above the line the newest point's marker reaches. */
+export const DOT_REACH = 4;
+/** The time marks' row under a chart. */
+export const MARKS_H = 14;
+
+/** Where a chart draws inside its `height`: the lines' band, and the scale's name above it. */
+export interface PlotBox {
+  /** The top of the lines' band. */
+  top: number;
+  height: number;
+  /** The baseline of the scale's name; null — the chart names no scale. */
+  labelY: number | null;
+}
+
+/**
+ * The lines' band of a chart (v1.35). The scale's name used to sit inside it, in
+ * the top right corner — where the newest point is and where a line near its
+ * round ceiling runs — so on a short chart the line crossed the number and the
+ * number could not be read. Now the name has its own band above the lines: a
+ * line at the ceiling stops under it. `label` is that band's height (0 — no name).
+ */
+export function plotBox(o: { height: number; bar?: boolean; marks?: boolean; label?: number }): PlotBox {
+  const pad = o.bar ? 2 : 4;
+  const band = o.label != null && o.label > 0 ? o.label : 0;
+  const top = pad + band;
+  const height = Math.max(4, o.height - top - (o.bar ? 2 : 3) - (o.marks ? MARKS_H : 0));
+  return { top, height, labelY: band > 0 ? pad + Math.round(band * 0.65) : null };
+}
+
 /** The round ceiling (1, 2 or 5 × 10ⁿ) at or above `v`, never below `floor`. */
 export function niceCeil(v: number, floor = 1): number {
   if (!Number.isFinite(v) || v <= floor) return floor;

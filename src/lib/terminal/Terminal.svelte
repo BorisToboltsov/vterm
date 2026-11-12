@@ -1440,7 +1440,7 @@
      (.xterm-find-result-decoration; the active one also gets
      .xterm-find-active-result-decoration), so these need :global. The active
      match grows in briefly when we navigate to it, making the jump obvious.
-     Honors prefers-reduced-motion via the global guard in app.css plus the
+     Honors reduced motion (`data-motion`) via the global guard in app.css plus the
      explicit override below. */
   :global(.xterm-find-result-decoration) {
     border-radius: 2px;
@@ -1461,9 +1461,7 @@
       transform: scale(1);
     }
   }
-  @media (prefers-reduced-motion: reduce) {
-    :global(.xterm-find-active-result-decoration) {
-      animation: none;
-    }
+  :global(:root[data-motion="reduce"] .xterm-find-active-result-decoration) {
+    animation: none;
   }
 </style>

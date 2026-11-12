@@ -57,6 +57,7 @@ export function metricsSnapshot(
       m.load1 === null ? null : [m.load1, m.load5, m.load15].map((x) => x ?? "?").join(" "),
     ),
     line("CPU", m.cpuPct === null ? null : `${Math.round(m.cpuPct)}%`),
+    line("CPU cores", m.cpuCount === null ? null : String(m.cpuCount)),
     line("CPU temperature", m.cpuTemp === null ? null : `${Math.round(m.cpuTemp)} °C`),
     line("Memory", pair(m.memUsed, m.memTotal)),
     line("Swap", pair(m.swapUsed, m.swapTotal)),
@@ -79,7 +80,8 @@ export function metricsSnapshot(
     }
 
     const procs = (d.topProcs ?? []).slice(0, 5).map((p) => `${p.comm} ${Math.round(p.cpu)}%`);
-    if (procs.length) rows.push(line("Top CPU processes", procs.join(", ")));
+    // % of one core, as top and ps count it: 512% is five cores' worth, not a fault.
+    if (procs.length) rows.push(line("Top CPU processes (% of one core)", procs.join(", ")));
 
     if (d.failedUnitNames?.length) rows.push(line("Failed systemd units", d.failedUnitNames.join(", ")));
     if (d.swapInRate != null || d.swapOutRate != null) {

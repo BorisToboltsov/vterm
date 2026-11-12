@@ -3,10 +3,14 @@ import {
   areaPath,
   bandPath,
   edgeDot,
+  DOT_REACH,
   HISTORY,
+  LABEL_BAND,
   linePath,
+  MARKS_H,
   monotonePath,
   niceCeil,
+  plotBox,
   runs,
   slotX,
   stack,
@@ -145,5 +149,35 @@ describe("zones behind a chart", () => {
     expect(span(1, 1)).toBeNull();
     expect(span(1.2, 0.8)).toBeNull();
     expect(zoneSpan({ from: 0, color: "c" }, 0, 0, 100)).toBeNull();
+  });
+});
+
+describe("the lines' band and the scale's name (v1.35)", () => {
+  it("gives the scale's name a band of its own: its baseline is above the lines", () => {
+    const b = plotBox({ height: 40, label: LABEL_BAND });
+    expect(b.labelY).not.toBeNull();
+    expect(b.labelY!).toBeLessThan(b.top);
+    // Nor does the newest point's marker reach the number.
+    expect(b.labelY!).toBeLessThan(b.top - DOT_REACH);
+    // A line at the ceiling stands at `top` — under the number, not through it.
+    expect(yOf(500, 500, b.top, b.height)).toBe(b.top);
+    expect(b.top + b.height).toBe(40 - 3);
+  });
+
+  it("keeps the band as before without a name", () => {
+    expect(plotBox({ height: 48 })).toEqual({ top: 4, height: 41, labelY: null });
+    expect(plotBox({ height: 14, bar: true })).toEqual({ top: 2, height: 10, labelY: null });
+    expect(plotBox({ height: 104, marks: true, label: 0 })).toEqual({ top: 4, height: 104 - 4 - 3 - MARKS_H, labelY: null });
+  });
+
+  it("grows the band with the interface scale it is given", () => {
+    const at100 = plotBox({ height: 64, label: LABEL_BAND });
+    const at150 = plotBox({ height: 64, label: LABEL_BAND * 1.5 });
+    expect(at150.top - at100.top).toBe(LABEL_BAND / 2);
+    expect(at150.labelY!).toBeLessThan(at150.top - DOT_REACH);
+  });
+
+  it("never draws the lines in less than 4 px", () => {
+    expect(plotBox({ height: 10, label: LABEL_BAND, marks: true }).height).toBe(4);
   });
 });

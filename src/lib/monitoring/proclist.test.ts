@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { ProcRow } from "../api";
 import { applyView, NO_FILTER } from "../ui/listview";
-import { historyPids, PROC_ORDER, PROC_SCHEMA, procTree, TREE_DEPTH_MAX } from "./proclist";
+import { coresBusy, cpuCeiling, historyPids, machineShare, PROC_ORDER, PROC_SCHEMA, procTree, TREE_DEPTH_MAX } from "./proclist";
 
 const p = (pid: number, ppid: number | null, comm: string, o: Partial<ProcRow> = {}): ProcRow => ({
   pid,
@@ -80,5 +80,36 @@ describe("the process list", () => {
   it("keeps a history line only for the busiest by CPU and by memory", () => {
     const keep = historyPids(ROWS, 2);
     expect([...keep].sort((a, b) => a - b)).toEqual([900, 2841, 2850]);
+  });
+});
+
+describe("a process's CPU against the machine (v1.35)", () => {
+  it("draws % of one core against all the cores: 512 % of 8 cores is 64 %", () => {
+    expect(machineShare(512, 8)).toBe(64);
+    expect(machineShare(101.3, 8)).toBeCloseTo(12.66, 2);
+    expect(machineShare(0, 8)).toBe(0);
+  });
+
+  it("tells 101 % from 512 % — the bar against one core did not", () => {
+    expect(machineShare(512, 8)!).toBeGreaterThan(machineShare(101, 8)! * 4);
+  });
+
+  it("stays inside the bar even when a reading runs over the cores", () => {
+    expect(machineShare(900, 8)).toBe(100);
+    expect(machineShare(-3, 8)).toBe(0);
+  });
+
+  it("has no share when it was not read or the cores are not known", () => {
+    expect(machineShare(null, 8)).toBeNull();
+    expect(machineShare(Number.NaN, 8)).toBeNull();
+    expect(machineShare(50, null)).toBeNull();
+    expect(machineShare(50, 0)).toBeNull();
+  });
+
+  it("names the cores' worth and the chart's ceiling", () => {
+    expect(coresBusy(512)).toBeCloseTo(5.12);
+    expect(cpuCeiling(8)).toBe(800);
+    expect(cpuCeiling(null)).toBeNull();
+    expect(cpuCeiling(0)).toBeNull();
   });
 });

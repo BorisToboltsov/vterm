@@ -231,14 +231,16 @@ html.dragging * {
 }
 
 /* Accessibility: honour "reduce motion". Collapse all animations/transitions to
-   an instant so the UI still updates but without movement. */
-@media (prefers-reduced-motion: reduce) {
-  *,
-  *::before,
-  *::after {
-    animation-duration: 0.01ms !important;
-    animation-iteration-count: 1 !important;
-    transition-duration: 0.01ms !important;
-    scroll-behavior: auto !important;
-  }
+   an instant so the UI still updates but without movement. Keyed on the app's
+   decision, not on the media query (ADR 0066): `data-motion="reduce"` is the
+   setting "Animations" with the system's answer under it — put on <html> by
+   app.html for the first frame and by the settings store after (ui/motion.ts). */
+:root[data-motion="reduce"],
+:root[data-motion="reduce"] *,
+:root[data-motion="reduce"] *::before,
+:root[data-motion="reduce"] *::after {
+  animation-duration: 0.01ms !important;
+  animation-iteration-count: 1 !important;
+  transition-duration: 0.01ms !important;
+  scroll-behavior: auto !important;
 }

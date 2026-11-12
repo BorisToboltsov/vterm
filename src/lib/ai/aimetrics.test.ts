@@ -84,7 +84,8 @@ describe("metricsSnapshot", () => {
     // bury the one that matters.
     expect(s).toContain("Filesystem /:");
     expect(s).not.toContain("Filesystem /boot");
-    expect(s).toContain("Top CPU processes: node 87%, postgres 12%");
+    expect(s).toContain("Top CPU processes (% of one core): node 87%, postgres 12%");
+    expect(s).toContain("CPU cores: 4");
   });
 
   it("works with no detail loaded yet", () => {

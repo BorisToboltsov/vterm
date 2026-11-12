@@ -4,7 +4,7 @@
 // access at import time is fine. UI theme changes are applied to the document
 // automatically whenever the relevant settings change.
 
-import { swallowed } from "../api/diag";
+import { diag, swallowed } from "../api/diag";
 import { DEFAULT_PROD_TINT, sanitizeProdTint, type ProdTint } from "../appearance/prodtint";
 import { DEFAULT_FONT, migrateFont, themeFont, type FontMode } from "../appearance/fonts";
 import {
@@ -15,6 +15,15 @@ import {
   terminalFontPx,
   UI_SCALE_KEY,
 } from "../appearance/uiscale";
+import {
+  ANIMATIONS_KEY,
+  DEFAULT_ANIMATIONS,
+  motionReduced,
+  onSystemMotion,
+  sanitizeAnimationMode,
+  systemReducesMotion,
+  type AnimationMode,
+} from "../ui/motion";
 import {
   applyRailPalette,
   applyUiPalette,
@@ -185,6 +194,8 @@ export interface Settings {
   customTheme: TerminalTheme;
   /** The interface scale, percent — one of `UI_SCALE_STOPS` (ADR 0049). */
   uiScale: number;
+  /** Whether the app moves: as the system asks, always, or never (ADR 0066). */
+  animations: AnimationMode;
   fontFamily: string;
   fontMode: FontMode;
   /** The terminal's font at 100 %; on screen it is `activeFontSize()`. */
@@ -369,6 +380,7 @@ const DEFAULTS: Settings = {
   theme: DEFAULT_THEME_ID,
   customTheme: { ...getTheme(DEFAULT_THEME_ID).terminal },
   uiScale: DEFAULT_UI_SCALE,
+  animations: DEFAULT_ANIMATIONS,
   fontFamily: DEFAULT_FONT,
   fontMode: "theme",
   fontSize: 13,
@@ -542,6 +554,7 @@ function load(): Settings {
       ...raw,
       ...migrateFont(raw),
       uiScale: sanitizeUiScale(raw.uiScale),
+      animations: sanitizeAnimationMode(raw.animations),
       language: isLocale(raw.language) ? raw.language : DEFAULTS.language,
       windowsShell: WINDOWS_SHELLS.includes(raw.windowsShell)
         ? raw.windowsShell
@@ -737,6 +750,7 @@ export function applyImportedSettings(raw: unknown): void {
     }
   }
   next.uiScale = sanitizeUiScale(next.uiScale);
+  next.animations = sanitizeAnimationMode(next.animations);
   if (!isLocale(next.language)) next.language = DEFAULTS.language;
   if (!WINDOWS_SHELLS.includes(next.windowsShell)) next.windowsShell = DEFAULTS.windowsShell;
   if (typeof next.localShellPath !== "string") next.localShellPath = DEFAULTS.localShellPath;
@@ -869,6 +883,58 @@ export function applyUiScale(): void {
   }
 }
 
+/**
+ * Put the choice of motion on the document (ADR 0066): the choice itself on
+ * `data-animations` — what `reducedMotion()` reads with the system's answer — and
+ * the decision on `data-motion`, which the CSS guard keys on. Kept where the boot
+ * script in `app.html` reads it, so the next launch's first frame decides too.
+ */
+export function applyAnimations(): void {
+  const mode = settings.animations;
+  if (typeof document !== "undefined") {
+    const root = document.documentElement;
+    root.dataset.animations = mode;
+    if (motionReduced(mode, systemReducesMotion())) root.dataset.motion = "reduce";
+    else delete root.dataset.motion;
+  }
+  try {
+    localStorage.setItem(ANIMATIONS_KEY, mode);
+  } catch (e) {
+    /* storage unavailable — non-fatal */
+    swallowed("settings", "the choice of animations for the first frame was not kept", e, "warn");
+  }
+}
+
+/** Whether the system's own wish is what keeps the app still now (1А, ADR 0066). */
+export function stillBySystem(): boolean {
+  return settings.animations === "system" && systemReducesMotion();
+}
+
+/**
+ * Follow the system's answer while the app runs: the CSS guard sits on the
+ * decision, and the decision changes when the user flips the system switch. The
+ * main window also says, in the diagnostics, when the system is what keeps the
+ * app still — at start and on a change — so "no animation on this machine" has
+ * an answer in the journal. Returns the stop.
+ */
+export function watchMotion(main: boolean): () => void {
+  const note = () => {
+    if (main && stillBySystem()) {
+      diag.info(
+        "settings",
+        "animations off: the system asks for reduced motion (Windows: Animation effects; macOS: Reduce motion); Settings → Appearance → Animations overrides it",
+        { setting: settings.animations },
+        { code: "reduced-motion" },
+      );
+    }
+  };
+  note();
+  return onSystemMotion(() => {
+    applyAnimations();
+    note();
+  });
+}
+
 // Persist on any change and keep the UI chrome in sync with the chosen theme.
 // `$effect.root` lives for the whole app session (never torn down).
 $effect.root(() => {
@@ -887,5 +953,9 @@ $effect.root(() => {
 
   $effect(() => {
     applyUiScale();
+  });
+
+  $effect(() => {
+    applyAnimations();
   });
 });
