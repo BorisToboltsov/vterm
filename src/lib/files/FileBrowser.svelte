@@ -430,7 +430,7 @@
         homePath = start;
       } catch (e) {
         /* fall back to "." */
-        swallowed("files", "find the home folder", e);
+        swallowed("files", "the home folder was not found: the panel opens elsewhere", e);
       }
     }
     await load(start);
@@ -489,7 +489,7 @@
         adapter
           .home()
           .then((home) => (homePath = home))
-          .catch(swallow("files", "find the home folder"));
+          .catch(swallow("files", "the home folder was not found: the panel opens elsewhere"));
       }
     }
     if (cwd === path && error === "") syncTerminalCwd(path);

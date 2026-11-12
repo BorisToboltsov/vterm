@@ -51,7 +51,7 @@ export function createReconnectFlow(deps: ReconnectDeps) {
         "connection",
         `reconnect attempt ${step.attempt} of ${step.of} in ${Math.round(step.delay / 1000)} s`,
         { attempt: step.attempt, of: step.of, delayMs: step.delay },
-        about,
+        { ...about, code: "reconnect-wait" },
       );
       cancel(sessionId);
       timers.set(
@@ -64,7 +64,7 @@ export function createReconnectFlow(deps: ReconnectDeps) {
         }, step.delay),
       );
     } else if (step.kind === "giveUp") {
-      diag.warn("connection", `reconnect gave up after ${step.attempts} attempts: ${detail}`, { attempts: step.attempts }, about);
+      diag.warn("connection", `reconnect gave up after ${step.attempts} attempts: ${detail}`, { attempts: step.attempts }, { ...about, code: "reconnect-gave-up" });
     }
   }
 
@@ -87,13 +87,13 @@ export function createReconnectFlow(deps: ReconnectDeps) {
           return;
         case "connected":
           if (state.attempt > 0) {
-            diag.info("connection", `reconnected after ${state.attempt} attempts`, { attempts: state.attempt }, aboutSession(sessionId));
+            diag.info("connection", `reconnected after ${state.attempt} attempts`, { attempts: state.attempt }, { ...aboutSession(sessionId), code: "reconnected" });
           }
           states.set(sessionId, onConnected(state, now()));
           return;
         case "closed": {
           if (!deps.auto()) {
-            diag.info("connection", "session closed", undefined, aboutSession(sessionId));
+            diag.info("connection", "session closed", undefined, { ...aboutSession(sessionId), code: "session-closed" });
             states.delete(sessionId);
             return;
           }

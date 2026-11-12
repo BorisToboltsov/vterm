@@ -450,6 +450,7 @@ pub async fn fetch_metrics(state: State<'_, AppState>, session_id: String) -> Ap
     if !missing.is_empty() {
         tracing::debug!(
             source = "monitoring",
+            code = "probe-unread",
             sid = %session_id,
             missing = %missing.join(", "),
             "probe readings not recognized"

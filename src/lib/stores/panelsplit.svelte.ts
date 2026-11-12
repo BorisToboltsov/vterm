@@ -61,7 +61,7 @@ $effect.root(() => {
       localStorage.setItem(STORAGE_KEY, data);
     } catch (e) {
       /* storage unavailable — non-fatal */
-      swallowed("settings", "save the panel borders", e, "warn");
+      swallowed("settings", "the panel borders were not saved", e, "warn");
     }
   });
 });

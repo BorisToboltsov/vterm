@@ -183,7 +183,7 @@
         // A missing or oversized image is not an error worth a toast — the
         // placeholder already says this one did not render, and a .md commonly
         // outlives the files it references.
-        swallowed("editor", "load a preview image", e);
+        swallowed("editor", "an image of the preview did not load", e);
       }
     }
   }
@@ -375,7 +375,7 @@
         // The view may be gone (file closed) before its grammar arrives.
         if (view === created) view.dispatch({ effects: langC.reconfigure(ext) });
       })
-      .catch(swallow("editor", "load the language's grammar"));
+      .catch(swallow("editor", "the language's grammar did not load: plain text is shown"));
     // Jump to a requested place (a content-search hit, `x.c:42:5` in output).
     if (doc.gotoLine && (doc.gotoLine > 1 || (doc.gotoColumn ?? 1) > 1)) jumpTo(doc.gotoLine, doc.gotoColumn);
   });

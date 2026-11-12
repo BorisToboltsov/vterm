@@ -273,7 +273,7 @@ function tellOver(): void {
   }
   told = true;
   const said: Promise<void> = over(files)
-    .catch(orNull("files", "tell another window about the drag"))
+    .catch(orNull("files", "the other window was not told about the dragged files"))
     .then((sight) => {
       if (telling === said) telling = null;
       if (candidate === drag && fileDrag.files !== null) {
@@ -362,7 +362,7 @@ function stopListening(): void {
       candidate.el.releasePointerCapture(candidate.pointerId);
     } catch (e) {
       /* already released, or the panel it belonged to is gone */
-      swallowed("files", "release the pointer", e);
+      swallowed("files", "the pointer was not released", e);
     }
   }
   candidate = null;
@@ -380,7 +380,7 @@ function onMove(e: PointerEvent): void {
       candidate.el.setPointerCapture(candidate.pointerId);
     } catch (e) {
       /* the element may be gone; window listeners still see the pointer */
-      swallowed("files", "capture the pointer", e);
+      swallowed("files", "the pointer was not captured: the drag follows it from the window", e);
     }
   }
   holdSelection();

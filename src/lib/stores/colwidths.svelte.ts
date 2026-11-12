@@ -82,7 +82,7 @@ $effect.root(() => {
       localStorage.setItem(STORAGE_KEY, data);
     } catch (e) {
       /* storage unavailable — non-fatal */
-      swallowed("settings", "save the column widths", e, "warn");
+      swallowed("settings", "the column widths were not saved", e, "warn");
     }
   });
   $effect(() => {
@@ -91,7 +91,7 @@ $effect.root(() => {
       localStorage.setItem(HIDDEN_KEY, data);
     } catch (e) {
       /* storage unavailable — non-fatal */
-      swallowed("settings", "save the hidden columns", e, "warn");
+      swallowed("settings", "the hidden columns were not saved", e, "warn");
     }
   });
 });

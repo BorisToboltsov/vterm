@@ -144,7 +144,7 @@ function tellOver(): void {
   }
   told = true;
   const said: Promise<void> = over(drag.tab, drag.pane)
-    .catch(orNull("windows", "tell another window about the tab"))
+    .catch(orNull("windows", "the other window was not told about the tab"))
     .then((sight) => {
       if (telling === said) telling = null;
       // Not for a drag that ended while this was out.
@@ -303,7 +303,7 @@ function stopListening(): void {
       candidate.el.releasePointerCapture(candidate.pointerId);
     } catch (e) {
       /* already released */
-      swallowed("windows", "release the pointer", e);
+      swallowed("windows", "the pointer was not released", e);
     }
   }
   candidate = null;
@@ -319,7 +319,7 @@ function onMove(e: PointerEvent): void {
       candidate.el.setPointerCapture(candidate.pointerId);
     } catch (e) {
       /* the element may be gone; window listeners still see the pointer */
-      swallowed("windows", "capture the pointer", e);
+      swallowed("windows", "the pointer was not captured: the drag follows it from the window", e);
     }
   }
   tabDrag.x = e.clientX;

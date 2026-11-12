@@ -224,7 +224,10 @@ pub async fn delete_server(id: String, state: State<'_, AppState>) -> AppResult<
         servers.clone()
     };
     store::save_servers(&snapshot)?;
-    secrets::delete_all(&id).log_warn("servers", "forget the server's secrets");
+    secrets::delete_all(&id).log_warn(
+        "servers",
+        "the server's saved passwords were not removed from the keychain",
+    );
     // Drop any live session for this server (Drop closes the connection).
     state.sessions.lock().await.remove(&id);
     Ok(())

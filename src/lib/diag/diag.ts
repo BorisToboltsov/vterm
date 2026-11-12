@@ -59,6 +59,115 @@ export function errorText(err: unknown): string {
   return typeof err === "string" ? err : String(err);
 }
 
+/**
+ * The kinds of event the list titles in the reader's language
+ * (`diag.code.<code>`): every `code` the backend (`code = "…"`) or the facade
+ * (`{ code: "…" }`) writes is one of these (gate `diag.guard`). An event
+ * without a code, or with one this build does not know, shows its text alone.
+ */
+export const DIAG_CODES = [
+  "threshold",
+  "size",
+  "dropped",
+  "started",
+  "exiting",
+  "panic",
+  "uncaught-error",
+  "unhandled-rejection",
+  "command-failed",
+  "webview-ready",
+  "connecting",
+  "connected",
+  "login-refused",
+  "connect-failed",
+  "host-key-changed",
+  "host-key-unknown",
+  "server-closed",
+  "session-ended",
+  "reconnect-wait",
+  "reconnected",
+  "reconnect-gave-up",
+  "session-closed",
+  "shell-started",
+  "shell-exited",
+  "shell-failed",
+  "window-opened",
+  "window-not-opened",
+  "window-reopened",
+  "window-closed",
+  "handoff-begun",
+  "handoff-rolled-back",
+  "handoff-not-taken",
+  "store-quarantined",
+  "store-at-risk",
+  "keychain-failed",
+  "update-check",
+  "update-download",
+  "update-verified",
+  "update-unverified",
+  "update-handed",
+  "updated",
+  "update-not-installed",
+  "update-no-result",
+  "webview2-missing",
+  "webview2-cached",
+  "webview2-unpacked",
+  "webview2-unpack-failed",
+  "transfer-started",
+  "transfer-done",
+  "transfer-failed",
+  "transfer-cut",
+  "transfer-stopped",
+  "transfer-unfinished",
+  "transfers-not-discarded",
+  "sync-started",
+  "sync-ended",
+  "sync-failed",
+  "file-saved",
+  "copy-saved",
+  "dragout-taken",
+  "dragout-refused",
+  "file-user",
+  "file-user-refused",
+  "policy-refused",
+  "local-run-refused",
+  "netcheck-ended",
+  "netcheck-stopped",
+  "netcheck-failed",
+  "poll-failed",
+  "poll-back",
+  "probe-unread",
+  "ai-asked",
+  "ai-answered",
+  "ai-failed",
+  "ai-exec",
+  "ai-exec-refused",
+  "deny-list",
+  "step-confirmed",
+  "step-skipped",
+  "consent-given",
+  "consent-declined",
+] as const;
+
+export type DiagCode = (typeof DIAG_CODES)[number];
+
+export const isDiagCode = (v: unknown): v is DiagCode =>
+  typeof v === "string" && (DIAG_CODES as readonly string[]).includes(v);
+
+/**
+ * What a coded event's title is filled with: its fields, flat and as text — a
+ * threshold's `from`/`to` named as the settings name them (`thresholdName`).
+ */
+export function codeParams(e: DiagEvent, thresholdName: (level: string) => string): Record<string, string> {
+  const params: Record<string, string> = {};
+  for (const [k, v] of Object.entries(e.fields ?? {})) params[k] = String(v);
+  if (e.code === "threshold") {
+    if (params.from) params.from = thresholdName(params.from);
+    if (params.to) params.to = thresholdName(params.to);
+  }
+  return params;
+}
+
 /** Events a page asks for. */
 export const DIAG_PAGE = 200;
 
@@ -122,7 +231,10 @@ export function fieldsLine(e: DiagEvent): string {
  * The events as text for the clipboard: date and time, level, where, how many
  * times, the text and its fields under it.
  */
-export function diagText(events: readonly DiagEvent[], name: { source: (s: string) => string }): string {
+export function diagText(
+  events: readonly DiagEvent[],
+  name: { source: (s: string) => string; title?: (e: DiagEvent) => string | null },
+): string {
   return events
     .map((e) => {
       const where = [e.server, e.source ? name.source(e.source) : null].filter(Boolean).join(" · ");
@@ -133,7 +245,9 @@ export function diagText(events: readonly DiagEvent[], name: { source: (s: strin
         (e.count ?? 1) > 1 ? `×${e.count}` : "",
       ].filter(Boolean);
       const fields = fieldsLine(e);
-      return `${head.join("  ")}\n  ${e.text.replace(/\n/g, "\n  ")}${fields ? `\n  ${fields}` : ""}`;
+      const title = name.title?.(e);
+      const lines = [title, e.text.replace(/\n/g, "\n  ")].filter(Boolean).join("\n  ");
+      return `${head.join("  ")}\n  ${lines}${fields ? `\n  ${fields}` : ""}`;
     })
     .join("\n");
 }

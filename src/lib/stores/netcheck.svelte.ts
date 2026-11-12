@@ -182,7 +182,7 @@ export function rememberFacts(key: string, facts: HostFacts): void {
     localStorage.setItem(KNOWN_KEY, JSON.stringify(next));
   } catch (e) {
     /* storage blocked — the facts just won't outlive the app */
-    swallowed("netcheck", "keep the hosts' facts", e, "warn");
+    swallowed("netcheck", "the hosts' names and addresses were not kept", e, "warn");
   }
 }
 
@@ -235,7 +235,7 @@ export function setMethod(host: string, choice: MethodChoice): void {
     localStorage.setItem(METHOD_KEY, JSON.stringify(next));
   } catch (e) {
     /* storage blocked — the choice just won't persist */
-    swallowed("netcheck", "keep the chosen method", e, "warn");
+    swallowed("netcheck", "the chosen check method was not kept", e, "warn");
   }
 }
 
@@ -246,7 +246,7 @@ export function rememberRules(host: string, text: string): void {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(netcheckState.history));
   } catch (e) {
     /* storage blocked — history just won't persist */
-    swallowed("netcheck", "keep the history", e, "warn");
+    swallowed("netcheck", "the access-check history was not kept", e, "warn");
   }
 }
 
@@ -460,7 +460,7 @@ $effect.root(() => {
       localStorage.setItem(TABLES_KEY, data);
     } catch (e) {
       /* storage blocked — the tables just won't outlive the app */
-      swallowed("netcheck", "keep the tables", e, "warn");
+      swallowed("netcheck", "the access-check tables were not kept", e, "warn");
     }
   });
 });

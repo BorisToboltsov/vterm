@@ -849,7 +849,7 @@ export function applyActiveTheme(): void {
     localStorage.setItem(CHROME_PANEL_KEY, panel);
   } catch (e) {
     /* storage unavailable — non-fatal */
-    swallowed("settings", "keep the panel colour for the first frame", e, "warn");
+    swallowed("settings", "the panel colour for the first frame was not kept", e, "warn");
   }
 }
 
@@ -865,7 +865,7 @@ export function applyUiScale(): void {
     localStorage.setItem(UI_SCALE_KEY, String(settings.uiScale));
   } catch (e) {
     /* storage unavailable — non-fatal */
-    swallowed("settings", "keep the interface scale for the first frame", e, "warn");
+    swallowed("settings", "the interface scale for the first frame was not kept", e, "warn");
   }
 }
 
@@ -877,7 +877,7 @@ $effect.root(() => {
       localStorage.setItem(STORAGE_KEY, JSON.stringify(settings));
     } catch (e) {
       /* storage unavailable — non-fatal */
-      swallowed("settings", "save the settings", e, "warn");
+      swallowed("settings", "the settings were not saved: they last until the app quits", e, "warn");
     }
   });
 

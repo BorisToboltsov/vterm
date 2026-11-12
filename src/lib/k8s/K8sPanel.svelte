@@ -659,7 +659,10 @@
       }
       if (pollFailure) {
         const failures = pollFailure.count;
-        diag.info("k8s", `poll back after ${failures} failures`, { failures }, aboutSession(sessionId));
+        diag.info("k8s", `poll back after ${failures} failures`, { failures }, {
+          ...aboutSession(sessionId),
+          code: "poll-back",
+        });
       }
       pollFailure = null;
     } catch (e) {
@@ -680,7 +683,7 @@
   function failedRead(text: string) {
     const { failure, news } = pollFailed(pollFailure, text, Date.now());
     pollFailure = failure;
-    if (news) diag.warn("k8s", `poll failed: ${text}`, undefined, aboutSession(sessionId));
+    if (news) diag.warn("k8s", `poll failed: ${text}`, undefined, { ...aboutSession(sessionId), code: "poll-failed" });
   }
 
   /** Probe + first load against the current scope (from mount, retry, or scope change). */

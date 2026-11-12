@@ -23,7 +23,17 @@
   import type { DiagEvent, DiagLevel } from "../types";
   import { diagState, loadDiag, loadOlderDiag } from "../stores/diag.svelte";
   import { clockOf, dayKind, isJournalSource, JOURNAL_ICON, windowOf } from "../notifications/journal";
-  import { DIAG_ORDER, DIAG_SCHEMA, diagText, fieldsLine, isDiagSource } from "./diag";
+  import {
+    codeParams,
+    DIAG_ORDER,
+    DIAG_SCHEMA,
+    diagText,
+    fieldsLine,
+    isDiagCode,
+    isDiagSource,
+    THRESHOLDS,
+    type DiagThreshold,
+  } from "./diag";
 
   let { here, testid = "diag" }: { here: string; testid?: string } = $props();
 
@@ -39,6 +49,9 @@
   const sourceName = (s: string): string =>
     isJournalSource(s) || isDiagSource(s) ? t(`journal.source.${s}`) : s;
   const levelName = (l: string): string => t(`diag.levelName.${l as DiagLevel}`);
+  /** A threshold as the settings name it («Only errors», «Warnings»…). */
+  const thresholdName = (l: string): string =>
+    (THRESHOLDS as readonly string[]).includes(l) ? t(`diag.level.${l as DiagThreshold}`) : l;
 
   const labels: ListLabels = {
     facet: (id) => t(id === "level" ? "diag.facet.level" : id === "server" ? "diag.facet.server" : "diag.facet.source"),
@@ -50,7 +63,7 @@
   const filtered = $derived(
     diagState.filter.text.trim() !== "" || Object.values(diagState.filter.facets).some((v) => v.length > 0),
   );
-  const copyText = $derived(diagText(diagState.events, { source: sourceName }));
+  const copyText = $derived(diagText(diagState.events, { source: sourceName, title: titleOf }));
 
   let collapsed = $state<string[]>([]);
   let expanded = $state<string[]>([]);
@@ -96,6 +109,11 @@
     ]
       .filter(Boolean)
       .join(" · ");
+  }
+
+  /** A known kind of event, titled in the reader's language; none — the text is the title. */
+  function titleOf(e: DiagEvent): string | null {
+    return isDiagCode(e.code) ? t(`diag.code.${e.code}`, codeParams(e, thresholdName)) : null;
   }
 
   const toggleIn = (list: string[], id: string): string[] =>
@@ -166,6 +184,7 @@
               {@const about = aboutOf(e)}
               {@const open = expanded.includes(key)}
               {@const fields = fieldsLine(e)}
+              {@const title = titleOf(e)}
               <div class="flex items-start gap-2 border-b border-edge px-3 py-1.5" data-testid="{testid}-row" data-level={e.level}>
                 <span class="mt-0.5 shrink-0" use:tooltip={levelName(e.level)}>
                   <Icon name={ICON[e.level]} size={14} class={TONE[e.level]} />
@@ -176,7 +195,14 @@
                   aria-expanded={open}
                   onclick={() => (expanded = toggleIn(expanded, key))}
                 >
-                  <span class="block break-words font-mono {open ? 'whitespace-pre-wrap' : 'line-clamp-2'}">{e.text}</span>
+                  {#if title}
+                    <span class="block break-words" data-testid="{testid}-title">{title}</span>
+                    <span class="block break-words font-mono text-meta text-muted {open ? 'whitespace-pre-wrap' : 'line-clamp-1'}"
+                      >{e.text}</span
+                    >
+                  {:else}
+                    <span class="block break-words font-mono {open ? 'whitespace-pre-wrap' : 'line-clamp-2'}">{e.text}</span>
+                  {/if}
                   {#if open && fields}<span class="block break-all font-mono text-meta text-muted">{fields}</span>{/if}
                   {#if about}<span class="block truncate text-meta text-muted">{about}</span>{/if}
                 </button>

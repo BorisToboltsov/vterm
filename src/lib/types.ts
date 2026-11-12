@@ -243,6 +243,8 @@ export interface DiagEvent {
   level: DiagLevel;
   source?: string;
   text: string;
+  /** What kind of event it is: the list titles it (`diag.code.<code>`). */
+  code?: string;
   fields?: Record<string, string | number | boolean>;
   sid?: string;
   serverId?: string;

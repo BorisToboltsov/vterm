@@ -159,11 +159,11 @@ pub fn apply(window: &tauri::WebviewWindow, saved: Place, min: (u32, u32)) -> bo
     let place = fit(saved, &areas_of(window), min);
     window
         .set_size(tauri::PhysicalSize::new(place.width, place.height))
-        .log_debug("windows", "window set size");
+        .log_debug("windows", "the window was not given its size");
     if let (Some(x), Some(y)) = (place.x, place.y) {
         window
             .set_position(tauri::PhysicalPosition::new(x, y))
-            .log_debug("windows", "window set position");
+            .log_debug("windows", "the window was not moved to its place");
     }
     place.maximized
 }

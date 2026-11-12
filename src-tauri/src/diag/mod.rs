@@ -163,6 +163,10 @@ pub struct Event {
     pub source: Option<String>,
     /// Technical English: data, not interface text — searched and forwarded as is.
     pub text: String,
+    /// What kind of event it is, for the list to title it in the reader's
+    /// language (`diag.code.<code>`); none — the text is all there is.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub code: Option<String>,
     /// Flat: strings, numbers, booleans.
     #[serde(default, skip_serializing_if = "Fields::is_empty")]
     pub fields: Fields,
@@ -205,6 +209,7 @@ impl Event {
             level,
             source: source.map(Into::into),
             text,
+            code: None,
             fields: Fields::new(),
             sid: None,
             server_id: None,
@@ -219,6 +224,11 @@ impl Event {
     /// Kept short and clean: a known source or none, one cut text.
     fn cleaned(mut self) -> Event {
         self.source = self.source.filter(|s| SOURCES.contains(&s.as_str()));
+        self.code = self.code.filter(|c| {
+            (1..=40).contains(&c.len())
+                && c.bytes()
+                    .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')
+        });
         self.text = cut(self.text.trim(), MAX_TEXT);
         for (name, value) in &mut self.fields {
             if is_secret_field(name) {
@@ -364,6 +374,7 @@ pub fn start() {
     install_panic_hook();
     tracing::info!(
         source = "app",
+        code = "started",
         version = env!("CARGO_PKG_VERSION"),
         os = std::env::consts::OS,
         arch = std::env::consts::ARCH,
@@ -444,7 +455,7 @@ pub fn submit(e: Event) {
 
 /// The app is on its way out: said, and what the writer holds put on disk.
 pub fn shutdown() {
-    tracing::info!(source = "app", "vterm exiting");
+    tracing::info!(source = "app", code = "exiting", "vterm exiting");
     flush();
 }
 
@@ -597,6 +608,7 @@ impl Reader<'_> {
         match field.name() {
             "message" => self.event.text = text(),
             "source" => self.event.source = Some(text()),
+            "code" => self.event.code = Some(text()),
             "sid" => self.event.sid = Some(text()),
             "server_id" => self.event.server_id = Some(text()),
             "server" => self.event.server = Some(text()),
@@ -728,6 +740,7 @@ fn install_panic_hook() {
             .or_else(|| info.payload().downcast_ref::<String>().cloned())
             .unwrap_or_else(|| "panic".into());
         let mut e = Event::new(Level::Error, Some("app"), format!("panic: {what}"));
+        e.code = Some("panic".into());
         if let Some(at) = info.location() {
             e.fields
                 .insert("at".into(), format!("{}:{}", at.file(), at.line()).into());
@@ -759,6 +772,8 @@ pub struct FrontEvent {
     pub level: Level,
     #[serde(default)]
     pub source: Option<String>,
+    #[serde(default)]
+    pub code: Option<String>,
     pub text: String,
     #[serde(default)]
     pub fields: Fields,
@@ -778,6 +793,7 @@ pub struct FrontEvent {
 pub fn diag_write(window: WebviewWindow, events: Vec<FrontEvent>) {
     for f in events {
         let mut e = Event::new(f.level.offered(), f.source.as_deref(), f.text);
+        e.code = f.code;
         e.at = f.at.unwrap_or(e.at);
         e.fields = f
             .fields
@@ -827,9 +843,9 @@ pub fn diag_state() -> State {
 /// as a line at every threshold — a gap in the file must read as «not
 /// written», not as «nothing happened» — and told to every window.
 #[tauri::command]
-pub fn diag_set_level(level: Level) -> AppResult<State> {
+pub fn diag_set_level(window: WebviewWindow, level: Level) -> AppResult<State> {
     let level = level.offered();
-    let was = threshold();
+    let was = threshold().offered();
     let mut saved = crate::store::load_diag();
     saved.level = Some(level);
     crate::store::save_diag(&saved)?;
@@ -838,8 +854,17 @@ pub fn diag_set_level(level: Level) -> AppResult<State> {
         let mut e = Event::new(
             Level::Info,
             Some("settings"),
-            format!("diagnostics threshold: {}", query_name(level)),
+            format!(
+                "diagnostics threshold changed: {} -> {} ({})",
+                query_name(was),
+                query_name(level),
+                threshold_means(level)
+            ),
         );
+        e.code = Some("threshold".into());
+        e.fields.insert("from".into(), query_name(was).into());
+        e.fields.insert("to".into(), query_name(level).into());
+        e.win = Some(window.label().to_owned());
         e.always = true;
         submit(e);
     }
@@ -847,10 +872,20 @@ pub fn diag_set_level(level: Level) -> AppResult<State> {
     Ok(state())
 }
 
+/// What a threshold writes, in words for the line that says it changed.
+fn threshold_means(level: Level) -> &'static str {
+    match level {
+        Level::Error => "only errors are written from now on",
+        Level::Warn => "only warnings and errors are written from now on",
+        Level::Info => "information, warnings and errors are written from now on",
+        Level::Debug | Level::Trace => "everything is written from now on, details too",
+    }
+}
+
 /// The user picked a size: kept in `diag.json` and in force at once — made
 /// smaller, the oldest events go now, not on the next rotations.
 #[tauri::command]
-pub fn diag_set_size(size_mb: u32) -> AppResult<State> {
+pub fn diag_set_size(window: WebviewWindow, size_mb: u32) -> AppResult<State> {
     let size_mb = offered_size(size_mb);
     let was = self::size_mb();
     let mut saved = crate::store::load_diag();
@@ -868,9 +903,14 @@ pub fn diag_set_size(size_mb: u32) -> AppResult<State> {
         let mut e = Event::new(
             Level::Info,
             Some("settings"),
-            format!("diagnostics size: {size_mb} MB"),
+            format!(
+                "diagnostics size changed: {was} MB -> {size_mb} MB (the oldest events go first)"
+            ),
         );
-        e.fields.insert("sizeMb".into(), size_mb.into());
+        e.code = Some("size".into());
+        e.fields.insert("from".into(), was.into());
+        e.fields.insert("to".into(), size_mb.into());
+        e.win = Some(window.label().to_owned());
         e.always = true;
         submit(e);
     }
@@ -1120,13 +1160,20 @@ mod tests {
             let c = Capture::start();
             let subscriber = tracing_subscriber::registry().with(DiagLayer);
             tracing::subscriber::with_default(subscriber, || {
-                assert_eq!(Ok::<u8, String>(7).log_warn("storage", "save"), Some(7));
                 assert_eq!(
-                    Err::<u8, _>("disk full").log_warn("storage", "save known_hosts"),
+                    Ok::<u8, String>(7).log_warn("storage", "a settings file was not saved"),
+                    Some(7)
+                );
+                assert_eq!(
+                    Err::<u8, _>("disk full").log_warn(
+                        "storage",
+                        "the host keys were not saved: a server's key will be asked about again"
+                    ),
                     None
                 );
-                Err::<(), _>("gone").log_debug("windows", "emit window://close");
-                Err::<(), u8>(1).log_unheard("windows", "answer the drop");
+                Err::<(), _>("gone")
+                    .log_debug("windows", "the window was not asked whether to close");
+                Err::<(), u8>(1).log_unheard("windows", "the answer about the dropped tab");
                 let first = FirstFailure::new("terminal", "emit term://out");
                 for _ in 0..3 {
                     first.note(Err::<(), _>("webview gone"));
@@ -1137,11 +1184,14 @@ mod tests {
             assert_eq!(
                 got,
                 [
-                    (Level::Warn, "save known_hosts: disk full".to_owned()),
-                    (Level::Debug, "emit window://close: gone".to_owned()),
+                    (Level::Warn, "the host keys were not saved: a server's key will be asked about again: disk full".to_owned()),
                     (
                         Level::Debug,
-                        "answer the drop: nobody was waiting".to_owned()
+                        "the window was not asked whether to close: gone".to_owned()
+                    ),
+                    (
+                        Level::Debug,
+                        "the answer about the dropped tab: nobody was waiting".to_owned()
                     ),
                     (
                         Level::Debug,

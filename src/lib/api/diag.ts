@@ -29,6 +29,8 @@ export type DiagFields = Record<string, string | number | boolean | null | undef
 
 /** What a window tells about an event besides its words. */
 export interface DiagAbout {
+  /** What kind of event it is — one of `DIAG_CODES` (`diag/diag.ts`). */
+  code?: string;
   sid?: string | null;
   serverId?: string | null;
   server?: string | null;
@@ -39,6 +41,7 @@ interface Outgoing {
   level: DiagLevel;
   source: string;
   text: string;
+  code?: string;
   fields?: Record<string, string | number | boolean>;
   sid?: string;
   serverId?: string;
@@ -92,6 +95,7 @@ export function diagEvent(
     level,
     source,
     text,
+    code: about.code,
     fields: flat(fields),
     sid: about.sid ?? undefined,
     serverId: about.serverId ?? undefined,
@@ -126,13 +130,13 @@ export function swallowed(source: string, what: string, err: unknown, level: "de
   diagEvent(level, source, `${what}: ${errorText(err)}`);
 }
 
-/** The same, as a handler: `.catch(swallow("windows", "end the drag"))`. */
+/** The same, as a handler: `.catch(swallow("windows", "the windows were not told the drag ended"))`. */
 export const swallow =
   (source: string, what: string, level: "debug" | "warn" = "debug") =>
   (err: unknown): void =>
     swallowed(source, what, err, level);
 
-/** The same, going on with `null`: `await over(files).catch(orNull("files", "tell the window"))`. */
+/** The same, going on with `null`: `await over(files).catch(orNull("files", "the other window was not told about the files"))`. */
 export const orNull =
   (source: string, what: string, level: "debug" | "warn" = "debug") =>
   (err: unknown): null => {
@@ -142,7 +146,7 @@ export const orNull =
 
 /** A backend command was rejected (`call()`): its name, time and error — never its arguments. */
 export function noteRejected(cmd: string, err: unknown, ms: number): void {
-  diagEvent(rejectionLevel(err), "app", `command ${cmd} failed: ${errorText(err)}`, { command: cmd, ms });
+  diagEvent(rejectionLevel(err), "app", `command ${cmd} failed: ${errorText(err)}`, { command: cmd, ms }, { code: "command-failed" });
 }
 
 /**
@@ -154,11 +158,12 @@ export function captureDiag(): { events: () => DiagEvent[]; stop: () => void } {
   const was = threshold;
   return {
     events: () =>
-      (captured ?? []).map(({ at, level, source, text, fields, sid, serverId, server }) => ({
+      (captured ?? []).map(({ at, level, source, text, code, fields, sid, serverId, server }) => ({
         at,
         level,
         source,
         text,
+        code,
         fields,
         sid,
         serverId,

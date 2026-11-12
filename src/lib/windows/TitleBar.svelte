@@ -46,13 +46,13 @@
 
   // Window controls. Wrapped so a non-Tauri context (plain `pnpm dev` in a
   // browser, unit tests) can't throw out of an event handler.
-  const guard = (fn: () => Promise<unknown>) => () => void fn().catch(swallow("windows", "use a window control"));
+  const guard = (fn: () => Promise<unknown>) => () => void fn().catch(swallow("windows", "the window control did nothing"));
   const minimize = guard(() => appWindow.minimize());
   const toggleMaximize = guard(() => appWindow.toggleMaximize());
   const close = guard(() => appWindow.close());
 
   function startResize(dir: Parameters<typeof appWindow.startResizeDragging>[0]) {
-    void appWindow.startResizeDragging(dir).catch(swallow("windows", "resize the window"));
+    void appWindow.startResizeDragging(dir).catch(swallow("windows", "the window was not resized"));
   }
 
   // Keep the maximise/restore glyph in sync with the real window state.
@@ -66,12 +66,12 @@
             maximized = await appWindow.isMaximized();
           } catch (e) {
             /* window gone */
-            swallowed("windows", "read whether the window is maximized", e);
+            swallowed("windows", "whether the window is maximized is unknown", e);
           }
         });
       } catch (e) {
         /* non-Tauri context — controls simply no-op */
-        swallowed("windows", "hear the window's size", e);
+        swallowed("windows", "the window's size changes will not be heard", e);
       }
     })();
   });

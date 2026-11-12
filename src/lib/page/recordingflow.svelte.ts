@@ -93,7 +93,7 @@ export function createRecordingFlow(deps: RecordingDeps) {
       env.appVersion = await getVersion();
     } catch (e) {
       /* version unavailable */
-      swallowed("recording", "read the app version", e);
+      swallowed("recording", "the app version is not known to the recording", e);
     }
     if (tab.kind === "ssh") {
       const srv = deps.servers().find((s) => s.id === tab.serverId);

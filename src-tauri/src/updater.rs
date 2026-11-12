@@ -216,6 +216,7 @@ pub async fn update_check(state: State<'_, Updates>) -> AppResult<Release> {
     *state.release.locked() = Some(result.clone());
     tracing::info!(
         source = "update",
+        code = "update-check",
         current,
         latest = version,
         available = result.available,
@@ -268,7 +269,14 @@ pub async fn update_download(
         .map_err(|_| err("update-network"))?
         .error_for_status()
         .map_err(|_| err("update-network"))?;
-    tracing::info!(source = "update", version = %release.version, asset = %asset.name, size = asset.size, "update download started");
+    tracing::info!(
+        source = "update",
+        code = "update-download",
+        version = %release.version,
+        asset = %asset.name,
+        size = asset.size,
+        "update download started"
+    );
     // Per chunk: a window gone mid-download is said once, not per chunk.
     let told = crate::diag::FirstFailure::new("update", "report the download's progress");
     let mut downloaded = 0;
@@ -289,12 +297,14 @@ pub async fn update_download(
     protocol::verify_file(&payload, asset).map_err(|e| {
         tracing::error!(
             source = "update",
+            code = "update-unverified",
             "downloaded update failed verification: {e}"
         );
         err(e)
     })?;
     tracing::info!(
         source = "update",
+        code = "update-verified",
         bytes = downloaded,
         "update downloaded and verified"
     );
@@ -398,9 +408,12 @@ pub async fn update_install(
             std::env::current_exe().map_err(err)?
         };
         fs::copy(source, &helper).map_err(err)?;
-        fs::remove_file(dir.join("helper-ready")).log_debug("update", "remove helper-ready");
-        fs::remove_file(dir.join("commit")).log_debug("update", "remove commit");
-        fs::remove_file(dir.join("helper-error")).log_debug("update", "remove helper-error");
+        fs::remove_file(dir.join("helper-ready"))
+            .log_debug("update", "an installer marker file was not removed");
+        fs::remove_file(dir.join("commit"))
+            .log_debug("update", "an installer marker file was not removed");
+        fs::remove_file(dir.join("helper-error"))
+            .log_debug("update", "an installer marker file was not removed");
         let plan_path = dir.join("plan.json");
         fs::write(&plan_path, serde_json::to_vec(&plan).map_err(err)?).map_err(err)?;
         let mut child = Command::new(helper)
@@ -426,23 +439,29 @@ pub async fn update_install(
         // The helper owns staged files after handoff; keep them through process exit.
         if let Some(p) = state.prepared.locked().take() {
             let staged = p.directory.keep();
-            tracing::info!(source = "update", path = %staged.display(), "staged files handed to the helper");
+            tracing::info!(
+                source = "update",
+                code = "update-handed",
+                path = %staged.display(),
+                "staged files handed to the helper"
+            );
         }
         crate::appwin::quit_app(app.clone())
             .await
-            .log_warn("update", "quit for the install");
+            .log_warn("update", "the app did not quit for the install");
         Ok(())
     }
     .await;
     if outcome.is_err() {
         *state.transaction.locked() = None;
         for (_, window) in app.webview_windows() {
-            window
-                .set_enabled(true)
-                .log_debug("update", "window set enabled");
+            window.set_enabled(true).log_debug(
+                "update",
+                "a window was not enabled again after the update stopped",
+            );
         }
         app.emit("update://resume", ())
-            .log_debug("update", "emit update://resume");
+            .log_debug("update", "the windows were not told the update stopped");
     }
     outcome
 }
@@ -465,18 +484,24 @@ pub async fn update_startup(app: AppHandle, window: WebviewWindow) -> AppResult<
     match status.as_deref() {
         Some("updated") => tracing::info!(
             source = "update",
+            code = "updated",
             version = env!("CARGO_PKG_VERSION"),
             "updated"
         ),
-        Some(other) => tracing::warn!(source = "update", "the update did not install: {other}"),
+        Some(other) => tracing::warn!(
+            source = "update",
+            code = "update-not-installed",
+            "the update did not install: {other}"
+        ),
         None if updated_launch => tracing::warn!(
             source = "update",
+            code = "update-no-result",
             "updated launch, but the helper left no result"
         ),
         None => {}
     }
     if status.is_some() {
-        fs::remove_file(path).log_debug("update", "remove the helper's result");
+        fs::remove_file(path).log_debug("update", "the installer's result file was not removed");
     }
     Ok(status)
 }

@@ -94,6 +94,7 @@ async fn run_driver(
         if let Some(why) = call.local_refusal {
             tracing::warn!(
                 source = exec::source_of(call.label),
+                code = "local-run-refused",
                 program = call.local.program,
                 "local run refused: {why}"
             );
@@ -199,6 +200,7 @@ pub async fn netcheck_run(
     match &res {
         Ok(out) => tracing::info!(
             source = "netcheck",
+            code = "netcheck-ended",
             sid = %session_id,
             targets = targets.len(),
             tool = ?local_tool,
@@ -207,10 +209,22 @@ pub async fn netcheck_run(
             "access check ended"
         ),
         Err(AppError::Cancelled) => {
-            tracing::info!(source = "netcheck", sid = %session_id, ms, "access check stopped")
+            tracing::info!(
+                source = "netcheck",
+                code = "netcheck-stopped",
+                sid = %session_id,
+                ms,
+                "access check stopped"
+            )
         }
         Err(e) => {
-            tracing::warn!(source = "netcheck", sid = %session_id, ms, "access check failed: {e}")
+            tracing::warn!(
+                source = "netcheck",
+                code = "netcheck-failed",
+                sid = %session_id,
+                ms,
+                "access check failed: {e}"
+            )
         }
     }
     res

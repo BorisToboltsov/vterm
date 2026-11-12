@@ -304,6 +304,8 @@ Uppercase-микротекст — `text-caption uppercase tracking-wider` (и �
   «Экспорт…» `download`), «Очистить диагностику…» — `border-danger text-danger`, размер на диске —
   `text-meta text-muted`. Список в той же рамке: сверху полоса «что пишется» с «Обновить» (`refresh`
   13), строка фильтра `ListHeader` (счёт фасетов — от бэкенда), группы по дням `GroupHeader`.
+  У события с кодом — заголовок обычным текстом, а текст события под ним `font-mono text-meta
+  text-muted line-clamp-1`; без кода текст события — `font-mono line-clamp-2`.
   Строка события: значок уровня 14 — `alert` `text-bad` (ошибка), `alert` `text-warn`
   (предупреждение), `info` `text-accent` (сведения), `code` `text-muted` (подробность); текст
   `font-mono line-clamp-2`, по щелчку целиком с полями `text-meta`; справа время, `eye` 12 — было

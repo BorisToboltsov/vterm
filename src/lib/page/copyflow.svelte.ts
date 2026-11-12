@@ -80,7 +80,7 @@ export function createCopyFlow(deps: CopyDeps) {
       if (ask?.request === request && !dir) dir = home;
     } catch (e) {
       /* the field stays empty — the user types the folder */
-      swallowed("files", "find the home folder for the copy", e);
+      swallowed("files", "the home folder was not found: the copy asks for a folder", e);
     }
   }
 

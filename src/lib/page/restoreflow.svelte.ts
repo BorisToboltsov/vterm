@@ -184,7 +184,7 @@ export function createRestoreFlow(deps: RestoreDeps) {
     const mark = chatMark(sid);
     if (!printed.has(sid) && (chatSeen.get(sid) ?? NO_CHAT) === mark) return;
     printed.delete(sid);
-    const term = (await deps.keepsake?.(sid).catch(orNull("terminal", "keep the terminal's output"))) ?? null;
+    const term = (await deps.keepsake?.(sid).catch(orNull("terminal", "the terminal's output was not kept for the next launch"))) ?? null;
     const messages = peekChat(sid)?.messages ?? [];
     if (!term && messages.length === 0) return;
     // Closed while its terminal was being read: nothing to keep.

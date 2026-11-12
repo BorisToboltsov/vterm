@@ -339,11 +339,14 @@ pub fn run(rx: &Receiver<Msg>, files: &Files, shared: &Shared, on_panic: &dyn Fn
         }
         let dropped = shared.dropped.swap(0, Ordering::SeqCst);
         if dropped > 0 {
-            batch.take(Event::new(
+            let mut e = Event::new(
                 Level::Warn,
                 Some("app"),
                 format!("diagnostics queue was full: {dropped} events dropped"),
-            ));
+            );
+            e.code = Some("dropped".into());
+            e.fields.insert("dropped".into(), dropped.into());
+            batch.take(e);
         }
         batch.close_if_over(super::now_ms());
         write(files, shared, &batch.drain());

@@ -237,7 +237,7 @@ impl PendingPrompts {
     pub fn cancel(&self, session_id: &str) {
         if let Some(tx) = self.0.locked().remove(session_id) {
             tx.send(None)
-                .log_unheard("connection", "answer the waiting side");
+                .log_unheard("connection", "the answer to a login question");
         }
     }
 

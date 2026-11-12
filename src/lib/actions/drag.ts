@@ -233,7 +233,7 @@ export function resizableHandle(node: HTMLElement, params: ResizableParams) {
       node.releasePointerCapture(e.pointerId);
     } catch (e) {
       /* capture may already be released */
-      swallowed("app", "release the pointer", e);
+      swallowed("app", "the pointer was not released", e);
     }
     p.onEnd?.();
   }

@@ -101,10 +101,22 @@ pub async fn sftp_open_as(
     let res = session.sftp_as(&user, sudo_secret(password)).await;
     match &res {
         Ok(()) => {
-            tracing::info!(source = "files", sid = %session_id, user = %user, "file panel works as another user")
+            tracing::info!(
+                source = "files",
+                code = "file-user",
+                sid = %session_id,
+                user = %user,
+                "file panel works as another user"
+            )
         }
         Err(e) => {
-            tracing::info!(source = "files", sid = %session_id, user = %user, "file panel stays as it was: {e}")
+            tracing::info!(
+                source = "files",
+                code = "file-user-refused",
+                sid = %session_id,
+                user = %user,
+                "file panel stays as it was: {e}"
+            )
         }
     }
     record_sftp(&session, &format!("as {}", git::shell_quote(&user)), &res);
@@ -297,6 +309,7 @@ pub async fn sftp_write_text(
     if let Ok(written) = &res {
         tracing::info!(
             source = "editor",
+            code = "file-saved",
             sid = %session_id,
             path = %path,
             bytes = content.len(),
@@ -446,9 +459,10 @@ pub async fn lint_remote(
     sftp::write_bytes(&sftp, &tmp, content.as_bytes()).await?;
     let sudo_password = sudo_secret(sudo_password);
     let out = sync::run_lint(&session, &tool, &tmp, secret_str(&sudo_password)).await;
-    sftp.remove_file(tmp.clone())
-        .await
-        .log_debug("files", "remove the temporary file");
+    sftp.remove_file(tmp.clone()).await.log_debug(
+        "files",
+        "the temporary file was not removed and stays beside the target",
+    );
     // Replace both the full temp path and its basename with `FILE`, since validators
     // vary in which they print.
     let base = tmp.rsplit('/').next().unwrap_or(&tmp).to_string();
@@ -542,12 +556,18 @@ pub async fn sftp_sync_start(
         let op = sync::sync_mirror_op(&local_root, &remote_root, actions.len());
         let body = sync::sync_mirror_body(&actions);
         let started = std::time::Instant::now();
-        tracing::info!(source = "sync", sid = %session_id, "sync run started: {op}");
+        tracing::info!(
+            source = "sync",
+            code = "sync-started",
+            sid = %session_id,
+            "sync run started: {op}"
+        );
         let res = sync::apply(&sink, &sftp, &local_root, &remote_root, actions, cancel).await;
         let ms = started.elapsed().as_millis() as u64;
         match &res {
             Ok(s) => tracing::info!(
                 source = "sync",
+                code = "sync-ended",
                 sid = %session_id,
                 uploaded = s.uploaded,
                 downloaded = s.downloaded,
@@ -557,7 +577,13 @@ pub async fn sftp_sync_start(
                 "sync run ended"
             ),
             Err(e) => {
-                tracing::warn!(source = "sync", sid = %session_id, ms, "sync run failed: {e}")
+                tracing::warn!(
+                    source = "sync",
+                    code = "sync-failed",
+                    sid = %session_id,
+                    ms,
+                    "sync run failed: {e}"
+                )
             }
         }
         let state = app.state::<AppState>();
@@ -761,7 +787,7 @@ pub(crate) async fn launch_transfer(
         app.state::<AppState>().cancels.locked().remove(&id);
         ended
             .send(done)
-            .log_unheard("files", "answer the waiting side");
+            .log_unheard("files", "the answer about dragging files out");
     });
     Ok(wait)
 }

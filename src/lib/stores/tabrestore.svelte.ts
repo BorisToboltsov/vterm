@@ -69,7 +69,7 @@ export function tabKeeper(label: string, storage: SlotStorage = localStorage) {
       }
     } catch (e) {
       /* storage unavailable — nothing was saved */
-      swallowed("windows", "save the tabs for the next launch", e, "warn");
+      swallowed("windows", "the tabs were not saved for the next launch", e, "warn");
     }
     return out;
   };
@@ -85,7 +85,7 @@ export function tabKeeper(label: string, storage: SlotStorage = localStorage) {
       storage.removeItem(key);
     } catch (e) {
       /* storage unavailable — non-fatal */
-      swallowed("windows", "remove a saved slot", e);
+      swallowed("windows", "a saved tab slot was not removed", e);
     }
   };
 
@@ -152,7 +152,7 @@ export function tabKeeper(label: string, storage: SlotStorage = localStorage) {
         last = text;
       } catch (e) {
         /* storage unavailable or full — non-fatal */
-        swallowed("windows", "save the tabs for the next launch", e, "warn");
+        swallowed("windows", "the tabs were not saved for the next launch", e, "warn");
       }
     },
   };

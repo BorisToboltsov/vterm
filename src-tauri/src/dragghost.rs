@@ -113,9 +113,10 @@ fn window(app: &AppHandle) -> Option<WebviewWindow> {
         .build()
         .ok()?;
     // Nor the mouse: the window under it is the one the tab would land in.
-    ghost
-        .set_ignore_cursor_events(true)
-        .log_debug("windows", "window set ignore cursor events");
+    ghost.set_ignore_cursor_events(true).log_debug(
+        "windows",
+        "the floating label did not let the mouse through",
+    );
     Some(ghost)
 }
 
@@ -143,7 +144,7 @@ pub fn show(app: &AppHandle, look: &Look) -> bool {
     let (w, h) = look.size();
     ghost
         .set_size(LogicalSize::new(w, h))
-        .log_debug("windows", "window set size");
+        .log_debug("windows", "the window was not given its size");
     if let Ok(at) = app.cursor_position() {
         let scale = ghost.scale_factor().unwrap_or(1.0);
         ghost
@@ -151,15 +152,16 @@ pub fn show(app: &AppHandle, look: &Look) -> bool {
                 at.x + OFFSET.0 * scale,
                 at.y + OFFSET.1 * scale,
             ))
-            .log_debug("windows", "window set position");
+            .log_debug("windows", "the window was not moved to its place");
     }
     if let Ok(json) = serde_json::to_string(look) {
         ghost
             .eval(format!("window.setGhost && window.setGhost({json})"))
-            .log_debug("windows", "window eval");
+            .log_debug("windows", "the floating label was not updated");
     }
     if !ghost.is_visible().unwrap_or(false) {
-        ghost.show().log_debug("windows", "window show");
+        let shown = ghost.show();
+        shown.log_debug("windows", "the floating label was not shown");
     }
     true
 }
@@ -168,7 +170,9 @@ pub fn show(app: &AppHandle, look: &Look) -> bool {
 pub fn hide(app: &AppHandle) {
     if let Some(ghost) = app.get_webview_window(LABEL) {
         if ghost.is_visible().unwrap_or(false) {
-            ghost.hide().log_debug("windows", "window hide");
+            ghost
+                .hide()
+                .log_debug("windows", "the floating label was not hidden");
         }
     }
 }

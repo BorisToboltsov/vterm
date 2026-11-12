@@ -122,7 +122,7 @@
       if (key && (rep.hostname || rep.addrs.length)) rememberFacts(key, { hostname: rep.hostname, addrs: visibleAddrs(rep.addrs) });
     } catch (e) {
       /* the chip just shows no details; a run reports its own error */
-      swallowed("netcheck", "read the host's facts", e);
+      swallowed("netcheck", "the host's name and addresses were not read", e);
     }
   }
 

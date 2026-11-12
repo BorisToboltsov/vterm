@@ -164,7 +164,10 @@ pub async fn stop_recording(
                 .map(|d| d.as_secs())
                 .unwrap_or(0);
             if let Some(updated) = recording::with_ended_at(&content, ended) {
-                std::fs::write(p, updated).log_warn("recording", "write the recording's details");
+                std::fs::write(p, updated).log_warn(
+                    "recording",
+                    "the recording's title and description were not saved",
+                );
             }
         }
     }
@@ -344,7 +347,10 @@ pub fn set_batch_label(batch_id: String, label: String) -> AppResult<()> {
             continue;
         }
         if let Some(updated) = recording::with_batch_label(&content, &label) {
-            std::fs::write(&p, updated).log_warn("recording", "write the recording's details");
+            std::fs::write(&p, updated).log_warn(
+                "recording",
+                "the recording's title and description were not saved",
+            );
         }
     }
     Ok(())

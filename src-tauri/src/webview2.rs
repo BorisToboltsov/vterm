@@ -283,19 +283,22 @@ where
             )
         })
     })();
-    fs::remove_file(&cab).log_debug("app", "tidy the WebView2 runtime folder");
+    fs::remove_file(&cab).log_debug("app", "an old WebView2 runtime folder was not removed");
     if let Err(e) = staged {
-        fs::remove_dir_all(&partial).log_debug("app", "tidy the WebView2 runtime folder");
+        fs::remove_dir_all(&partial)
+            .log_debug("app", "an old WebView2 runtime folder was not removed");
         return Err(e);
     }
 
     let target = base.join(&trailer.version);
     // Остаток прежней версии без движка (кто-то стёр файлы руками) мешает rename.
     if target.exists() && find_runtime_root(&target).is_none() {
-        fs::remove_dir_all(&target).log_debug("app", "tidy the WebView2 runtime folder");
+        fs::remove_dir_all(&target)
+            .log_debug("app", "an old WebView2 runtime folder was not removed");
     }
     if let Err(e) = fs::rename(&partial, &target) {
-        fs::remove_dir_all(&partial).log_debug("app", "tidy the WebView2 runtime folder");
+        fs::remove_dir_all(&partial)
+            .log_debug("app", "an old WebView2 runtime folder was not removed");
         // Второй запуск успел первым — его результат так же годен.
         if find_runtime_root(&target).is_none() {
             return Err(e);
@@ -337,12 +340,13 @@ pub fn cleanup_stale(base: &Path, keep: &str) {
             if old {
                 fs::remove_dir_all(&path)
                     .or_else(|_| fs::remove_file(&path))
-                    .log_debug("app", "tidy the WebView2 runtime folder");
+                    .log_debug("app", "an old WebView2 runtime folder was not removed");
             }
         } else if valid_version(&name) {
             let trash = base.join(format!("{TRASH_PREFIX}{}", unique_suffix()));
             if fs::rename(&path, &trash).is_ok() {
-                fs::remove_dir_all(&trash).log_debug("app", "tidy the WebView2 runtime folder");
+                fs::remove_dir_all(&trash)
+                    .log_debug("app", "an old WebView2 runtime folder was not removed");
             }
         }
     }
@@ -417,6 +421,7 @@ pub fn prepare() {
                 .replace("{webview2}", WEBVIEW2_URL);
             tracing::error!(
                 source = "app",
+                code = "webview2-missing",
                 "WebView2: none installed and none bundled — cannot start"
             );
             crate::diag::shutdown();
@@ -433,7 +438,12 @@ pub fn prepare() {
     let cached = find_runtime_root(&base.join(&trailer.version));
     let root = match (decide(false, false, true, cached.is_some()), cached) {
         (Choice::UseCache, Some(root)) => {
-            tracing::info!(source = "app", version = %trailer.version, "WebView2: the bundled runtime, unpacked before");
+            tracing::info!(
+                source = "app",
+                code = "webview2-cached",
+                version = %trailer.version,
+                "WebView2: the bundled runtime, unpacked before"
+            );
             root
         }
         _ => {
@@ -450,11 +460,21 @@ pub fn prepare() {
             drop(splash);
             match result {
                 Ok(root) => {
-                    tracing::info!(source = "app", version = %trailer.version, "WebView2: the bundled runtime unpacked");
+                    tracing::info!(
+                        source = "app",
+                        code = "webview2-unpacked",
+                        version = %trailer.version,
+                        "WebView2: the bundled runtime unpacked"
+                    );
                     root
                 }
                 Err(e) => {
-                    tracing::error!(source = "app", dir = %base.display(), "WebView2: the bundled runtime did not unpack: {e}");
+                    tracing::error!(
+                        source = "app",
+                        code = "webview2-unpack-failed",
+                        dir = %base.display(),
+                        "WebView2: the bundled runtime did not unpack: {e}"
+                    );
                     crate::diag::shutdown();
                     let msg = text(Msg::Failed, russian)
                         .replace("{err}", &e.to_string())

@@ -122,7 +122,7 @@
       if (dims && dims.rows > 0) term.resize(Math.max(1, width), dims.rows);
     } catch (e) {
       /* container not measurable yet */
-      swallowed("recording", "fit the player", e);
+      swallowed("recording", "the player was not fitted to its area", e);
     }
   }
 

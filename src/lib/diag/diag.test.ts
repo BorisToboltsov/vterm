@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  codeParams,
   DEFAULT_DIAG_SIZE_MB,
   DIAG_SIZES_MB,
   DIAG_SOURCES,
@@ -80,5 +81,25 @@ describe("diagnostics, the pure part", () => {
     expect(mayTellInternalError(null, 1000)).toBe(true);
     expect(mayTellInternalError(1000, 60_999)).toBe(false);
     expect(mayTellInternalError(1000, 61_000)).toBe(true);
+  });
+
+  it("fills a coded event's title from its fields, a threshold's levels by name", () => {
+    const levelName = (l: string) => ({ info: "Information", warn: "Warnings" })[l] ?? l;
+    expect(
+      codeParams({ at: 1, level: "info", text: "x", code: "threshold", fields: { from: "info", to: "warn" } }, levelName),
+    ).toEqual({ from: "Information", to: "Warnings" });
+    expect(codeParams({ at: 1, level: "info", text: "x", code: "connected", fields: { ms: 120, ok: true } }, levelName)).toEqual({
+      ms: "120",
+      ok: "true",
+    });
+  });
+
+  it("copies a coded event with its title over its text", () => {
+    const at = new Date(2026, 10, 12, 14, 32, 5).getTime();
+    const text = diagText([{ at, level: "info", source: "settings", text: "diagnostics threshold changed", code: "threshold" }], {
+      source: (s) => s,
+      title: () => "Threshold changed",
+    });
+    expect(text).toBe("2026-11-12 14:32:05  INFO  settings\n  Threshold changed\n  diagnostics threshold changed");
   });
 });

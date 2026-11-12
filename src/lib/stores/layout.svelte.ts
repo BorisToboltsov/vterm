@@ -117,7 +117,7 @@ $effect.root(() => {
       localStorage.setItem(STORAGE_KEY, data);
     } catch (e) {
       /* storage unavailable — non-fatal */
-      swallowed("settings", "save the docks", e, "warn");
+      swallowed("settings", "the docks' layout was not saved", e, "warn");
     }
   });
 });

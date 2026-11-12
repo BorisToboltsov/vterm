@@ -560,9 +560,10 @@ pub(crate) async fn copy_staged(
     drop(dst);
     if let Err(e) = copied {
         if told.is_none() {
-            tokio::fs::remove_file(&tmp)
-                .await
-                .log_debug("files", "remove the temporary file");
+            tokio::fs::remove_file(&tmp).await.log_debug(
+                "files",
+                "the temporary file was not removed and stays beside the target",
+            );
         }
         return Err(e);
     }
@@ -573,12 +574,13 @@ pub(crate) async fn copy_staged(
     if let Some(permissions) = kept {
         tokio::fs::set_permissions(&tmp, permissions)
             .await
-            .log_warn("files", "set the mode of the temporary file");
+            .log_warn("files", "the file's permissions were not applied");
     }
     if let Err(e) = tokio::fs::rename(&tmp, to).await {
-        tokio::fs::remove_file(&tmp)
-            .await
-            .log_debug("files", "remove the temporary file");
+        tokio::fs::remove_file(&tmp).await.log_debug(
+            "files",
+            "the temporary file was not removed and stays beside the target",
+        );
         return Err(format!("rename onto {to}: {e}").into());
     }
     Ok(())
@@ -703,12 +705,13 @@ pub async fn write_text(
         use std::os::unix::fs::PermissionsExt;
         tokio::fs::set_permissions(&tmp, std::fs::Permissions::from_mode(m))
             .await
-            .log_warn("files", "set the mode of the temporary file");
+            .log_warn("files", "the file's permissions were not applied");
     }
     if let Err(e) = tokio::fs::rename(&tmp, path).await {
-        tokio::fs::remove_file(&tmp)
-            .await
-            .log_debug("files", "remove the temporary file");
+        tokio::fs::remove_file(&tmp).await.log_debug(
+            "files",
+            "the temporary file was not removed and stays beside the target",
+        );
         return Err(format!("rename onto {path}: {e}").into());
     }
 
@@ -751,7 +754,7 @@ pub async fn write_editor_copy(
         drop(file);
         tokio::fs::remove_file(path)
             .await
-            .log_debug("files", "remove the file");
+            .log_debug("files", "the file was not removed");
         return Err(format!("write local copy {path}: {e}").into());
     }
     Ok(())
@@ -795,7 +798,13 @@ pub async fn write_local_text(
     let encoding = encoding.unwrap_or_else(|| crate::textenc::default_encoding().into());
     let res = write_text(&path, &content, &eol, &encoding, expected_sha256.as_deref()).await;
     if res.is_ok() {
-        tracing::info!(source = "editor", path = %path, bytes = content.len(), "local file saved");
+        tracing::info!(
+            source = "editor",
+            code = "file-saved",
+            path = %path,
+            bytes = content.len(),
+            "local file saved"
+        );
     }
     res
 }
@@ -810,7 +819,13 @@ pub async fn save_editor_copy(
 ) -> AppResult<()> {
     let res = write_editor_copy(&path, &content, &eol, &encoding).await;
     if res.is_ok() {
-        tracing::info!(source = "editor", path = %path, bytes = content.len(), "a copy of the edit saved");
+        tracing::info!(
+            source = "editor",
+            code = "copy-saved",
+            path = %path,
+            bytes = content.len(),
+            "a copy of the edit saved"
+        );
     }
     res
 }

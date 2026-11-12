@@ -324,7 +324,7 @@
       if (selected === hash && res.exitCode === 0) contained = parseContains(res.stdout);
     } catch (e) {
       /* the details stand without it */
-      swallowed("git", "find the branches holding a commit", e);
+      swallowed("git", "the branches holding the commit were not found", e);
     }
   }
 

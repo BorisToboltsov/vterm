@@ -166,11 +166,19 @@ impl client::Handler for ClientHandler {
         let known = store::known_host_key(&id);
         let verdict = host_key_verdict(self.policy, known.as_deref(), &fingerprint);
         match verdict {
-            "rejected: changed" | "rejected: unknown" => tracing::warn!(
+            "rejected: changed" => tracing::warn!(
                 source = "connection",
+                code = "host-key-changed",
                 host = %id,
                 fingerprint = %fingerprint,
-                "host key {verdict}"
+                "host key {verdict}: it is not the key this server had"
+            ),
+            "rejected: unknown" => tracing::warn!(
+                source = "connection",
+                code = "host-key-unknown",
+                host = %id,
+                fingerprint = %fingerprint,
+                "host key {verdict}: strict checking accepts only a known key"
             ),
             _ => tracing::debug!(source = "connection", host = %id, "host key {verdict}"),
         }
@@ -390,7 +398,10 @@ impl SshSession {
                 .data(stdin)
                 .await
                 .map_err(|e| format!("stdin write failed: {e}"))?;
-            channel.eof().await.log_debug("connection", "channel eof");
+            channel
+                .eof()
+                .await
+                .log_debug("connection", "the end of input was not sent to the server");
         }
         loop {
             match channel.wait().await {
@@ -414,7 +425,10 @@ impl SshSession {
                 .data(stdin)
                 .await
                 .map_err(|e| format!("stdin write failed: {e}"))?;
-            channel.eof().await.log_debug("connection", "channel eof");
+            channel
+                .eof()
+                .await
+                .log_debug("connection", "the end of input was not sent to the server");
         }
         let mut out: Vec<u8> = Vec::new();
         loop {
@@ -446,7 +460,10 @@ impl SshSession {
                 .data(stdin)
                 .await
                 .map_err(|e| format!("stdin write failed: {e}"))?;
-            channel.eof().await.log_debug("connection", "channel eof");
+            channel
+                .eof()
+                .await
+                .log_debug("connection", "the end of input was not sent to the server");
         }
         let mut out: Vec<u8> = Vec::new();
         loop {
@@ -525,7 +542,10 @@ pub(crate) async fn exec_on<H: client::Handler>(
             .data(stdin)
             .await
             .map_err(|e| format!("stdin write failed: {e}"))?;
-        channel.eof().await.log_debug("connection", "channel eof");
+        channel
+            .eof()
+            .await
+            .log_debug("connection", "the end of input was not sent to the server");
     }
 
     let mut out: Vec<u8> = Vec::new();
@@ -596,18 +616,18 @@ pub(crate) async fn exec_on<H: client::Handler>(
         channel
             .signal(russh::Sig::TERM)
             .await
-            .log_debug("connection", "channel signal");
+            .log_debug("connection", "the stop signal was not sent to the server");
         channel
             .close()
             .await
-            .log_debug("connection", "channel close");
+            .log_debug("connection", "the channel was not closed cleanly");
         return Err(AppError::Cancelled);
     }
     if timed_out {
         channel
             .close()
             .await
-            .log_debug("connection", "channel close");
+            .log_debug("connection", "the channel was not closed cleanly");
     }
     Ok(ExecOutcome {
         stdout: String::from_utf8_lossy(&out).into_owned(),
@@ -1066,6 +1086,7 @@ pub async fn connect(
     };
     tracing::info!(
         source = "connection",
+        code = "connecting",
         host,
         port,
         user = username,
@@ -1084,7 +1105,7 @@ pub async fn connect(
     let mut handle = match opts.proxy {
         None => {
             app.emit(&phase_event(&session_id), "connecting")
-                .log_debug("connection", "emit the connect phase");
+                .log_debug("connection", "the window was not told the connection step");
             timeout(
                 connect_timeout,
                 client::connect(config, (host, port), handler),
@@ -1097,7 +1118,7 @@ pub async fn connect(
             // Jump host mirrors a full SSH connect: its own connect → auth →
             // tunnel sub-phases, each a real emitted stage.
             app.emit(&phase_event(&session_id), "proxyConnecting")
-                .log_debug("connection", "emit the connect phase");
+                .log_debug("connection", "the window was not told the connection step");
             let jump_handler = ClientHandler {
                 host: p.host.clone(),
                 port: p.port,
@@ -1111,7 +1132,7 @@ pub async fn connect(
             .map_err(|_| conn_timeout(connect_timeout))?
             .map_err(map_handshake_err)?;
             app.emit(&phase_event(&session_id), "proxyAuthenticating")
-                .log_debug("connection", "emit the connect phase");
+                .log_debug("connection", "the window was not told the connection step");
             let asker = kbdauth::UiAsker {
                 app: &app,
                 session_id: &session_id,
@@ -1129,14 +1150,14 @@ pub async fn connect(
                 }
             }
             app.emit(&phase_event(&session_id), "proxyTunnel")
-                .log_debug("connection", "emit the connect phase");
+                .log_debug("connection", "the window was not told the connection step");
             let channel = jump
                 .channel_open_direct_tcpip(host.to_string(), port as u32, "127.0.0.1", 0)
                 .await
                 .map_err(|e| format!("proxy tunnel to {host}:{port} failed: {e}"))?;
             proxy_handle = Some(jump);
             app.emit(&phase_event(&session_id), "connecting")
-                .log_debug("connection", "emit the connect phase");
+                .log_debug("connection", "the window was not told the connection step");
             timeout(
                 connect_timeout,
                 client::connect_stream(config, channel.into_stream(), handler),
@@ -1153,13 +1174,13 @@ pub async fn connect(
             // TCP connect and SOCKS negotiation are separate awaits → separate
             // `proxyConnecting` / `proxyHandshake` sub-phases.
             app.emit(&phase_event(&session_id), "proxyConnecting")
-                .log_debug("connection", "emit the connect phase");
+                .log_debug("connection", "the window was not told the connection step");
             let socket = proxy_tcp_connect(&phost, pport, connect_timeout).await?;
             app.emit(&phase_event(&session_id), "proxyHandshake")
-                .log_debug("connection", "emit the connect phase");
+                .log_debug("connection", "the window was not told the connection step");
             let stream = socks5_negotiate(socket, host, port, &auth, connect_timeout).await?;
             app.emit(&phase_event(&session_id), "connecting")
-                .log_debug("connection", "emit the connect phase");
+                .log_debug("connection", "the window was not told the connection step");
             timeout(
                 connect_timeout,
                 client::connect_stream(config, stream, handler),
@@ -1174,13 +1195,13 @@ pub async fn connect(
             auth,
         }) => {
             app.emit(&phase_event(&session_id), "proxyConnecting")
-                .log_debug("connection", "emit the connect phase");
+                .log_debug("connection", "the window was not told the connection step");
             let socket = proxy_tcp_connect(&phost, pport, connect_timeout).await?;
             app.emit(&phase_event(&session_id), "proxyHandshake")
-                .log_debug("connection", "emit the connect phase");
+                .log_debug("connection", "the window was not told the connection step");
             let stream = http_negotiate(socket, host, port, &auth, connect_timeout).await?;
             app.emit(&phase_event(&session_id), "connecting")
-                .log_debug("connection", "emit the connect phase");
+                .log_debug("connection", "the window was not told the connection step");
             timeout(
                 connect_timeout,
                 client::connect_stream(config, stream, handler),
@@ -1199,7 +1220,7 @@ pub async fn connect(
 
     // Phase 2: authentication (password or public key).
     app.emit(&phase_event(&session_id), "authenticating")
-        .log_debug("connection", "emit the connect phase");
+        .log_debug("connection", "the window was not told the connection step");
     let asker = kbdauth::UiAsker {
         app: &app,
         session_id: &session_id,
@@ -1225,7 +1246,7 @@ pub async fn connect(
 
     // Phase 3: open the session channel, request a PTY and start the shell.
     app.emit(&phase_event(&session_id), "session")
-        .log_debug("connection", "emit the connect phase");
+        .log_debug("connection", "the window was not told the connection step");
     let channel = answered(handle.channel_open_session(), "could not open channel").await?;
     answered(
         channel.request_pty(true, &opts.term_type, opts.cols, opts.rows, 0, 0, &[]),
@@ -1254,7 +1275,11 @@ pub async fn connect(
                     gate_for_reader.output(bytes);
                 }
                 Some(ChannelMsg::Eof) | Some(ChannelMsg::Close) | None => {
-                    tracing::info!(source = "connection", "the server closed the session");
+                    tracing::info!(
+                        source = "connection",
+                        code = "server-closed",
+                        "the server closed the session"
+                    );
                     gate_for_reader.closed();
                     break;
                 }

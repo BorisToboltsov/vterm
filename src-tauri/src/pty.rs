@@ -69,7 +69,7 @@ fn run_recorder(mut rec: Recorder, rx: mpsc::Receiver<RecMsg>) {
                 drop(rec); // flush the BufWriter to disk before the caller reads the file
                 reply
                     .send(path)
-                    .log_unheard("terminal", "answer the waiting side");
+                    .log_unheard("terminal", "the recorder's answer that it stopped");
                 return;
             }
         }
@@ -117,7 +117,7 @@ impl LocalPty {
         if let Ok(g) = self.rec_tx.lock() {
             if let Some(tx) = g.as_ref() {
                 tx.send(msg)
-                    .log_debug("recording", "hand a message to the recorder");
+                    .log_debug("recording", "the recorder did not get its message");
             }
         }
     }
@@ -249,7 +249,7 @@ impl Drop for LocalPty {
         self.killer
             .locked()
             .kill()
-            .log_debug("terminal", "child process kill");
+            .log_debug("terminal", "the process was not stopped");
     }
 }
 
@@ -320,10 +320,20 @@ fn open_with_gate(
         .first()
         .map(|a| a.to_string_lossy().into_owned());
     let mut child = pair.slave.spawn_command(cmd).map_err(|e| {
-        tracing::warn!(source = "terminal", shell = ?program, "local shell did not start: {e}");
+        tracing::warn!(
+            source = "terminal",
+            code = "shell-failed",
+            shell = ?program,
+            "local shell did not start: {e}"
+        );
         format!("could not start local shell: {e}")
     })?;
-    tracing::info!(source = "terminal", shell = ?program, "local shell started");
+    tracing::info!(
+        source = "terminal",
+        code = "shell-started",
+        shell = ?program,
+        "local shell started"
+    );
     // The child owns the slave now; drop our handle so EOF propagates on exit.
     drop(pair.slave);
 
@@ -366,10 +376,14 @@ fn open_with_gate(
         }
         gate_reader.closed();
         // Reap the child so it doesn't linger as a zombie.
-        if let Some(status) = child.wait().log_debug("terminal", "reap the local shell") {
+        if let Some(status) = child
+            .wait()
+            .log_debug("terminal", "the local shell's exit was not collected")
+        {
             tracing::info!(
                 source = "terminal",
-                code = status.exit_code(),
+                code = "shell-exited",
+                exit = status.exit_code(),
                 "local shell exited"
             );
         }

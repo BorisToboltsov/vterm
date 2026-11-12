@@ -406,10 +406,7 @@ impl Journal {
     /// Something changed: mark it and wake the writer.
     fn changed(&self) {
         self.shared.dirty.store(true, Ordering::SeqCst);
-        self.wake
-            .locked()
-            .send(())
-            .log_debug("app", "answer the waiting side");
+        self.wake.locked().send(()).log_debug("app", "an answer");
     }
 
     fn days(&self) -> u32 {
@@ -482,7 +479,8 @@ fn write_behind(shared: &Shared, wake: &Receiver<()>, delay: Duration) {
 
 /// Tell every window the journal changed.
 fn announce(app: &AppHandle, summary: Summary) -> Summary {
-    app.emit(EVENT, summary).log_debug("app", "emit EVENT");
+    app.emit(EVENT, summary)
+        .log_debug("app", "the windows were not told the journal changed");
     summary
 }
 

@@ -50,6 +50,14 @@ vi.mock("../api/diag", () => ({
     events: [
       { at: Date.now(), level: "warn", source: "docker", server: "prod-db", text: "poll failed: exec channel failed", count: 4 },
       { at: Date.now() - 1, level: "error", source: "connection", text: "login failed", shown: true, fields: { method: "password" } },
+      {
+        at: Date.now() - 2,
+        level: "info",
+        source: "settings",
+        text: "diagnostics threshold changed: info -> warn (only warnings and errors are written from now on)",
+        code: "threshold",
+        fields: { from: "info", to: "warn" },
+      },
     ],
     more: true,
     counts: { level: { warn: 1, error: 1 }, source: { docker: 1, connection: 1 }, server: { "prod-db": 1 } },
@@ -154,7 +162,12 @@ describe("Settings → Journal", () => {
     expect(screen.getByTestId("settings-diag-list-count")).toHaveTextContent("×4");
     expect(screen.getByTestId("settings-diag-list-shown")).toBeInTheDocument();
     expect(screen.getByTestId("settings-diag-list-more")).toBeInTheDocument();
-    expect(screen.getByTestId("settings-diag-list-count-line")).toHaveTextContent("Shown: 2 of 40");
+    expect(screen.getByTestId("settings-diag-list-count-line")).toHaveTextContent("Shown: 3 of 40");
+    // A known kind is titled in the reader's language, its text under the title.
+    expect(screen.getByTestId("settings-diag-list-title")).toHaveTextContent(
+      "Diagnostics threshold changed: Information → Warnings",
+    );
+    expect(rows[2]).toHaveTextContent("diagnostics threshold changed: info -> warn");
     // What is written is said above the list and under the choice.
     expect(screen.getByTestId("settings-diag-list-writes")).toHaveTextContent("Information, warnings and errors are written.");
     expect(screen.getByTestId("diag-size")).toHaveTextContent("On disk: 2 KB of 25 MB");

@@ -10,6 +10,8 @@
 // startChat / runCommand.
 
 import { writtenByCall } from "../api/call";
+import { diag } from "../api/diag";
+import { aboutSession } from "./diag.svelte";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { aiChat, cancelAiChat, aiExec, writeToTerminal, annotateRecording } from "../api";
 import { buildChatRequest, type AiSettings, type AiExecMode, type AiUsage } from "../ai/ai";
@@ -498,7 +500,16 @@ async function maybeContinueDialog(c: SessionChat, msgIdx: number, opts: StartCh
   }
   c.dialogRunning = true;
   // Confirm each step in dialogConfirm; always confirm an obviously destructive one.
-  if (execMode === "dialogConfirm" || isDangerousCommand(cmd, settings.ai.dangerousPatterns)) {
+  const dangerous = isDangerousCommand(cmd, settings.ai.dangerousPatterns);
+  if (dangerous) {
+    // A safeguard caught it (principle 7): said, without the command — it is the
+    // model's answer, content, kept by the chat and the recording.
+    diag.warn("ai", "the assistant proposed a command on the deny-list: held for confirmation", undefined, {
+      ...aboutSession(opts.sessionId),
+      code: "deny-list",
+    });
+  }
+  if (execMode === "dialogConfirm" || dangerous) {
     c.pending = { command: cmd, opts };
     return;
   }
@@ -528,12 +539,17 @@ async function runDialogStep(c: SessionChat, command: string, opts: StartChatOpt
 export function confirmDialogStep(sessionId: string | undefined): void {
   const c = getChat(sessionId);
   const p = c.pending;
-  if (p) void runDialogStep(c, p.command, p.opts);
+  if (!p) return;
+  diag.info("ai", "assistant step confirmed by the user", undefined, { ...aboutSession(sessionId), code: "step-confirmed" });
+  void runDialogStep(c, p.command, p.opts);
 }
 
 /** Skip the pending dialog command and end the loop (the "Skip" control). */
 export function skipDialogStep(sessionId: string | undefined): void {
   const c = getChat(sessionId);
+  if (c.pending) {
+    diag.info("ai", "assistant step skipped by the user", undefined, { ...aboutSession(sessionId), code: "step-skipped" });
+  }
   c.pending = null;
   c.dialogRunning = false;
 }

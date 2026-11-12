@@ -451,14 +451,16 @@ impl End {
     async fn mkdir(&self, dir: &str) {
         match self {
             End::Local => {
-                tokio::fs::create_dir_all(dir)
-                    .await
-                    .log_debug("transfer", "create the destination folder");
+                tokio::fs::create_dir_all(dir).await.log_debug(
+                    "transfer",
+                    "the destination folder was not created (the copy says why)",
+                );
             }
             End::Remote(s) => {
-                s.create_dir(dir)
-                    .await
-                    .log_debug("transfer", "create the destination folder");
+                s.create_dir(dir).await.log_debug(
+                    "transfer",
+                    "the destination folder was not created (the copy says why)",
+                );
             }
         }
     }
@@ -521,12 +523,12 @@ impl End {
             End::Local => {
                 tokio::fs::remove_file(path)
                     .await
-                    .log_debug("transfer", "remove the file");
+                    .log_debug("transfer", "a partial copy was not removed");
             }
             End::Remote(s) => {
                 s.remove_file(path)
                     .await
-                    .log_debug("transfer", "remove the file");
+                    .log_debug("transfer", "a partial copy was not removed");
             }
         }
     }
@@ -1004,7 +1006,7 @@ pub(crate) fn send(app: &AppHandle, view: &JobView, origin: &str) {
     let windows = app.state::<crate::appwin::Windows>();
     for label in audience(view, origin, |session| windows.owner_of(session)) {
         app.emit_to(label.as_str(), EVENT, view)
-            .log_debug("transfer", "tell a window about a transfer job");
+            .log_debug("transfer", "a window was not told about a transfer");
     }
 }
 
@@ -1028,6 +1030,7 @@ pub async fn run(
     let started = std::time::Instant::now();
     tracing::info!(
         source = "transfer",
+        code = "transfer-started",
         job = %spec.id,
         items = spec.items.len(),
         resumed = resumed.is_some(),
@@ -1122,24 +1125,37 @@ pub async fn run(
 
 /// How a job's end is written: a failure the user must look at is a warning,
 /// a stop of theirs or a finished job information.
-fn end_verdict(done: &JobView) -> (crate::diag::Level, &'static str) {
+fn end_verdict(done: &JobView) -> (crate::diag::Level, &'static str, &'static str) {
     use crate::diag::Level;
     match done.state {
-        State::Done if done.failed == 0 => (Level::Info, "transfer done"),
-        State::Done | State::Failed => (Level::Warn, "transfer ended with failed files"),
-        State::Interrupted => (Level::Warn, "transfer cut off by its session"),
-        State::Cancelled => (Level::Info, "transfer stopped"),
-        State::Queued | State::Running => (Level::Warn, "transfer ended unfinished"),
+        State::Done if done.failed == 0 => (Level::Info, "transfer done", "transfer-done"),
+        State::Done | State::Failed => (
+            Level::Warn,
+            "transfer ended with failed files",
+            "transfer-failed",
+        ),
+        State::Interrupted => (
+            Level::Warn,
+            "transfer cut off by its session",
+            "transfer-cut",
+        ),
+        State::Cancelled => (Level::Info, "transfer stopped", "transfer-stopped"),
+        State::Queued | State::Running => (
+            Level::Warn,
+            "transfer ended unfinished",
+            "transfer-unfinished",
+        ),
     }
 }
 
 /// The end of a job, as the diagnostics keep it.
 fn note_end(spec: &Spec, done: &JobView, ms: u64) {
-    let (level, what) = end_verdict(done);
+    let (level, what, code) = end_verdict(done);
     let error = done.error.as_deref().unwrap_or("");
     match level {
         crate::diag::Level::Warn => tracing::warn!(
             source = "transfer",
+            code,
             job = %spec.id,
             bytes = done.transferred,
             files = done.file_count,
@@ -1151,6 +1167,7 @@ fn note_end(spec: &Spec, done: &JobView, ms: u64) {
         ),
         _ => tracing::info!(
             source = "transfer",
+            code,
             job = %spec.id,
             bytes = done.transferred,
             files = done.file_count,

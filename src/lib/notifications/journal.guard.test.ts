@@ -273,7 +273,7 @@ describe("journal guard — catches what it exists for", () => {
     ]);
     const aloud = mutate(
       s.k8s,
-      'diag.warn("k8s", `poll failed: ${text}`, undefined, aboutSession(sessionId));',
+      'diag.warn("k8s", `poll failed: ${text}`, undefined, { ...aboutSession(sessionId), code: "poll-failed" });',
       'notifyError(text, { source: "k8s", sessionId });',
     );
     expect(pollViolations(aloud, "k8s")).toEqual(["k8s says a failed read aloud, not to the diagnostics"]);

@@ -120,11 +120,11 @@ export function startDiag(main: boolean): () => void {
 
   const onError = (e: ErrorEvent) => {
     const at = e.filename ? `${e.filename}:${e.lineno}:${e.colno}` : undefined;
-    diag.error("app", `uncaught error: ${errorText(e.error ?? e.message)}`, { at, stack: stackOf(e.error) });
+    diag.error("app", `uncaught error: ${errorText(e.error ?? e.message)}`, { at, stack: stackOf(e.error) }, { code: "uncaught-error" });
     tellInternalError();
   };
   const onRejection = (e: PromiseRejectionEvent) => {
-    diag.error("app", `unhandled rejection: ${errorText(e.reason)}`, { stack: stackOf(e.reason) });
+    diag.error("app", `unhandled rejection: ${errorText(e.reason)}`, { stack: stackOf(e.reason) }, { code: "unhandled-rejection" });
     tellInternalError();
   };
   const onHide = () => flushDiag();

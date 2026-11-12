@@ -99,7 +99,12 @@ impl OutAnswer {
         if why == Declined::NotTaken {
             tracing::debug!(source = "files", "drag out: the system did not take it");
         } else {
-            tracing::info!(source = "files", why = ?why, "drag out refused");
+            tracing::info!(
+                source = "files",
+                code = "dragout-refused",
+                why = ?why,
+                "drag out refused"
+            );
         }
         Self {
             taken: false,
@@ -573,7 +578,11 @@ pub async fn drag_out_begin(
     app.run_on_main_thread(move || begin(&handle, &source, spec, answer))
         .map_err(|e| crate::error::AppError::Message(format!("drag out: {e}")))?;
     Ok(if began.await.unwrap_or(false) {
-        tracing::info!(source = "files", "drag out: files handed to the system");
+        tracing::info!(
+            source = "files",
+            code = "dragout-taken",
+            "drag out: files handed to the system"
+        );
         OutAnswer::TAKEN
     } else {
         OutAnswer::declined(Declined::NotTaken)
@@ -591,7 +600,7 @@ fn begin(app: &AppHandle, window: &WebviewWindow, spec: OutSpec, answer: Began) 
     crate::dragghost::hide(app);
     answer
         .send(macos::begin(app, window, spec))
-        .log_unheard("files", "answer the waiting side");
+        .log_unheard("files", "the answer about dragging files out");
 }
 
 #[cfg(windows)]
@@ -601,7 +610,7 @@ fn begin(app: &AppHandle, window: &WebviewWindow, spec: OutSpec, answer: Began) 
     windows::begin(feed, move |began| {
         answer
             .send(began)
-            .log_unheard("files", "say whether the system took the drag");
+            .log_unheard("files", "the answer whether the system took the drag");
     });
 }
 
@@ -609,7 +618,7 @@ fn begin(app: &AppHandle, window: &WebviewWindow, spec: OutSpec, answer: Began) 
 fn begin(_app: &AppHandle, _window: &WebviewWindow, _spec: OutSpec, answer: Began) {
     answer
         .send(false)
-        .log_unheard("files", "say the system takes no drag here");
+        .log_unheard("files", "the answer that this system takes no drag");
 }
 
 #[cfg(test)]

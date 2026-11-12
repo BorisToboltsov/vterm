@@ -217,7 +217,7 @@ pub async fn connect_session(
     let ms = started.elapsed().as_millis() as u64;
     let session = match connected {
         Ok(session) => {
-            tracing::info!(source = "connection", ms, "connected");
+            tracing::info!(source = "connection", code = "connected", ms, "connected");
             session
         }
         Err(e) => {
@@ -226,9 +226,19 @@ pub async fn connect_session(
                 e,
                 AppError::AuthRejected | AppError::AuthCancelled | AppError::ProxyAuthRejected
             ) {
-                tracing::info!(source = "connection", ms, "login refused: {e}");
+                tracing::info!(
+                    source = "connection",
+                    code = "login-refused",
+                    ms,
+                    "login refused: {e}"
+                );
             } else {
-                tracing::warn!(source = "connection", ms, "connect failed: {e}");
+                tracing::warn!(
+                    source = "connection",
+                    code = "connect-failed",
+                    ms,
+                    "connect failed: {e}"
+                );
             }
             return Err(e);
         }

@@ -58,12 +58,12 @@
       tauriVersion = await getTauriVersion();
     } catch (e) {
       /* not running under Tauri (e.g. plain `pnpm dev`) */
-      swallowed("app", "read the Tauri version", e);
+      swallowed("app", "the Tauri version is not known", e);
     }
   });
 
   function ext(url: string) {
-    openUrl(url).catch(swallow("app", "open a link", "warn"));
+    openUrl(url).catch(swallow("app", "the link was not opened", "warn"));
   }
 
   // [label message-key, key combo, optional combo message-key]. Key combos that

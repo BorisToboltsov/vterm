@@ -14,13 +14,16 @@
 //     errors too (ADR 0063, stage 2).
 //  6. The mask is one: the shared examples hold `redactSecrets` and the
 //     writer's mask (`diag/mask.rs`) alike.
+//  7. Every kind of event the backend or a window writes (`code`) is one the
+//     list titles — and every title has an event that wears it.
 //
 // A check is a function over the source that names what it found; each is shown
 // catching its own violation below.
-import { readFileSync } from "node:fs";
+import { readdirSync, readFileSync, statSync } from "node:fs";
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { redactSecrets } from "../ai/redact";
-import { DEFAULT_DIAG_SIZE_MB, DEFAULT_THRESHOLD, DIAG_SIZES_MB, DIAG_SOURCES } from "./diag";
+import { DEFAULT_DIAG_SIZE_MB, DEFAULT_THRESHOLD, DIAG_CODES, DIAG_SIZES_MB, DIAG_SOURCES } from "./diag";
 
 const read = (path: string): string => readFileSync(path, "utf8").replace(/\r\n/g, "\n");
 
@@ -106,6 +109,67 @@ function printViolations(s: Pick<Sources, "cargo" | "clippy">): string[] {
   return out;
 }
 
+/** Every file under `dir` with one of `exts`, tests left out — path and text. */
+function sourcesUnder(dir: string, exts: string[]): [string, string][] {
+  const out: [string, string][] = [];
+  for (const name of readdirSync(dir)) {
+    const path = join(dir, name);
+    if (statSync(path).isDirectory()) out.push(...sourcesUnder(path, exts));
+    else if (exts.some((e) => name.endsWith(e)) && !name.endsWith(".test.ts")) out.push([path, read(path)]);
+  }
+  return out;
+}
+
+/** The Rust before its tests: the gates' own samples are not events. */
+const rustCode = (src: string): string => src.split("\n#[cfg(test)]\nmod tests {")[0].split("\nmod gates {")[0];
+
+/** The argument text of every call that starts at a match of `head`. */
+function callArgs(text: string, head: RegExp): string[] {
+  const out: string[] = [];
+  for (const m of text.matchAll(head)) {
+    let depth = 1;
+    let i = (m.index ?? 0) + m[0].length;
+    const start = i;
+    for (; i < text.length && depth > 0; i++) {
+      if (text[i] === "(") depth++;
+      else if (text[i] === ")") depth--;
+    }
+    out.push(text.slice(start, i));
+  }
+  return out;
+}
+
+/**
+ * The codes written in `files`: in Rust `code = "x"` (tracing) and
+ * `code = Some("x"…)` (an event built by hand); in TypeScript `code: "x"` in a
+ * call of the facade.
+ */
+function codesWritten(files: [string, string][]): Set<string> {
+  const found = new Set<string>();
+  for (const [path, text] of files) {
+    const places = path.endsWith(".rs") ? [text] : callArgs(text, /\b(?:diag\.(?:error|warn|info|debug)|diagEvent)\(/g);
+    const shape = path.endsWith(".rs") ? /\bcode = (?:Some\()?"([a-z0-9-]+)"/g : /\bcode: "([a-z0-9-]+)"/g;
+    for (const place of places) for (const m of place.matchAll(shape)) found.add(m[1]);
+  }
+  return found;
+}
+
+function codeViolations(files: [string, string][], codes: readonly string[]): string[] {
+  const out: string[] = [];
+  const known = new Set(codes);
+  const written = codesWritten(files);
+  for (const c of written) if (!known.has(c)) out.push(`code "${c}" has no title`);
+  const all = files.map(([, t]) => t).join("\n");
+  for (const c of codes) if (!written.has(c) && !all.includes(`"${c}"`)) out.push(`title "${c}" is worn by no event`);
+  return out;
+}
+
+const eventSources = (): [string, string][] => [
+  ...sourcesUnder("src-tauri/src", [".rs"]).map(([p, t]): [string, string] => [p, rustCode(t)]),
+  ...sourcesUnder("src/lib", [".ts", ".svelte"]).filter(([p]) => !p.endsWith("diag/diag.ts") && !p.includes("/i18n/")),
+  ...sourcesUnder("src/routes", [".svelte"]),
+];
+
 const mutate = (src: string, from: string, to: string): string => {
   expect(src, `the guard's own fixture: ${from}`).toContain(from);
   return src.replace(from, to);
@@ -134,6 +198,10 @@ describe("diagnostics guard", () => {
 
   it("Rust prints nowhere outside its tests and drops no Result in silence", () => {
     expect(printViolations(s)).toEqual([]);
+  });
+
+  it("every kind of event written has a title, and every title an event", () => {
+    expect(codeViolations(eventSources(), DIAG_CODES)).toEqual([]);
   });
 
   it("the mask is one: the shared examples hold the frontend's", () => {
@@ -180,6 +248,15 @@ describe("diagnostics guard — catches what it exists for", () => {
   it("the diagnostics in the bell, or a layer missing", () => {
     expect(bellViolations({ ...s, bell: `${s.bell}\n<DiagList here="main" />` })).toEqual(["the bell's popover shows the diagnostics"]);
     expect(bellViolations({ ...s, settings: mutate(s.settings, "<DiagList", "<div") })).toEqual(["Settings → Journal lacks a layer"]);
+  });
+
+  it("a kind with no title, a title with no event", () => {
+    const files: [string, string][] = [["a.rs", 'tracing::info!(source = "app", code = "brand-new", "x");']];
+    expect(codeViolations(files, ["brand-new"])).toEqual([]);
+    expect(codeViolations(files, [])).toEqual(['code "brand-new" has no title']);
+    expect(codeViolations(files, ["brand-new", "gone"])).toEqual(['title "gone" is worn by no event']);
+    const facade: [string, string][] = [["b.ts", 'diag.info("ai", "x", undefined, { code: "deny-list" });']];
+    expect(codeViolations(facade, [])).toEqual(['code "deny-list" has no title']);
   });
 
   it("a print let through", () => {

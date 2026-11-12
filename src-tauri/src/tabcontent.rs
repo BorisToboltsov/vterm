@@ -107,11 +107,11 @@ pub fn save_in(dir: &Path, id: &str, content: &str) -> AppResult<()> {
         f.sync_all()
     })();
     if let Err(e) = written {
-        fs::remove_file(&tmp).log_debug("storage", "remove the temporary file");
+        fs::remove_file(&tmp).log_debug("storage", "a temporary settings file was not removed");
         return Err(AppError::Message(format!("write {}: {e}", tmp.display())));
     }
     if let Err(e) = fs::rename(&tmp, &path) {
-        fs::remove_file(&tmp).log_debug("storage", "remove the temporary file");
+        fs::remove_file(&tmp).log_debug("storage", "a temporary settings file was not removed");
         return Err(AppError::Message(format!(
             "rename onto {}: {e}",
             path.display()
@@ -133,7 +133,7 @@ pub fn load_in(dir: &Path, id: &str) -> Option<String> {
 /// Remove what is kept for these tabs.
 pub fn forget_in(dir: &Path, ids: &[String]) {
     for path in ids.iter().filter_map(|id| file_in(dir, id)) {
-        fs::remove_file(path).log_debug("storage", "remove the file");
+        fs::remove_file(path).log_debug("storage", "a settings file was not removed");
     }
 }
 
@@ -157,7 +157,7 @@ pub fn keep_only_in(dir: &Path, keep: &[String]) {
                 .is_some_and(|n| n.starts_with('.') && n.contains(".vterm-tmp-")),
         };
         if stale {
-            fs::remove_file(&path).log_debug("storage", "remove the file");
+            fs::remove_file(&path).log_debug("storage", "a settings file was not removed");
         }
     }
 }

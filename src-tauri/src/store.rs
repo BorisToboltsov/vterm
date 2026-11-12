@@ -6,7 +6,7 @@
 //!
 //! Passwords are never written here — they go to the OS keychain (Phase 2).
 
-use crate::diag::{Logged, Unheard};
+use crate::diag::Logged;
 use std::collections::HashMap;
 use std::fs::{self, File};
 use std::io::Write;
@@ -77,11 +77,11 @@ fn write_atomic(path: &Path, bytes: &[u8]) -> AppResult<()> {
         f.sync_all()
     })();
     if let Err(e) = written {
-        fs::remove_file(&tmp).log_debug("storage", "remove the temporary file");
+        fs::remove_file(&tmp).log_debug("storage", "a temporary settings file was not removed");
         return Err(format!("write {}: {e}", tmp.display()).into());
     }
     if let Err(e) = fs::rename(&tmp, path) {
-        fs::remove_file(&tmp).log_debug("storage", "remove the temporary file");
+        fs::remove_file(&tmp).log_debug("storage", "a temporary settings file was not removed");
         return Err(format!("rename onto {}: {e}", path.display()).into());
     }
     Ok(())
@@ -153,17 +153,19 @@ where
         Err(_) => {
             let dest = quarantine_path(path);
             let quarantined = fs::rename(path, &dest)
-                .log_warn("storage", "move the unreadable file aside")
+                .log_warn("storage", "the unreadable file was not moved aside")
                 .map(|()| dest.display().to_string());
             match &quarantined {
                 Some(to) => tracing::warn!(
                     source = "storage",
+                    code = "store-quarantined",
                     file = %path.display(),
                     quarantined = %to,
                     "store file did not parse: moved aside"
                 ),
                 None => tracing::error!(
                     source = "storage",
+                    code = "store-at-risk",
                     file = %path.display(),
                     "store file did not parse and could not be moved aside: its data is at risk"
                 ),
@@ -197,9 +199,12 @@ static CATALOG_CHANGED: std::sync::OnceLock<Box<dyn Fn() + Send + Sync>> =
 /// functions every mutation ends in, rather than in each of the commands: a
 /// command added later cannot forget to announce its change. Set once.
 pub fn on_catalog_change(hook: impl Fn() + Send + Sync + 'static) {
-    CATALOG_CHANGED
-        .set(Box::new(hook))
-        .log_unheard("storage", "set the catalog hook a second time");
+    if CATALOG_CHANGED.set(Box::new(hook)).is_err() {
+        tracing::debug!(
+            source = "storage",
+            "the server-list watcher was set already: the second one is not used"
+        );
+    }
 }
 
 fn catalog_changed() {
@@ -295,7 +300,7 @@ pub fn save_journal(entries: &[crate::journal::Entry]) -> AppResult<()> {
 /// Take the journal off the disk: the user does not keep it across launches.
 pub fn remove_journal() {
     if let Some(path) = journal_path() {
-        fs::remove_file(path).log_debug("storage", "remove the file");
+        fs::remove_file(path).log_debug("storage", "a settings file was not removed");
     }
 }
 
@@ -356,7 +361,10 @@ pub fn remember_host_key(id: &str, fingerprint: &str) {
     if let Ok(json) = serde_json::to_vec_pretty(&map) {
         // Best-effort by design (see doc comment), but still atomic: a crash here
         // must not truncate the trust store into "no host is known".
-        write_atomic(&path, &json).log_warn("storage", "write known_hosts");
+        write_atomic(&path, &json).log_warn(
+            "storage",
+            "the server's host key was not saved: it will be asked about again",
+        );
     }
 }
 
@@ -382,7 +390,10 @@ pub fn forget_host_key(id: &str) -> bool {
     }
     if let Some(path) = host_keys_path() {
         if let Ok(json) = serde_json::to_vec_pretty(&map) {
-            write_atomic(&path, &json).log_warn("storage", "write known_hosts");
+            write_atomic(&path, &json).log_warn(
+                "storage",
+                "the server's host key was not saved: it will be asked about again",
+            );
         }
     }
     removed

@@ -88,7 +88,7 @@
       localStorage.setItem(COLLAPSE_KEY, JSON.stringify(collapsedFolders));
     } catch (e) {
       /* non-fatal */
-      swallowed("servers", "keep the folded folders", e, "warn");
+      swallowed("servers", "the folded folders were not kept", e, "warn");
     }
   });
 
@@ -305,7 +305,7 @@
         listEl?.releasePointerCapture(event.pointerId);
       } catch (e) {
         /* already released */
-        swallowed("servers", "release the pointer", e);
+        swallowed("servers", "the pointer was not released", e);
       }
       if (kind === "server" && target !== null) {
         const server = servers.find((s) => s.id === id);

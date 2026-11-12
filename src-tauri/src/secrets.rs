@@ -31,6 +31,7 @@ fn read(service: &str, id: &str) -> Option<Zeroizing<String>> {
         Err(e) => {
             tracing::warn!(
                 source = "storage",
+                code = "keychain-failed",
                 service,
                 account = id,
                 "keychain read failed: {e}"
@@ -46,6 +47,7 @@ fn write(service: &str, id: &str, value: &str) -> AppResult<()> {
         .map_err(|e| {
             tracing::warn!(
                 source = "storage",
+                code = "keychain-failed",
                 service,
                 account = id,
                 "keychain write failed: {e}"
@@ -60,6 +62,7 @@ fn delete(service: &str, id: &str) -> AppResult<()> {
         Err(e) => {
             tracing::warn!(
                 source = "storage",
+                code = "keychain-failed",
                 service,
                 account = id,
                 "keychain delete failed: {e}"

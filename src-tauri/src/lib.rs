@@ -133,7 +133,12 @@ pub(crate) async fn end_session(app: &AppHandle, session_id: &str) {
     let had = state.sessions.lock().await.contains_key(session_id)
         || state.local_ptys.locked().contains_key(session_id);
     if had {
-        tracing::info!(source = "connection", sid = session_id, "session ended");
+        tracing::info!(
+            source = "connection",
+            code = "session-ended",
+            sid = session_id,
+            "session ended"
+        );
     }
     // A login still waiting on the user's answers (keyboard-interactive) ends
     // here too — otherwise closing the tab would leave it parked forever.
@@ -263,10 +268,14 @@ pub fn run() {
             // Files open in the main window — it owns "Open with" (ADR 0017).
             for path in file_args(&argv) {
                 app.emit_to(appwin::MAIN, "vterm://open-file", path)
-                    .log_debug("windows", "hand an opened file to the main window");
+                    .log_debug(
+                        "windows",
+                        "a file asked to open was not handed to the main window",
+                    );
             }
             if let Some(w) = app.get_webview_window(appwin::MAIN) {
-                w.set_focus().log_debug("windows", "window set focus");
+                w.set_focus()
+                    .log_debug("windows", "the window was not brought to the front");
             }
         }))
         .plugin(tauri_plugin_opener::init())
@@ -287,20 +296,27 @@ pub fn run() {
             let maximize = appwin::place_main(&win);
             win.show()?;
             if maximize {
-                win.maximize().log_debug("windows", "window maximize");
+                win.maximize()
+                    .log_debug("windows", "the window was not maximized");
             }
             // Any write of the server list or the folders reaches every window:
             // each keeps its own copy, and `prod` / `noAi` must not drift apart.
             diag::attach(app.handle().clone());
             match tauri::webview_version() {
-                Ok(v) => tracing::info!(source = "app", webview = %v, "webview ready"),
+                Ok(v) => tracing::info!(
+                    source = "app",
+                    code = "webview-ready",
+                    webview = %v,
+                    "webview ready"
+                ),
                 Err(e) => tracing::warn!(source = "app", "webview version unknown: {e}"),
             }
             let handle = app.handle().clone();
             store::on_catalog_change(move || {
-                handle
-                    .emit("window://catalog", ())
-                    .log_debug("windows", "emit window://catalog");
+                handle.emit("window://catalog", ()).log_debug(
+                    "windows",
+                    "the windows were not told the server list changed",
+                );
             });
             Ok(())
         })
@@ -540,7 +556,10 @@ pub fn run() {
                 for p in paths {
                     app_handle
                         .emit_to(appwin::MAIN, "vterm://open-file", p)
-                        .log_debug("windows", "hand an opened file to the main window");
+                        .log_debug(
+                            "windows",
+                            "a file asked to open was not handed to the main window",
+                        );
                 }
             }
         }

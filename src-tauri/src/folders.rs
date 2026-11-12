@@ -134,7 +134,10 @@ pub async fn delete_folder_with_servers(path: String, state: State<'_, AppState>
     // Best-effort keychain wipe + live-session teardown for each removed server.
     let mut sessions = state.sessions.lock().await;
     for id in &removed_ids {
-        secrets::delete_all(id).log_warn("servers", "forget the server's secrets");
+        secrets::delete_all(id).log_warn(
+            "servers",
+            "the server's saved passwords were not removed from the keychain",
+        );
         sessions.remove(id);
     }
     Ok(())

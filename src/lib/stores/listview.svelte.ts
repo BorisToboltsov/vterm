@@ -51,14 +51,14 @@ function migrate(): void {
     if (typeof raw === "object" && raw !== null && !Array.isArray(raw)) stored = raw as Record<string, unknown>;
   } catch (e) {
     /* unreadable — nothing to take over */
-    swallowed("settings", "read the saved list orders", e);
+    swallowed("settings", "the saved list orders did not read: the defaults are used", e);
   }
   try {
     const legacy: unknown = JSON.parse(localStorage.getItem(LEGACY_FILES_KEY) ?? "null");
     if (!("files" in stored) && legacy !== null) stored = { ...stored, files: { sort: legacy, group: "none" } };
   } catch (e) {
     /* the old entry unreadable — the default order then */
-    swallowed("settings", "read the old order of the files", e);
+    swallowed("settings", "the old file order did not read: the default is used", e);
   }
   const kept = sanitizeStoredOrders(stored);
   if (Object.keys(kept).length > 0) settings.listOrders = { ...kept, ...settings.listOrders };
@@ -67,7 +67,7 @@ function migrate(): void {
     localStorage.removeItem(LEGACY_FILES_KEY);
   } catch (e) {
     /* storage unavailable — nothing was read from it either */
-    swallowed("settings", "remove the old order of the files", e);
+    swallowed("settings", "the old file order was not removed", e);
   }
 }
 

@@ -190,7 +190,7 @@
       setTimeout(() => (copied = false), 1500);
     } catch (e) {
       /* clipboard blocked — the field is selectable as a fallback */
-      swallowed("app", "copy to the clipboard", e);
+      swallowed("app", "the text was not copied to the clipboard", e);
     }
   }
 

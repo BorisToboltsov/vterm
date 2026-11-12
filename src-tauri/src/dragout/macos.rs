@@ -148,7 +148,7 @@ define_class!(
                 let fetched = super::fetch(&app, &origin, &spec, &item, &dest).await;
                 // The block is AppKit's: it is called where it was given.
                 app.run_on_main_thread(move || done.call(fetched.is_ok()))
-                    .log_debug("files", "finish the promise on the main thread");
+                    .log_debug("files", "the promised file was not finished");
             });
         }
 

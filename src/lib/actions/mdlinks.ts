@@ -49,11 +49,11 @@ function handle(e: MouseEvent) {
       }
     } catch (e) {
       /* not a resolvable anchor — stay inert */
-      swallowed("app", "follow an anchor", e);
+      swallowed("app", "the link inside the page was not followed", e);
     }
     return;
   }
-  if (HTTP.test(href) || MAILTO.test(href)) openUrl(href).catch(swallow("app", "open a link", "warn"));
+  if (HTTP.test(href) || MAILTO.test(href)) openUrl(href).catch(swallow("app", "the link was not opened", "warn"));
   // Anything else (relative repo links in the bundled manual, or a scheme that
   // slipped past render-time validation) is deliberately inert.
 }

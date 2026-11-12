@@ -1500,7 +1500,7 @@
         unlisteners.push(u);
         return armCloseGuard();
       })
-      .catch(swallow("windows", "arm the close guard"));
+      .catch(swallow("windows", "the close question was not armed: closing will not ask"));
     // This window's SFTP progress feed → shared store (read by SFTP panel + status
     // bar), plus the sync-run store (the dialog's per-row bars; ignores non-sync ids).
     listenHere<SftpProgress>("sftp://progress", (e) => {
@@ -1519,7 +1519,7 @@
         unlisteners.push(u);
         return refreshTransfers();
       })
-      .catch(swallow("transfer", "hear the transfer jobs"));
+      .catch(swallow("transfer", "transfers will not be heard in this window"));
     // Sync compare counters (files hashed per side) → the session's sync job.
     listenHere<{ id: string; files: number }>("sync://scan", (e) =>
       applyScanProgress(e.payload),
@@ -1566,7 +1566,7 @@
         unlisteners.push(...us);
         windows.listening();
       })
-      .catch(swallow("windows", "hear the other windows"));
+      .catch(swallow("windows", "the other windows will not be heard"));
     if (isMainWindow) {
       // A config file that failed to parse was quarantined during the backend's
       // startup load. Reported without a TTL: "your server list is gone and here
@@ -1603,10 +1603,10 @@
       getCurrentWebview()
         .onDragDropEvent((ev) => fileDrags.heardDesktop(ev.payload))
         .then((u) => unlisteners.push(u))
-        .catch(swallow("files", "hear files dropped on the window"));
+        .catch(swallow("files", "files dropped on the window will not be heard"));
     } catch (e) {
       /* no webview (browser preview) — nothing is dragged in */
-      swallowed("files", "hear files dropped on the window", e);
+      swallowed("files", "files dropped on the window will not be heard", e);
     }
     // Global Cmd/Ctrl + V/C/X/A for every text input (capture phase, so it works
     // even inside modals and before any field-local handler). See clipboardKeys.ts.

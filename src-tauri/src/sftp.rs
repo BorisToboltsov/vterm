@@ -420,7 +420,7 @@ pub async fn write_text(sftp: &SftpSession, req: &TextWrite<'_>) -> AppResult<Wr
             if let Err(e) = sftp.set_metadata(bak.clone(), chmod_attrs(perm)).await {
                 sftp.remove_file(bak)
                     .await
-                    .log_debug("files", "remove the backup copy");
+                    .log_debug("files", "the backup copy was not removed");
                 return Err(AppError::BackupFailed(format!(
                     "could not restrict {path}.bak to the original permissions: {e}"
                 )));
@@ -442,19 +442,20 @@ pub async fn write_text(sftp: &SftpSession, req: &TextWrite<'_>) -> AppResult<Wr
     if let Some(perm) = mode {
         sftp.set_metadata(tmp.clone(), chmod_attrs(perm))
             .await
-            .log_warn("files", "set the mode of the temporary file");
+            .log_warn("files", "the file's permissions were not applied");
     }
     // SSH_FXP_RENAME fails if the target exists (OpenSSH), so drop it first.
     // This is the only non-atomic window; the temp already holds the full content.
     if existing.is_some() {
         sftp.remove_file(path)
             .await
-            .log_debug("files", "remove the file");
+            .log_debug("files", "the file was not removed");
     }
     if let Err(e) = sftp.rename(tmp.clone(), path).await {
-        sftp.remove_file(tmp)
-            .await
-            .log_debug("files", "remove the temporary file");
+        sftp.remove_file(tmp).await.log_debug(
+            "files",
+            "the temporary file was not removed and stays beside the target",
+        );
         return Err(format!("rename onto {path}: {e}").into());
     }
 
@@ -662,9 +663,10 @@ pub(crate) async fn upload_staged(
     drop(dst);
     if let Err(e) = copied {
         if told.is_none() {
-            sftp.remove_file(tmp)
-                .await
-                .log_debug("files", "remove the temporary file");
+            sftp.remove_file(tmp).await.log_debug(
+                "files",
+                "the temporary file was not removed and stays beside the target",
+            );
         }
         return Err(e);
     }
@@ -694,19 +696,21 @@ async fn commit_remote(
     if let Some(perm) = mode {
         sftp.set_metadata(tmp.clone(), chmod_attrs(perm))
             .await
-            .log_warn("files", "set the mode of the temporary file");
+            .log_warn("files", "the file's permissions were not applied");
     }
     // SSH_FXP_RENAME fails onto an existing target (OpenSSH): drop it first. The
     // only non-atomic window — the temp already holds the full content.
     if replaces {
-        sftp.remove_file(target)
-            .await
-            .log_debug("files", "remove target");
+        sftp.remove_file(target).await.log_debug(
+            "files",
+            "the old file was not removed before the new one took its place",
+        );
     }
     if let Err(e) = sftp.rename(tmp.clone(), target).await {
-        sftp.remove_file(tmp)
-            .await
-            .log_debug("files", "remove the temporary file");
+        sftp.remove_file(tmp).await.log_debug(
+            "files",
+            "the temporary file was not removed and stays beside the target",
+        );
         return Err(format!("rename onto {target}: {e}").into());
     }
     Ok(())
@@ -783,9 +787,10 @@ pub(crate) async fn relay_staged(
     drop(writer);
     if let Err(e) = copied {
         if told.is_none() {
-            dst.remove_file(tmp)
-                .await
-                .log_debug("files", "remove the temporary file");
+            dst.remove_file(tmp).await.log_debug(
+                "files",
+                "the temporary file was not removed and stays beside the target",
+            );
         }
         return Err(e);
     }
@@ -877,9 +882,10 @@ pub(crate) async fn download_file(
     drop(dst);
     if let Err(e) = copied {
         if told.is_none() {
-            tokio::fs::remove_file(&tmp)
-                .await
-                .log_debug("files", "remove the temporary file");
+            tokio::fs::remove_file(&tmp).await.log_debug(
+                "files",
+                "the temporary file was not removed and stays beside the target",
+            );
         }
         return Err(e);
     }
@@ -889,7 +895,7 @@ pub(crate) async fn download_file(
     if let Ok(meta) = tokio::fs::metadata(local).await {
         tokio::fs::set_permissions(&tmp, meta.permissions())
             .await
-            .log_warn("files", "set the mode of the temporary file");
+            .log_warn("files", "the file's permissions were not applied");
     } else {
         give_mode(
             std::path::Path::new(&tmp),
@@ -898,9 +904,10 @@ pub(crate) async fn download_file(
         .await;
     }
     if let Err(e) = tokio::fs::rename(&tmp, local).await {
-        tokio::fs::remove_file(&tmp)
-            .await
-            .log_debug("files", "remove the temporary file");
+        tokio::fs::remove_file(&tmp).await.log_debug(
+            "files",
+            "the temporary file was not removed and stays beside the target",
+        );
         return Err(format!("rename onto {local}: {e}").into());
     }
     Ok(())
@@ -922,9 +929,10 @@ pub(crate) async fn make_symlink(sftp: &SftpSession, target: &str, link: &str) -
         return Ok(());
     }
     if !there_before && sftp.read_link(target).await.ok().as_deref() == Some(link) {
-        sftp.remove_file(target)
-            .await
-            .log_debug("files", "remove target");
+        sftp.remove_file(target).await.log_debug(
+            "files",
+            "the old file was not removed before the new one took its place",
+        );
     }
     Err(format!("symlink {link}: the server did not make the link that was asked for").into())
 }
@@ -937,7 +945,7 @@ async fn give_mode(path: &std::path::Path, mode: Option<u32>) {
         use std::os::unix::fs::PermissionsExt;
         tokio::fs::set_permissions(path, std::fs::Permissions::from_mode(bits & 0o777))
             .await
-            .log_warn("files", "set the mode of path");
+            .log_warn("files", "the file's permissions were not applied");
     }
     #[cfg(not(unix))]
     let _ = (path, mode);

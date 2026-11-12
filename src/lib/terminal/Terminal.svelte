@@ -836,7 +836,7 @@
         webgl = addon;
       } catch (e) {
         /* no WebGL — xterm keeps its default renderer */
-        swallowed("terminal", "turn on WebGL", e);
+        swallowed("terminal", "WebGL is off: the terminal draws without it", e);
       }
     }
 
@@ -962,7 +962,7 @@
         onresize?.(term.cols, term.rows);
       } catch (e) {
         /* container not measurable yet */
-        swallowed("terminal", "fit the terminal", e);
+        swallowed("terminal", "the terminal was not fitted to its area", e);
       }
       const time = new Date(replay.savedAt).toLocaleString(settings.language);
       term.write(separatorLine(t("restore.previousOutput", { time })));
@@ -1009,7 +1009,7 @@
         onresize?.(term.cols, term.rows);
       } catch (e) {
         /* container not measurable yet */
-        swallowed("terminal", "fit the terminal", e);
+        swallowed("terminal", "the terminal was not fitted to its area", e);
       }
     }, 80);
     observer = new ResizeObserver(() => refit());
@@ -1095,7 +1095,7 @@
       osc.onended = () => ctx.close();
     } catch (e) {
       /* audio unavailable */
-      swallowed("terminal", "ring the bell", e);
+      swallowed("terminal", "the bell did not ring", e);
     }
   }
 
@@ -1109,7 +1109,7 @@
       onresize?.(term.cols, term.rows);
     } catch (e) {
       /* not measurable yet */
-      swallowed("terminal", "fit the terminal", e);
+      swallowed("terminal", "the terminal was not fitted to its area", e);
     }
   }
 
@@ -1130,7 +1130,7 @@
     // Bundled fonts load asynchronously — once the chosen face is ready,
     // re-measure so xterm doesn't stay on the fallback glyphs.
     if (typeof document !== "undefined" && document.fonts) {
-      document.fonts.load(`${fontSize}px ${fontFamily}`).then(applyFontAndFit).catch(swallow("terminal", "load the terminal's font"));
+      document.fonts.load(`${fontSize}px ${fontFamily}`).then(applyFontAndFit).catch(swallow("terminal", "the terminal's font did not load: another one is used"));
     }
   });
 

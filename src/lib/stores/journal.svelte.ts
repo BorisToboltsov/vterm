@@ -80,7 +80,7 @@ export function startJournal(): () => void {
   let stopped = false;
   listen<JournalSummary>(JOURNAL_EVENT, (e) => heard(e.payload))
     .then((un) => (stopped ? un() : (stop = un)))
-    .catch(swallow("app", "listen to the journal"));
+    .catch(swallow("app", "the journal will not be heard in this window"));
   journalSummary().then(heard).catch(writtenByCall);
   return () => {
     stopped = true;

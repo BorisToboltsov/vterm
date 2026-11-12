@@ -98,7 +98,7 @@ export function replaceSelection(node: Editable, text: string): void {
       node.setSelectionRange(caret, caret);
     } catch (e) {
       /* selection not supported (e.g. number input) — value is still set */
-      swallowed("app", "keep the caret after a paste", e);
+      swallowed("app", "the caret did not stay after a paste", e);
     }
   } else {
     node.value = text;

@@ -138,7 +138,7 @@ function stopListening(): void {
       candidate.el.releasePointerCapture(candidate.pointerId);
     } catch (e) {
       /* already released */
-      swallowed("app", "release the pointer", e);
+      swallowed("app", "the pointer was not released", e);
     }
   }
   candidate = null;
@@ -153,7 +153,7 @@ function onMove(e: PointerEvent): void {
       candidate.el.setPointerCapture(candidate.pointerId);
     } catch (e) {
       /* the element may be gone; window listeners still see the pointer */
-      swallowed("app", "capture the pointer", e);
+      swallowed("app", "the pointer was not captured: the drag follows it from the window", e);
     }
   }
   dockDrag.x = e.clientX - candidate.grabX;

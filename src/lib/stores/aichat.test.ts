@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { captureDiag } from "../api/diag";
 import type { AiChatRequest, AiSettings } from "../ai/ai";
 
 // Mock the backend + event bus so startChat/runCommand can be driven in tests.
@@ -308,12 +309,22 @@ describe("dialog loop (17.8)", () => {
   });
 
   it("auto dialog still confirms an obviously dangerous command", async () => {
+    const heard = captureDiag();
     await startChat(opts({ execMode: "dialog" }));
     emit("out", "```bash\nrm -rf /data\n```");
     emit("done");
     await flush();
     expect(getChat("s1").pending?.command).toContain("rm -rf");
     expect(aiExec).not.toHaveBeenCalled();
+    // The safeguard is a warning of the diagnostics — without the command: it is the model's answer.
+    skipDialogStep("s1");
+    const events = heard.events();
+    expect(events.map((e) => [e.level, e.text])).toEqual([
+      ["warn", "the assistant proposed a command on the deny-list: held for confirmation"],
+      ["info", "assistant step skipped by the user"],
+    ]);
+    expect(JSON.stringify(events)).not.toContain("rm -rf");
+    heard.stop();
   });
 
   it("does not loop on a prod server", async () => {

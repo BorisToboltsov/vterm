@@ -16,7 +16,7 @@ export async function writeClipboard(text: string): Promise<void> {
     return;
   } catch (e) {
     /* fall through to the legacy path */
-    swallowed("app", "copy through the clipboard API", e);
+    swallowed("app", "the clipboard API did not copy: the old way is tried", e);
   }
   try {
     const ta = document.createElement("textarea");
@@ -29,7 +29,7 @@ export async function writeClipboard(text: string): Promise<void> {
     document.body.removeChild(ta);
   } catch (e) {
     /* clipboard unavailable — give up silently */
-    swallowed("app", "copy to the clipboard", e, "warn");
+    swallowed("app", "the text was not copied to the clipboard", e, "warn");
   }
 }
 

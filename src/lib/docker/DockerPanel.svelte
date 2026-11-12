@@ -513,7 +513,7 @@
         }
       } catch (e) {
         /* facts are an enrichment — the panel works without them */
-        swallowed("docker", "read the containers' facts", e);
+        swallowed("docker", "the containers' details were not read", e);
       }
     }
     factsCache = next;
@@ -546,7 +546,7 @@
       }
     } catch (e) {
       /* subnets are an enrichment */
-      swallowed("docker", "read the networks' subnets", e);
+      swallowed("docker", "the networks' subnets were not read", e);
     }
   }
 
@@ -627,7 +627,7 @@
         const [ps, st, ev] = await Promise.all([
           runQuery(psArgs()),
           runQuery(statsArgs()),
-          runQuery(eventsArgs()).catch(orNull("docker", "read the events")),
+          runQuery(eventsArgs()).catch(orNull("docker", "the events were not read")),
         ]);
         containers = parsePs(ps.stdout);
         // Events are an enrichment: a docker that refuses them leaves the last answer.
@@ -673,7 +673,10 @@
       }
       if (pollFailure) {
         const failures = pollFailure.count;
-        diag.info("docker", `poll back after ${failures} failures`, { failures }, aboutSession(sessionId));
+        diag.info("docker", `poll back after ${failures} failures`, { failures }, {
+          ...aboutSession(sessionId),
+          code: "poll-back",
+        });
       }
       pollFailure = null;
     } catch (e) {
@@ -694,7 +697,7 @@
   function failedRead(text: string) {
     const { failure, news } = pollFailed(pollFailure, text, Date.now());
     pollFailure = failure;
-    if (news) diag.warn("docker", `poll failed: ${text}`, undefined, aboutSession(sessionId));
+    if (news) diag.warn("docker", `poll failed: ${text}`, undefined, { ...aboutSession(sessionId), code: "poll-failed" });
   }
 
   // ── Actions ────────────────────────────────────────────────────────────────

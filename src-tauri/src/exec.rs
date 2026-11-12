@@ -131,8 +131,12 @@ pub async fn run_local(cmd: Local<'_>, timeout_secs: u64) -> AppResult<ExecOutpu
         }
     };
     if let (Some(input), Some(mut sink)) = (cmd.stdin, child.stdin.take()) {
-        sink.write_all(input).await.log_debug("app", "write stdin");
-        sink.shutdown().await.log_debug("app", "close stdin"); // EOF, so `--password-stdin` proceeds
+        sink.write_all(input)
+            .await
+            .log_debug("app", "the input was not written to the program");
+        sink.shutdown()
+            .await
+            .log_debug("app", "the program's input was not closed"); // EOF, so `--password-stdin` proceeds
     }
     let fut = child.wait_with_output();
     let output = match tokio::time::timeout(Duration::from_secs(timeout_secs), fut).await {
@@ -178,6 +182,7 @@ pub fn policy(label: &'static str, args: &[String], verdict: Result<(), String>)
     verdict.map_err(|why| {
         tracing::warn!(
             source = source_of(label),
+            code = "policy-refused",
             argv = %args.join(" "),
             "{label} argv refused by its policy: {why}"
         );
