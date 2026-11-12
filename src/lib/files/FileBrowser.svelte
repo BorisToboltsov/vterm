@@ -83,6 +83,7 @@
     takeMoveRequest,
   } from "../stores/filecopy.svelte";
   import { targetsFrom } from "./copyto";
+  import { MARK_DOT, type Mark } from "./groupupload";
   import { t } from "../i18n";
 
   let {
@@ -133,6 +134,7 @@
     /** Extra footer content, e.g. the SFTP transfers list. */
     footer,
     footerCount = 0,
+    rowMark,
   }: {
     adapter: FileBrowserAdapter;
     width?: number;
@@ -169,6 +171,12 @@
      * something to show.
      */
     footerCount?: number;
+    /**
+     * The folder compared with the synchronous-input group's (ADR 0064): how
+     * each other server's copy of a row compares — dots beside its name. Null —
+     * no comparison for this folder.
+     */
+    rowMark?: (entry: FileEntry) => { label: string; mark: Mark }[] | null;
   } = $props();
 
   let cwd = $state("");
@@ -1177,6 +1185,14 @@
     return key ? `color:${activeTerminalTheme()[key]}` : "";
   }
 
+  /** What a comparison mark says, beside the server's name (ADR 0064). */
+  const MARK_LABEL = {
+    same: "groupUpload.markSame",
+    differs: "groupUpload.markDiffers",
+    absent: "groupUpload.markAbsent",
+    unknown: "groupUpload.markUnknown",
+  } as const satisfies Record<Mark, string>;
+
   function fmtSize(n: number): string {
     if (n < 1024) return `${n} B`;
     const units = ["KB", "MB", "GB", "TB"];
@@ -1806,6 +1822,20 @@
                           <div class="flex min-w-0 flex-1 items-center gap-2 @wide:w-[var(--c-name)] @wide:flex-initial @wide:border-r @wide:border-edge/40 @wide:pr-2">
                             <Icon name={fileIconName(entry)} size={15} class="shrink-0 text-muted" />
                             <span class="truncate" style={nameStyle(entry)}>{entry.name}</span>
+                            {#if rowMark}
+                              {@const marks = rowMark(entry)}
+                              {#if marks}
+                                <span
+                                  class="ml-auto flex shrink-0 items-center gap-0.5 pl-1"
+                                  data-testid="{testPrefix}-group-marks"
+                                  use:tooltip={marks.map((m) => `${m.label}: ${t(MARK_LABEL[m.mark])}`).join("\n")}
+                                >
+                                  {#each marks as m, i (i)}
+                                    <span class="size-1.5 rounded-full {MARK_DOT[m.mark]}" data-mark={m.mark}></span>
+                                  {/each}
+                                </span>
+                              {/if}
+                            {/if}
                           </div>
                           <span
                             class="ml-auto shrink-0 truncate text-xs text-muted @wide:ml-0 @wide:block @wide:w-[5.5rem] @wide:shrink @wide:px-2 @wide:text-right @wide:tabular-nums {entry.isDir ? 'hidden' : ''} {CELL}"

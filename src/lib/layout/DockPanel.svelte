@@ -20,6 +20,7 @@
   import type { AiExecMode } from "../ai/ai";
   import type { DockConnection } from "../stores/tabs.svelte";
   import type { AttachTarget } from "../tabs/tabattach";
+  import type { SftpGroup } from "../files/groupupload";
 
   let {
     id,
@@ -46,6 +47,7 @@
     promptVars = {},
     aiProd = false,
     aiNoAi = false,
+    sftpGroup = null,
   }: {
     /** Which session panel to render (the server tree is not one of them). */
     id: Exclude<PanelId, "servers">;
@@ -92,6 +94,8 @@
     aiProd?: boolean;
     /** The active server is `noAi`-flagged — blocks AI context + execution (17.7). */
     aiNoAi?: boolean;
+    /** Synchronous input is on for this session: the file panel uploads to the group (ADR 0064). */
+    sftpGroup?: SftpGroup | null;
   } = $props();
 
   const sessionReady = $derived(connection === "connected");
@@ -107,6 +111,7 @@
       {followTerminal}
       {visible}
       prod={aiProd}
+      group={sftpGroup}
       {onToggleFollowTerminal}
       {onOpenFile}
       onUserNavigate={onSftpNavigate}

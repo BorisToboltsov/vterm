@@ -147,6 +147,14 @@ export const DIAG_CODES = [
   "step-skipped",
   "consent-given",
   "consent-declined",
+  "group-sent",
+  "group-keys-on",
+  "group-keys-off",
+  "group-pasted",
+  "group-upload",
+  "group-edit",
+  "group-edit-not-written",
+  "group-edit-stopped",
 ] as const;
 
 export type DiagCode = (typeof DIAG_CODES)[number];

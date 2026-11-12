@@ -169,3 +169,12 @@ export function isPlainCtrlVChord(e: KeyChord): boolean {
 export function isHistoryChord(e: KeyChord): boolean {
   return e.ctrlKey && !e.metaKey && !e.altKey && !e.shiftKey && chordLetter(e) === "r";
 }
+
+/**
+ * ⌘R on macOS — the history too (ADR 0064): there ⌘ is the app's and Ctrl the
+ * shell's, so ⌘R opens the history without taking Ctrl+R from anybody. In
+ * synchronous input it is the group's history wherever the keys are.
+ */
+export function isMacHistoryChord(e: KeyChord, os: string): boolean {
+  return os === "macos" && !e.ctrlKey && !e.altKey && metaChord(e, "r");
+}

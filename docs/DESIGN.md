@@ -471,6 +471,34 @@ min-w-0 flex-1`) и счётчик — и кнопки `Aa`/`W`/`.*`, стрел
 (`min-w-0 flex-wrap justify-end`). В узкой области поле сжимается, а кнопки уходят вторым
 рядом, прижатые вправо; где и ряд не помещается — переносятся внутри него.
 
+## Строка синхронного ввода
+
+Под областями центра, пока сессия в фокусе входит в группу (ADR 0064): `relative shrink-0
+border-t border-edge bg-panel-alt px-2 py-1.5`. Слева — `SegmentedControl` «Команда / Клавиши»,
+затем поле (`rounded border border-edge bg-panel px-2.5 py-1.5 font-mono text-sm`), кнопка
+«Вставить во все» (`paperclip` 15 в `rounded border border-edge p-1.5 text-muted`) и отправка
+(`send` 16 в `bg-accent`). В режиме клавиш поля и отправки нет — строка состояния `text-meta
+text-muted` со значком `keyboard` 13 `text-accent`: кому уходят нажатия, пропущенные — `text-warn`,
+придержанный прод — `text-bad`. Предупреждение о проде — строка над ними, `text-meta text-warn` со
+`shield` 13. История по Ctrl+R/⌘R — тот же `CommandHistory`, что у терминала, над строкой
+(`bottom-full mb-1`): фасеты `rounded px-2 py-0.5 text-meta`, выбранный `bg-accent/20 text-text`;
+у команды справа метка «группой» `text-meta text-accent` и счёт `N/M` `tabular-nums`; непрочитанные
+истории — строкой `text-meta text-warn` под списком.
+
+**Полоса группы в панели файлов** — над списком, рядом с полосой пользователя: `border-b
+border-edge bg-accent/5 px-2 py-1 text-meta`, значок `broadcast` 13 `text-accent`, кнопка
+«Сравнить с группой» `rounded border border-edge px-1.5 py-0.5 text-muted`. Пока папка сравнена —
+легенда `text-caption text-muted`, а у имени файла справа точки по серверам `size-1.5 rounded-full`:
+размер и время как здесь — `bg-accent`, отличается — `bg-warn`, нет — пустое кольцо `border
+border-muted`, не прочитано — `bg-edge`; имена серверов — в подсказке.
+
+**Вопросы группы** (загрузка, правка на группе, вставка) — `Modal` `w-[36rem]` (правка —
+`w-[40rem]`): строка на сервер — флажок, имя `w-32 truncate`, чип `prod` (`border-bad/50 text-caption
+text-bad`), статус `truncate` в цвете исхода (`text-muted`/`text-warn`/`text-bad`/`text-ok`). Превью
+правки — `pre` `max-h-48 font-mono text-meta`, строки `-` `text-bad`, `+` `text-ok`, свёрнутое — `…`.
+Прод среди получателей — плашка `border-bad/50 bg-bad/10 text-bad` со `shield`, а основная кнопка
+— `bg-danger`.
+
 ## Статус-бар
 
 Сводка хоста в одну строку ([StatusBar.svelte](../src/lib/monitoring/StatusBar.svelte), модель —

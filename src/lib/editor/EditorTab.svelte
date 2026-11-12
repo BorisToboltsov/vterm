@@ -50,6 +50,8 @@
     onSaveCopy,
     onDismissSaveIssue,
     onLintMissing,
+    groupServers = null,
+    onGroup,
   }: {
     sessionId: string;
     doc: EditorDoc;
@@ -63,6 +65,10 @@
     onDismissSaveIssue?: () => void;
     /** Server linter isn't installed — let the page offer to install it. */
     onLintMissing?: (tool: string) => void;
+    /** Other servers of the synchronous-input group with this file's path (ADR 0064); null — none. */
+    groupServers?: number | null;
+    /** Carry the unsaved edit to the same file on the group's other servers. */
+    onGroup?: () => void;
   } = $props();
 
   let host: HTMLDivElement;
@@ -516,6 +522,19 @@
             </div>
           {/if}
         </div>
+      {/if}
+      {#if groupServers && onGroup && !preview}
+        <button
+          class="flex items-center gap-1 rounded px-2 py-0.5 text-muted hover:bg-edge hover:text-text disabled:opacity-40"
+          data-testid="editor-group"
+          use:tooltip={t("groupEdit.buttonHint", { count: groupServers })}
+          aria-label={t("groupEdit.buttonHint", { count: groupServers })}
+          disabled={doc.readOnly || saving || doc.content === doc.baseContent}
+          onclick={() => onGroup?.()}
+        >
+          <Icon name="broadcast" size={13} />
+          {t("groupEdit.button")}
+        </button>
       {/if}
       <button
         class="flex items-center gap-1 rounded px-2 py-0.5 text-muted hover:bg-edge hover:text-text disabled:opacity-40"

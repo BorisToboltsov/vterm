@@ -19,6 +19,7 @@
     localCwd,
     takePendingOpens,
     pickOpenFile,
+    readShellHistory,
     writeToTerminal,
     serverToolsStatus,
     takeStoreWarnings,
@@ -294,7 +295,6 @@
     setMenuLanguage,
     armCloseGuard,
     quitApp,
-    annotateRecording,
     readRecording,
   } from "#lib/api/index.ts";
   import { extractTranscript } from "#lib/recording/recording.ts";
@@ -307,6 +307,14 @@
   import type { HostServer, HostTab } from "#lib/netcheck/netroute.ts";
   import BroadcastBar from "#lib/terminal/BroadcastBar.svelte";
   import BroadcastRoster from "#lib/terminal/BroadcastRoster.svelte";
+  import GroupPasteDialog from "#lib/terminal/GroupPasteDialog.svelte";
+  import type { Screen } from "#lib/terminal/groupkeys.ts";
+  import { createBroadcastFlow } from "#lib/page/broadcastflow.svelte.ts";
+  import { createGroupUploadFlow } from "#lib/page/groupuploadflow.svelte.ts";
+  import { createGroupEditFlow } from "#lib/page/groupeditflow.svelte.ts";
+  import GroupEditDialog from "#lib/editor/GroupEditDialog.svelte";
+  import GroupUploadDialog from "#lib/files/GroupUploadDialog.svelte";
+  import type { SftpGroup } from "#lib/files/groupupload.ts";
   import {
     broadcastState,
     isBroadcastMember,
@@ -317,7 +325,6 @@
   } from "#lib/stores/broadcast.svelte.ts";
   import {
     eligibleMembers,
-    frameCommand,
     groupHasProd,
     gridColumns,
     gridPage,
@@ -410,6 +417,8 @@
       find?: () => void;
       focus?: () => void;
       pasteText?: (text: string) => void;
+      pasteInto?: (text: string) => void;
+      typedCommands?: () => string[];
       setViewMode?: (structured: boolean) => void;
       clear?: () => void;
       snapshot?: (sent: number) => Promise<TermSnapshot | null>;
@@ -806,41 +815,34 @@
     promptLine: (id) => termRefs[id]?.currentPromptLine?.() ?? "",
   });
 
-  // A command awaiting confirmation because the group includes a prod server.
-  let pendingBroadcast = $state<{ frame: string; targets: string[]; cmd: string } | null>(null);
-  const pendingProdAliases = $derived(
-    pendingBroadcast
-      ? prodMembers(pendingBroadcast.targets, tabsState.list, servers).map((id) => {
-          const tab = findTab(id);
-          return tab ? tabTitle(tab) : id;
-        })
-      : [],
+  // The screen each terminal last reported (a full-screen program or the shell):
+  // keys mode of synchronous input passes keys only where it matches (ADR 0064).
+  const termScreen = $state<Record<string, Screen>>({});
+  let broadcastBar = $state<ReturnType<typeof BroadcastBar>>();
+
+  // Synchronous input — the line, its history, keys mode, paste into all (page/broadcastflow).
+  const bcFlow = createBroadcastFlow({
+    targets: () => eligibleMembers(broadcastState.members, orderedTabList),
+    prodOf: (ids) => prodMembers(ids, tabsState.list, servers),
+    label: (id) => labelsOf([id])[0],
+    screenOf: (id) => termScreen[id] ?? null,
+    term: (id) => termRefs[id],
+    readHistory: (id) => readShellHistory(id),
+    ensureGroupRecording: () => recFlow.ensureGroupRecording(),
+    activity: (id) => recFlow.activity(id),
+    focusTerminal: () => {
+      const id = tabsState.activeId;
+      if (id) termRefs[id]?.focus?.();
+    },
+  });
+  // Who the keys of the terminal in focus reach right now — the line says so in keys mode.
+  const bcKeys = $derived(
+    bcOn && bcFlow.mode === "keys" ? bcFlow.keysStatus(tabsState.activeId) : { to: [], skipped: [], held: [] },
   );
-
-  /** Send the composed command to every live member (prod → confirm first). */
-  function requestBroadcast(cmd: string) {
-    const frame = frameCommand(cmd);
-    if (!frame) return;
-    const targets = eligibleMembers(broadcastState.members, orderedTabList);
-    if (targets.length === 0) return;
-    if (groupHasProd(targets, tabsState.list, servers)) {
-      pendingBroadcast = { frame, targets, cmd };
-      return;
-    }
-    doBroadcast(frame, targets, cmd);
-  }
-
-  /** The actual fan-out: one `write_to_terminal` per target (reused contract),
-   *  plus an audit marker of the command into every member that's recording. */
-  function doBroadcast(frame: string, targets: string[], cmd: string) {
-    const bytes = new TextEncoder().encode(frame);
-    for (const id of targets) {
-      writeToTerminal(id, bytes).catch(writtenByCall);
-      if (isRecording(id)) annotateRecording(id, `broadcast: ${cmd}`).catch(writtenByCall);
-      // Input reached this session: its recording is not idle.
-      recFlow.activity(id);
-    }
-  }
+  // The group emptied: its mode and its open questions go with it.
+  $effect(() => {
+    if (broadcastState.members.length === 0) untrack(() => bcFlow.reset());
+  });
   const topTitle = $derived(activeTab?.alias ?? t("status.notConnected"));
   const topSubtitle = $derived(
     activeServer ? `${activeServer.username}@${activeServer.host}:${activeServer.port}` : "",
@@ -1850,7 +1852,32 @@
     paste: (id, text) => termRefs[id]?.pasteText?.(text),
     otherWindows: () => windows.targets.length > 0,
     ghostLook: () => fileGhost?.look() ?? null,
+    groupSend: (id, dir, sources) => upFlow.upload(id, dir, sources),
   });
+  // Upload to the synchronous-input group from a member's file panel (ADR 0064).
+  const upFlow = createGroupUploadFlow({
+    groupOf: (sid) => (bcOn && isBroadcastMember(sid) ? eligibleMembers(broadcastState.members, orderedTabList) : null),
+    isSsh: (id) => {
+      const tab = findTab(id);
+      return tab?.kind === "ssh" && !tab.attach;
+    },
+    isProd: (id) => prodTabIds.has(id),
+    label: (id) => labelsOf([id])[0],
+  });
+  /** What a member's file panel is given while synchronous input is on for it. */
+  function sftpGroupOf(sid: string): SftpGroup | null {
+    const servers = upFlow.servers(sid);
+    if (servers === null) return null;
+    return {
+      servers,
+      upload: (destDir, sources) => void upFlow.upload(sid, destDir, sources),
+      compare: (dir) => void upFlow.compare(sid, dir),
+      clearCompare: () => upFlow.clearCompare(sid),
+      compared: (dir) => upFlow.compared(sid, dir),
+      marks: (dir, entry) => upFlow.marks(sid, dir, entry),
+      elsewhere: (dir) => upFlow.elsewhere(sid, dir),
+    };
+  }
   const copyFlow = createCopyFlow({
     tabs: () => tabsState.list,
     findTab,
@@ -1867,6 +1894,14 @@
   /** Full title of a tab: `nginx · Rescalc dev` for a container/pod tab. */
   function tabTitle(tab: Tab): string {
     return attachTitle(tabAlias(tab), tab.attach);
+  }
+
+  /** The titles of sessions' tabs — how a group's members are named on screen. */
+  function labelsOf(ids: string[]): string[] {
+    return ids.map((id) => {
+      const tab = findTab(id);
+      return tab ? tabTitle(tab) : id;
+    });
   }
 
   /** Hover card of a container/pod tab: what it is attached to, then its status. */
@@ -1992,6 +2027,10 @@
     removeWorkspace(sessionId);
     removeChat(sessionId);
     removeBroadcastMember(sessionId);
+    bcFlow.forget(sessionId);
+    upFlow.forget(sessionId);
+    edFlow.forget(sessionId);
+    delete termScreen[sessionId];
     removeDockState(sessionId);
     fileLinks.forget(sessionId);
     // Its transfers are the backend's: a closed session's are stopped there, a
@@ -2221,6 +2260,23 @@
       return !!zone && canSplitZone(sid, zone.id, "right");
     },
   });
+  // Editing a file on the synchronous-input group (ADR 0064): the edit carried as a patch.
+  const edFlow = createGroupEditFlow({
+    groupOf: (sid) => (bcOn && isBroadcastMember(sid) ? eligibleMembers(broadcastState.members, orderedTabList) : null),
+    isSsh: (id) => {
+      const tab = findTab(id);
+      return tab?.kind === "ssh" && !tab.attach;
+    },
+    isProd: (id) => prodTabIds.has(id),
+    label: (id) => labelsOf([id])[0],
+    maxBytes: () => editors.maxBytes(),
+    backup: () => settings.editor.backupOnSave,
+    saveLead: (sid, doc) => editors.saveNow(sid, doc),
+  });
+  /** The source's document of an open edit on the group, as it stands now. */
+  const edDoc = $derived(
+    edFlow.ask ? (getWorkspace(edFlow.ask.lead).editors.find((d) => d.id === edFlow.ask?.docId) ?? null) : null,
+  );
   // What the sudo prompt says: reopen, check access ahead of editing, or save.
   const sudoPromptPath = $derived(
     editors.sudo?.kind === "open" ? editors.sudo.path : editors.sudo ? editors.sudo.doc.path : "",
@@ -2639,6 +2695,7 @@
         aiRecording={!!recordingState[tab.sessionId]}
         aiProd={isProdServer(srv)}
         aiNoAi={srv?.noAi === true}
+        sftpGroup={sftpGroupOf(tab.sessionId)}
         onOpenFile={(path, name, gotoLine) => editors.openFile(tab.sessionId, path, name, { gotoLine })}
         onOpenLocalFile={(path) => editors.openLocal(tab.sessionId, path)}
         onOpenGitDiff={(absPath, gitBase) => editors.openGitDiff(tab.sessionId, absPath, gitBase)}
@@ -3372,6 +3429,16 @@
                       ? (target) => fileLinks.clicked(tab.sessionId, target)
                       : undefined}
                     filelinkDirs={!isPanelHidden("files")}
+                    onscreen={(screen) => (termScreen[tab.sessionId] = screen)}
+                    onkeys={bcOn && bcFlow.mode === "keys" && tabsState.activeId === tab.sessionId
+                      ? (data) => bcFlow.keys(tab.sessionId, data)
+                      : undefined}
+                    ongrouphistory={bcOn && isBroadcastMember(tab.sessionId)
+                      ? () => {
+                          broadcastBar?.focusLine?.();
+                          void bcFlow.openHistory();
+                        }
+                      : undefined}
                     onphase={(p) => (connPhase[tab.sessionId] = p)}
                     onauthprompt={(req) => setAuthPrompt(tab.sessionId, req)}
                     onstatus={(st, d) => {
@@ -3483,6 +3550,8 @@
                             onSaveCopy={() => void editors.saveCopy(ed)}
                             onDismissSaveIssue={() => setEditorSaveIssue(tab.sessionId, ed.id, "none")}
                             onLintMissing={offerLintInstall}
+                            groupServers={ed.source === "sftp" ? edFlow.servers(tab.sessionId) : null}
+                            onGroup={() => edFlow.open(tab.sessionId, ed)}
                           />
                         {/if}
                       </div>
@@ -3526,9 +3595,20 @@
             </div>
             {#if bcOn}
               <BroadcastBar
+                bind:this={broadcastBar}
                 disabled={bcTargets.length === 0}
                 prodWarn={bcHasProd}
-                onsend={requestBroadcast}
+                mode={bcFlow.mode}
+                keysTo={bcKeys.to}
+                keysSkipped={bcKeys.skipped}
+                keysHeld={bcKeys.held}
+                recent={bcFlow.recent}
+                history={bcFlow.history}
+                onsend={(cmd) => bcFlow.send(cmd)}
+                onmode={(mode) => bcFlow.switchMode(mode)}
+                onhistory={() => void bcFlow.openHistory()}
+                onhistoryclose={() => bcFlow.closeHistory()}
+                onpasteall={(text) => bcFlow.openPaste(text)}
               />
             {/if}
           </div>
@@ -3816,30 +3896,69 @@
   {t("page.deleteServerBody1")} <span class="text-text">{serverToDelete?.alias}</span> {t("page.deleteServerBody2")}
 </ConfirmDialog>
 
-<!-- Broadcast: confirm before sending to a group that includes a prod server -->
+<!-- Broadcast: confirm before sending to a group that includes a prod server.
+     Confirmed, the whole group is recorded first (audit trail), then sent. -->
 <ConfirmDialog
-  open={!!pendingBroadcast}
+  open={!!bcFlow.pending}
   title={t("broadcast.prodConfirmTitle")}
   confirmLabel={t("broadcast.prodConfirmSend")}
   danger
-  onconfirm={async () => {
-    const pb = pendingBroadcast;
-    pendingBroadcast = null;
-    if (!pb) return;
-    // Prod broadcast → auto-record the whole group first (audit trail), then send.
-    await recFlow.ensureGroupRecording();
-    doBroadcast(pb.frame, pb.targets, pb.cmd);
-  }}
-  oncancel={() => (pendingBroadcast = null)}
+  onconfirm={() => void bcFlow.confirmSend()}
+  oncancel={() => bcFlow.cancelSend()}
 >
   {t("broadcast.prodConfirmBody1")}
-  <span class="text-text">{pendingBroadcast?.targets.length ?? 0}</span>
+  <span class="text-text">{bcFlow.pending?.targets.length ?? 0}</span>
   {t("broadcast.prodConfirmBody2")}
-  <span class="text-danger">{pendingProdAliases.join(", ")}</span>
+  <span class="text-danger">{bcFlow.pendingProd.join(", ")}</span>
   <pre
     class="mt-2 overflow-x-auto rounded border border-edge bg-panel p-2 text-meta leading-relaxed text-muted"
-  >{pendingBroadcast ? pendingBroadcast.frame.replace(/\n$/, "") : ""}</pre>
+  >{bcFlow.pending ? bcFlow.pending.frame.replace(/\r$/, "") : ""}</pre>
 </ConfirmDialog>
+
+<!-- Keys mode with prod in the group (ADR 0064): every key goes there, so it is
+     asked once, as it is switched on, and the group is recorded. -->
+<ConfirmDialog
+  open={bcFlow.keysAsk}
+  title={t("groupKeys.prodTitle")}
+  confirmLabel={t("groupKeys.prodConfirm")}
+  danger
+  onconfirm={() => void bcFlow.confirmKeys()}
+  oncancel={() => bcFlow.cancelKeys()}
+>
+  {t("groupKeys.prodBody")}
+  <span class="text-danger">{bcFlow.keysAsk ? labelsOf(prodMembers(bcTargets, tabsState.list, servers)).join(", ") : ""}</span>
+</ConfirmDialog>
+
+<!-- Edit on the group (ADR 0064): the source's edit carried to every other server's copy. -->
+<GroupEditDialog
+  ask={edFlow.ask}
+  dirty={!!edDoc && edDoc.content !== edDoc.baseContent}
+  ontoggle={(id) => edFlow.toggle(id)}
+  onsudo={(password) => edFlow.sudo(password)}
+  onapply={() => {
+    if (edDoc) void edFlow.apply(edDoc);
+  }}
+  onclose={() => edFlow.close()}
+/>
+
+<!-- Upload to the group (ADR 0064): what the folder holds on each server, asked once. -->
+<GroupUploadDialog
+  ask={upFlow.ask}
+  ontoggle={(id) => upFlow.toggle(id)}
+  onreplace={(replace) => upFlow.setReplace(replace)}
+  onconfirm={() => void upFlow.confirm()}
+  oncancel={() => upFlow.cancel()}
+/>
+
+<!-- Paste into all (ADR 0064): a block into every member's terminal, as a paste. -->
+<GroupPasteDialog
+  open={!!bcFlow.pasteAsk}
+  text={bcFlow.pasteAsk?.text ?? ""}
+  targets={labelsOf(bcTargets)}
+  prod={labelsOf(prodMembers(bcTargets, tabsState.list, servers))}
+  onpaste={(text) => void bcFlow.paste(text)}
+  oncancel={() => bcFlow.cancelPaste()}
+/>
 
 <!-- Path sync's question where it has no answer yet (v1.23) — shows the OSC 7
      setup command whenever the answer lets the app type it -->
