@@ -45,6 +45,19 @@ import { describe, expect, it } from "vitest";
 // and the right edge of each chart moves to the newest point instead of
 // jumping there. Every duration goes through `motionMs`, so reduced motion
 // keeps each change instant.
+//
+// And the history holds its scale (v1.34, ADR 0065). Stretched over the whole
+// time away it squeezed on every poll, redrew itself at each merge and crossed
+// a stretch nobody read with a straight line: a hidden window skips its polls,
+// and only a failed one used to leave a gap. Now CPU, memory and load each have
+// a chart of their own over the last half hour, sliding right to left — a band
+// from lowest to highest, the mean as a line — and the whole time away is a
+// strip of cells that steps to a longer cell only when it runs out of room. A
+// silence longer than a gap is a gap, in the small cards' chart too. Each
+// metric is told once: the value now is a small ring at the start of its own
+// chart, and the rings that stood above the charts gave way to the status
+// bar's verdict and what the charts do not show — disk, swap, network,
+// temperature, each running to its reading like the rest.
 // Checked on the source with comments stripped.
 
 function stripHtmlComments(text: string): string {
@@ -153,15 +166,61 @@ export function driftViolations(overlay: string): string[] {
 }
 
 /**
- * What lets the history of the time away draw a line through a poll that
- * failed — in the overlay's own source. Empty when the rule holds.
+ * What lets the history of the time away, or the small cards' chart, draw a
+ * line through a poll that failed or through a silence — in the overlay's own
+ * source. Empty when the rule holds.
  */
 export function gapViolations(overlay: string): string[] {
   const o = bare(overlay);
+  const out: string[] = [];
   const body = bodyOf(o, "onReading");
   const caught = /\}\s*else\s*\{([\s\S]*?)\n {4}\}/.exec(body)?.[1] ?? "";
   const kept = /\baway = awayPush\(away, r, awayThresholds\(\)\);/.test(bodyOf(o, "remember"));
-  return /\bremember\(gapReading\(/.test(caught) && kept ? [] : ["a failed poll leaves no gap in the history"];
+  if (!/\bremember\(gapReading\(/.test(caught) || !kept) out.push("a failed poll leaves no gap in the history");
+  if (!/\bpushHist\(NO_SAMPLE\);/.test(caught)) out.push("a failed poll leaves no gap in the small chart");
+  // The silence is measured before the reading joins anything.
+  const silence = body.indexOf("if (silentSince(away.lastAt, at, away.gapMs)) pushHist(NO_SAMPLE);");
+  const first = body.search(/\bpushHist\(idleSample\(|\bremember\(/);
+  if (silence < 0 || first < 0 || silence > first) out.push("a silence leaves no gap in the small chart");
+  // A silence is a gap only against the poll's own beat.
+  if (!/\baway = emptyAway\(pollEveryMs\(false\)\);/.test(bodyOf(o, "activate"))) {
+    out.push("the history does not know how often it is polled");
+  }
+  return out;
+}
+
+/**
+ * What squeezes the history instead of sliding it, or puts the three metrics
+ * back on one chart — in the overlay's own source. Empty when the rule holds.
+ */
+export function historyViolations(overlay: string): string[] {
+  const draw = bodyOf(bare(overlay), "drawAway");
+  const out: string[] = [];
+  if (!/const from = chartFrom\(to\);/.test(draw)) out.push("the charts squeeze the time away instead of sliding");
+  if (!/SERIES\.forEach\(\(\[key, name\], i\) => \{\s*const ry = y \+ lay\.rowY\[i\];/.test(draw)) {
+    out.push("the three metrics share one chart");
+  }
+  if (!/\bbandRuns\(away\.buckets, key, away\.bucketMs\)/.test(draw)) out.push("a chart draws no band from its buckets");
+  if (!/\bstripView\(away\.cells, away\.step, since, to,/.test(draw)) out.push("the strip squeezes the time away on every poll");
+  return out;
+}
+
+/**
+ * What tells CPU, memory or load twice, or puts another verdict than the status
+ * bar's above the charts — in the overlay's own source. Empty when the rule holds.
+ */
+export function onceViolations(overlay: string): string[] {
+  const o = bare(overlay);
+  const out: string[] = [];
+  const standby = bodyOf(o, "drawStandby");
+  if (/\b(?:ringFraction|miniRing|ringGauge)\(/.test(standby)) out.push("CPU, memory and load are told twice");
+  if (!/verdictLine\(lastMetrics != null, barProblems\(lastMetrics, settings\.statusBarThresholds\)\)/.test(standby)) {
+    out.push("the verdict above the charts is not the status bar's");
+  }
+  if (!/\bdrawFacts\(ctx,/.test(standby)) out.push("the facts the charts do not show are gone");
+  const away = bodyOf(o, "drawAway");
+  if (!/const R = gutterRing\(rh, big\);/.test(away) || !/\bminiRing\(ctx,/.test(away)) out.push("a chart does not carry its value now");
+  return out;
 }
 
 /**
@@ -171,22 +230,38 @@ export function gapViolations(overlay: string): string[] {
 export function smoothViolations(overlay: string): string[] {
   const o = bare(overlay);
   const out: string[] = [];
-  const drawn = bodyOf(o, "cardMetrics") + bodyOf(o, "drawStandby");
+  const drawn = bodyOf(o, "cardMetrics") + bodyOf(o, "drawStandby") + bodyOf(o, "drawAway") + bodyOf(o, "drawFacts");
   if (/\bfmtPct\((?:cpu|mem|diskPct)\)|\bringFraction\((?:cpu|mem|load1|diskUsed),|\bload1 != null \? load1\.toFixed/.test(drawn)) {
     out.push("a ring or a number jumps to the reading");
   }
   const poll = bodyOf(o, "onReading");
-  if (!["cpu", "mem", "load", "disk"].every((k) => new RegExp(`\\b${k}: retarget\\(shownTw\\.${k},`).test(poll))) {
+  const keys = ["cpu", "mem", "load", "disk", "swap", "rx", "tx", "temp"];
+  if (!keys.every((k) => new RegExp(`\\b${k}: retarget\\(shownTw\\.${k},`).test(poll))) {
     out.push("what is shown does not follow the readings");
+  }
+  const facts = bodyOf(o, "drawFacts");
+  const away = bodyOf(o, "drawAway");
+  if (
+    !["disk", "swap", "rx", "tx", "temp"].every((k) => facts.includes(`shown(shownTw.${k})`)) ||
+    !["cpu", "mem", "load"].every((k) => away.includes(`${k}: shown(shownTw.${k})`))
+  ) {
+    out.push("a ring or a number jumps to the reading");
   }
   if (!/const to = tweenAt\(axisTw, frameAt, ms\(LINE_MS\)\)/.test(bodyOf(o, "drawAway"))) {
     out.push("the history's edge jumps to the newest point");
+  }
+  const ceiling = bodyOf(o, "drawAway");
+  if (
+    !/loadTopTw = retarget\(loadTopTw, wantTop, frameAt, ms\(SCALE_MS\), null\);/.test(ceiling) ||
+    !/const loadTop = tweenAt\(loadTopTw, frameAt, ms\(SCALE_MS\)\)/.test(ceiling)
+  ) {
+    out.push("the load chart's ceiling jumps");
   }
   if (!/const end = tweenAt\(histTw, frameAt, ms\(LINE_MS\)\);/.test(bodyOf(o, "drawSeries"))) {
     out.push("the small chart jumps to the newest sample");
   }
   const reduced = /const ms = \(base: number\) => motionMs\(base, reduce\);/.test(o);
-  const raw = /\b(?:tweenAt|retarget|progress)\([^;]*?,\s*(?:RING_MS|LINE_MS|BAR_MS|MERGE_MS)\b/.test(o);
+  const raw = /\b(?:tweenAt|retarget|progress)\([^;]*?,\s*(?:RING_MS|LINE_MS|BAR_MS|MERGE_MS|SCALE_MS)\b/.test(o);
   if (!reduced || raw) out.push("a change moves with reduced motion on");
   return out;
 }
@@ -201,10 +276,14 @@ export function hoverViolations(overlay: string): string[] {
   const out: string[] = [];
   if (/\baway\.events\b/.test(bodyOf(o, "drawAway"))) out.push("the history draws marks for its events");
   const hovered = bodyOf(o, "hovered");
-  const shown = hovered.indexOf("if (!pointer || !hoverShown(movedAt, performance.now())) return null;");
-  const picks = hovered.indexOf("pointAt(away.points,");
-  if (picks < 0) out.push("the tooltip does not ask which point is under the pointer");
-  else if (shown < 0 || shown > picks) out.push("the tooltip outstays a resting pointer");
+  if (!/if \(!pointer \|\| !hoverShown\(movedAt, performance\.now\(\)\)\) return null;/.test(hovered)) {
+    out.push("the tooltip outstays a resting pointer");
+  }
+  const draw = bodyOf(o, "drawAway");
+  const asks = draw.indexOf("const ptr = hovered();");
+  const charts = draw.indexOf("chartHit(away.buckets,");
+  const cells = draw.indexOf("stripHit(slots, view,");
+  if (asks < 0 || charts < asks || cells < asks) out.push("the tooltip does not ask what is under the pointer");
   const shifted =
     /const x = pointer\.x - drift\.dx;/.test(hovered) &&
     /const y = pointer\.y - drift\.dy;/.test(hovered) &&
@@ -257,13 +336,14 @@ describe("idle card guard", () => {
       "diskUsed",
       "cpuTemp",
       "offsetMin",
+      "lastMetrics",
     ]) {
       expect(body, `${v} is reset on activation`).toMatch(
         new RegExp(`\\b${v}\\s*=[^;]*\\bnull\\s*;`),
       );
     }
     // …and the previous time away: its history and its events.
-    expect(body).toMatch(/\baway = emptyAway\(\);/);
+    expect(body).toMatch(/\baway = emptyAway\(pollEveryMs\(false\)\);/);
   });
 
   it("never starts in a window with no tab, and does not outlive the last one", () => {
@@ -384,17 +464,88 @@ describe("idle card guard", () => {
     expect(driftViolations(frameless)).toEqual(["a production session's card has no red frame"]);
   });
 
-  it("leaves a gap in the history where a poll failed", () => {
+  it("leaves a gap where a poll failed or none was made", () => {
     const overlay = read("lib", "screensaver", "IdleOverlay.svelte");
     expect(gapViolations(overlay)).toEqual([]);
-    // The check catches its own violation: a failure that only keeps the numbers.
-    const silent = overlay.replace("      remember(gapReading(at));\n", "");
-    expect(silent).not.toBe(overlay);
-    expect(gapViolations(silent)).toEqual(["a failed poll leaves no gap in the history"]);
-    // …or one that is passed on to a step that no longer keeps it.
-    const dropped = overlay.replace("    away = awayPush(away, r, awayThresholds());\n", "");
-    expect(dropped).not.toBe(overlay);
-    expect(gapViolations(dropped)).toEqual(["a failed poll leaves no gap in the history"]);
+    const caught = (from: string, to: string) => {
+      const changed = overlay.replace(from, to);
+      expect(changed, from).not.toBe(overlay);
+      return gapViolations(changed);
+    };
+    // The check catches its own violations: a failure that only keeps the numbers…
+    expect(caught("      remember(gapReading(at));\n", "")).toEqual(["a failed poll leaves no gap in the history"]);
+    // …or one passed on to a step that no longer keeps it…
+    expect(caught("    away = awayPush(away, r, awayThresholds());\n", "")).toEqual([
+      "a failed poll leaves no gap in the history",
+    ]);
+    // …a small chart that draws through a failed poll…
+    expect(caught("      pushHist(NO_SAMPLE);\n      remember(gapReading(at));", "      remember(gapReading(at));")).toEqual([
+      "a failed poll leaves no gap in the small chart",
+    ]);
+    // …or through a silence — a hidden window that skipped its polls…
+    expect(caught("    if (silentSince(away.lastAt, at, away.gapMs)) pushHist(NO_SAMPLE);\n", "")).toEqual([
+      "a silence leaves no gap in the small chart",
+    ]);
+    // …and a history that does not know how often it is polled.
+    expect(caught("      away = emptyAway(pollEveryMs(false));", "      away = emptyAway(5000);")).toEqual([
+      "the history does not know how often it is polled",
+    ]);
+  });
+
+  it("slides each metric's chart over the last half hour, and steps the strip of the whole time away", () => {
+    const overlay = read("lib", "screensaver", "IdleOverlay.svelte");
+    expect(historyViolations(overlay)).toEqual([]);
+    const caught = (from: string, to: string) => {
+      const changed = overlay.replace(from, to);
+      expect(changed, from).not.toBe(overlay);
+      return historyViolations(changed);
+    };
+    // The check catches its own violations: the whole time away squeezed into the charts…
+    expect(caught("const from = chartFrom(to);", "const from = away.firstAt ?? to;")).toEqual([
+      "the charts squeeze the time away instead of sliding",
+    ]);
+    // …the three metrics drawn over each other…
+    expect(caught("      const ry = y + lay.rowY[i];", "      const ry = y;")).toEqual(["the three metrics share one chart"]);
+    // …a line with no band…
+    expect(caught("bandRuns(away.buckets, key, away.bucketMs)", "bandRuns(away.cells, key, away.step)")).toEqual([
+      "a chart draws no band from its buckets",
+    ]);
+    // …and a strip whose cells stretch with every poll.
+    expect(
+      caught("stripView(away.cells, away.step, since, to,", "stripView(away.cells, Math.max(away.step, (to - since) / 300), since, to,"),
+    ).toEqual(["the strip squeezes the time away on every poll"]);
+  });
+
+  it("tells each metric once, at the start of its chart, and the status bar's verdict above", () => {
+    const overlay = read("lib", "screensaver", "IdleOverlay.svelte");
+    expect(onceViolations(overlay)).toEqual([]);
+    const caught = (from: string, to: string) => {
+      const changed = overlay.replace(from, to);
+      expect(changed, from).not.toBe(overlay);
+      return onceViolations(changed);
+    };
+    // The check catches its own violations: a ring back above the charts…
+    expect(
+      caught(
+        "    const factsBottom = drawFacts(",
+        "    miniRing(ctx, rx0, P, 20, ringFraction(cpu, 100), p.green, fmtPct(cpu), p.foreground, big, p);\n    const factsBottom = drawFacts(",
+      ),
+    ).toEqual(["CPU, memory and load are told twice"]);
+    // …a verdict of its own…
+    expect(
+      caught(
+        "verdictLine(lastMetrics != null, barProblems(lastMetrics, settings.statusBarThresholds))",
+        'verdictLine(lastMetrics != null, cpu != null && cpu > 90 ? barProblems(lastMetrics, settings.statusBarThresholds) : [])',
+      ),
+    ).toEqual(["the verdict above the charts is not the status bar's"]);
+    // …the facts dropped…
+    expect(caught("    const factsBottom = drawFacts(ctx, nx, vy + (big ? 44 : 26), tw, p, big);", "    const factsBottom = vy;")).toEqual([
+      "the facts the charts do not show are gone",
+    ]);
+    // …and a chart without its value.
+    expect(caught("      const R = gutterRing(rh, big);", "      const R = null as number | null;")).toEqual([
+      "a chart does not carry its value now",
+    ]);
   });
 
   it("runs rings, numbers and charts to each reading instead of jumping", () => {
@@ -406,17 +557,28 @@ describe("idle card guard", () => {
       return smoothViolations(changed);
     };
     // The check catches its own violations: a ring drawn from the raw reading…
-    expect(caught("ringFraction(sCpu, 100),", "ringFraction(cpu, 100),")).toEqual(["a ring or a number jumps to the reading"]);
+    expect(caught("value: fmtPct(sDisk),", "value: fmtPct(diskPct),")).toEqual(["a ring or a number jumps to the reading"]);
+    expect(caught("      cpu: shown(shownTw.cpu),\n      mem: shown(shownTw.mem),", "      cpu,\n      mem: shown(shownTw.mem),")).toEqual([
+      "a ring or a number jumps to the reading",
+    ]);
+    expect(caught("    const sTemp = shown(shownTw.temp);", "    const sTemp = cpuTemp;")).toEqual(["a ring or a number jumps to the reading"]);
     // …a small card's number that jumps…
     expect(caught('["CPU", fmtPct(shown(shownTw.cpu)), p.green, "cpu"],', '["CPU", fmtPct(cpu), p.green, "cpu"],')).toEqual([
       "a ring or a number jumps to the reading",
     ]);
     // …a value that no reading sends on…
     expect(caught("      cpu: retarget(shownTw.cpu, cpu, t, ms(RING_MS)),\n", "")).toEqual(["what is shown does not follow the readings"]);
+    expect(caught("      temp: retarget(shownTw.temp, cpuTemp, t, ms(RING_MS), null),\n", "")).toEqual([
+      "what is shown does not follow the readings",
+    ]);
     // …a history whose edge jumps to the newest point…
     expect(
-      caught("const to = tweenAt(axisTw, frameAt, ms(LINE_MS)) ?? pts[pts.length - 1].at;", "const to = pts[pts.length - 1].at;"),
+      caught("const to = tweenAt(axisTw, frameAt, ms(LINE_MS)) ?? away.lastAt ?? Date.now();", "const to = away.lastAt ?? Date.now();"),
     ).toEqual(["the history's edge jumps to the newest point"]);
+    // …a load chart whose ceiling jumps to a new peak…
+    expect(caught("const loadTop = tweenAt(loadTopTw, frameAt, ms(SCALE_MS)) ?? wantTop;", "const loadTop = wantTop;")).toEqual([
+      "the load chart's ceiling jumps",
+    ]);
     // …a small chart that jumps…
     expect(caught("const end = tweenAt(histTw, frameAt, ms(LINE_MS));", "const end = histSeq;")).toEqual([
       "the small chart jumps to the newest sample",
@@ -431,8 +593,8 @@ describe("idle card guard", () => {
     expect(hoverViolations(overlay)).toEqual([]);
     // The check catches its own violations: the event marks back on the chart…
     const marked = overlay.replace(
-      "    lines(pts);\n",
-      "    lines(pts);\n    for (const e of away.events) ctx.fillRect(timeX(e.peakAt, from, to, gx, gw), gy, 1, gh);\n",
+      "    // The moment under the pointer: a thin line down all three charts.\n",
+      "    for (const e of away.events) ctx.fillRect(pos(e.peakAt), y, 1, chartH);\n",
     );
     expect(marked).not.toBe(overlay);
     expect(hoverViolations(marked)).toEqual(["the history draws marks for its events"]);
@@ -443,6 +605,10 @@ describe("idle card guard", () => {
     );
     expect(resting).not.toBe(overlay);
     expect(hoverViolations(resting)).toEqual(["the tooltip outstays a resting pointer"]);
+    // …a strip whose slots never answer the pointer…
+    const blind = overlay.replace("const i = stripHit(slots, view, ptr.x, gx, gw);", "const i = -1;");
+    expect(blind).not.toBe(overlay);
+    expect(hoverViolations(blind)).toEqual(["the tooltip does not ask what is under the pointer"]);
     // …a pointer read where the layout stood before it drifted…
     const unshifted = overlay.replace("const x = pointer.x - drift.dx;", "const x = pointer.x;");
     expect(unshifted).not.toBe(overlay);

@@ -25,6 +25,7 @@
     HIST_KEEP,
     HIST_POINTS,
     idleSample,
+    NO_SAMPLE,
     pushSample,
     tokenizeBuffer,
     type CardTier,
@@ -32,31 +33,54 @@
     type WordToken,
   } from "./idlefx";
   import {
+    awayGaps,
     awayPush,
+    bandRuns,
+    chartFrom,
+    chartHit,
+    CHART_MS,
     clockLabel,
     shiftOffset,
     emptyAway,
     eventsAt,
-    gapAround,
     gapReading,
+    gutterRing,
+    historyLayout,
     HOVER_SLACK,
     HOVER_STILL_MS,
     hoverShown,
-    pointAt,
+    loadCeiling,
     ringFraction,
     serverOffset,
     serverZone,
     shifted,
+    silentSince,
+    slotGap,
     spanLabel,
+    spanMid,
     standbyTransfer,
+    stripHit,
+    stripSlots,
+    stripView,
+    stripX,
+    swapShare,
+    timeAtX,
     timeRuns,
     timeTicks,
     timeX,
+    verdictLine,
+    windowPeak,
+    type AwayGap,
     type AwayHistory,
-    type AwayPoint,
+    type AwayKey,
     type AwayReading,
+    type AwaySpan,
     type AwayThresholds,
+    type GapKind,
+    type HistoryLayout,
     type StandbyTransfer,
+    type StripSlot,
+    type StripView,
   } from "./standby";
   import {
     BAR_MS,
@@ -64,6 +88,7 @@
     LINE_MS,
     MERGE_MS,
     progress,
+    SCALE_MS,
     TIER_MS,
     retarget,
     RING_MS,
@@ -73,10 +98,11 @@
   } from "../ui/tween";
   import { motionMs } from "../ui/motion";
   import type { Metrics } from "../api";
-  import { feedOf, watchMetrics } from "../stores/metricsfeed.svelte";
+  import { feedOf, pollEveryMs, watchMetrics } from "../stores/metricsfeed.svelte";
   import { diskFree, fmtBytes, fmtPct, fmtRate, fmtUptime, memPct } from "../monitoring/format";
   import { thresholdLevel, type ThresholdLevel } from "../monitoring/thresholds";
   import { loadHealth } from "../monitoring/monhealth";
+  import { barProblems } from "../monitoring/barmodel";
   import { fmtEta } from "../files/transfer";
   import { transfersState } from "../stores/transfers.svelte";
   import { currentLocale, t } from "../i18n";
@@ -149,6 +175,8 @@
   let diskUsed: number | null = null;
   let diskTotal: number | null = null;
   let cpuTemp: number | null = null;
+  // The newest reading whole: the verdict and the facts above the charts read it (ADR 0065).
+  let lastMetrics: Metrics | null = null;
   let osName = "";
   let login = "";
   // The server clock's lead over this machine's, minutes, and its zone. Null —
@@ -156,7 +184,9 @@
   let offsetMin: number | null = null;
   let zone = "";
   // Everything read since the screensaver rose; when the user was last seen.
-  let away: AwayHistory = emptyAway();
+  // The history learns the poll's beat on each activation: a silence longer
+  // than three beats is a gap (a hidden window skips its polls).
+  let away: AwayHistory = emptyAway(pollEveryMs(false));
   let leftAt = Date.now();
 
   // ── What the card shows runs to each reading (v1.33) ─────────────────────────
@@ -165,19 +195,20 @@
   // counts on the way (`tween.ts`); the right edge of a chart moves to the newest
   // point, so the line draws itself on and the rest closes up. Durations go
   // through `motionMs`: with reduced motion every change is instant, as before.
-  let shownTw: Record<"cpu" | "mem" | "load" | "disk", Tween> = {
-    cpu: still(null),
-    mem: still(null),
-    load: still(null),
-    disk: still(null),
-  };
+  let shownTw: Record<ShownKey, Tween> = noneShown();
+  type ShownKey = "cpu" | "mem" | "load" | "disk" | "swap" | "rx" | "tx" | "temp";
+  function noneShown(): Record<ShownKey, Tween> {
+    return { cpu: still(null), mem: still(null), load: still(null), disk: still(null), swap: still(null), rx: still(null), tx: still(null), temp: still(null) };
+  }
   // The history's right edge (wall-clock ms) and the small chart's (sample number).
   let axisTw: Tween = still(null);
   let histTw: Tween = still(null);
   // The number of the newest sample in `hist`.
   let histSeq = -1;
-  // The history's line before its points merged, fading out under the new one.
-  let merged: { points: AwayPoint[]; at: number } | null = null;
+  // The top of the load chart, moving to a new ceiling rather than jumping.
+  let loadTopTw: Tween = still(null);
+  // The strip as drawn, and the one it stepped up from, fading out under it.
+  let strip: { view: StripView; was: StripView | null; at: number } | null = null;
   // A transfer's bar, per transfer.
   let bar: { id: string; tw: Tween } = { id: "", tw: still(null) };
   // The moment the frame being drawn shows (`performance.now()`).
@@ -185,14 +216,16 @@
   const ms = (base: number) => motionMs(base, reduce);
   const shown = (tw: Tween) => tweenAt(tw, frameAt, ms(RING_MS));
 
-  /** One more reading of the time away; the history's right edge sets off towards its newest point. */
+  /** One more poll of the time away; the history's right edge sets off towards it. */
   function remember(r: AwayReading) {
-    const before = away.points;
     away = awayPush(away, r, awayThresholds());
-    const t = performance.now();
-    // Merged points draw another line: the old one gives way to it instead of vanishing.
-    if (away.points.length < before.length) merged = { points: before, at: t };
-    axisTw = retarget(axisTw, away.points[away.points.length - 1].at, t, ms(LINE_MS), null);
+    axisTw = retarget(axisTw, away.lastAt, performance.now(), ms(LINE_MS), null);
+  }
+
+  /** One more sample of the small cards' chart. */
+  function pushHist(s: IdleSample) {
+    hist = pushSample(hist, s, HIST_KEEP);
+    histSeq += 1;
   }
 
   const awayThresholds = (): AwayThresholds => ({
@@ -203,6 +236,9 @@
 
   /** One poll of the feed: a reading at `at`, or null — that poll failed. */
   function onReading(m: Metrics | null, at = Date.now()) {
+    // A silence longer than a gap — a hidden window skips its polls, a sleeping
+    // computer makes none — breaks the small chart too: nothing was read in it.
+    if (silentSince(away.lastAt, at, away.gapMs)) pushHist(NO_SAMPLE);
     if (m) {
       cpu = m.cpuPct ?? cpu;
       mem = memPct(m.memUsed, m.memTotal) ?? mem;
@@ -210,8 +246,7 @@
       cpuCount = m.cpuCount ?? cpuCount;
       uptimeSecs = m.uptimeSecs ?? uptimeSecs;
       host = m.hostname || alias || host;
-      hist = pushSample(hist, idleSample(m.cpuPct, memPct(m.memUsed, m.memTotal), load1, cpuCount), HIST_KEEP);
-      histSeq += 1;
+      pushHist(idleSample(m.cpuPct, memPct(m.memUsed, m.memTotal), load1, cpuCount));
       load5 = m.load5;
       load15 = m.load15;
       memUsed = m.memUsed;
@@ -219,6 +254,7 @@
       diskUsed = m.diskUsed;
       diskTotal = m.diskTotal;
       cpuTemp = m.cpuTemp;
+      lastMetrics = m;
       osName = m.prettyName || m.os;
       login = m.user && m.ip ? `${m.user}@${m.ip}` : m.user || m.ip;
       offsetMin = serverOffset(m.serverTime, at);
@@ -236,15 +272,21 @@
     } else {
       // The numbers keep their last values, but the history does not pretend
       // to have seen this moment: a gap, not a line drawn through it.
+      pushHist(NO_SAMPLE);
       remember(gapReading(at));
     }
     // What is shown sets off towards the reading from wherever it stands.
     const t = performance.now();
+    const swap = swapShare(lastMetrics?.swapUsed ?? null, lastMetrics?.swapTotal ?? null);
     shownTw = {
       cpu: retarget(shownTw.cpu, cpu, t, ms(RING_MS)),
       mem: retarget(shownTw.mem, mem, t, ms(RING_MS)),
       load: retarget(shownTw.load, load1, t, ms(RING_MS)),
       disk: retarget(shownTw.disk, diskUsed != null && diskTotal ? (diskUsed / diskTotal) * 100 : null, t, ms(RING_MS)),
+      swap: retarget(shownTw.swap, typeof swap === "number" ? swap * 100 : null, t, ms(RING_MS)),
+      rx: retarget(shownTw.rx, lastMetrics?.netRxRate ?? null, t, ms(RING_MS), null),
+      tx: retarget(shownTw.tx, lastMetrics?.netTxRate ?? null, t, ms(RING_MS), null),
+      temp: retarget(shownTw.temp, cpuTemp, t, ms(RING_MS), null),
     };
     histTw = retarget(histTw, histSeq < 0 ? null : histSeq, t, ms(LINE_MS), null);
     // Reduced motion has no rAF loop: the frame drawn at activation predates
@@ -272,12 +314,13 @@
       hist = [];
       cpu = mem = load1 = cpuCount = uptimeSecs = null;
       load5 = load15 = memUsed = memTotal = diskUsed = diskTotal = cpuTemp = offsetMin = null;
+      lastMetrics = null;
       osName = login = zone = "";
-      away = emptyAway();
-      shownTw = { cpu: still(null), mem: still(null), load: still(null), disk: still(null) };
-      axisTw = histTw = still(null);
+      away = emptyAway(pollEveryMs(false));
+      shownTw = noneShown();
+      axisTw = histTw = loadTopTw = still(null);
       histSeq = -1;
-      merged = null;
+      strip = null;
       leftAt = Date.now() - (performance.now() - lastActivity);
       // What the feed already read shows at once; then every poll of its beat.
       const id = sessionId;
@@ -1050,108 +1093,56 @@
       return;
     }
 
-    // Four rings: the value in the middle, coloured by the status bar's thresholds.
-    const step = rw / 4;
-    const R = big ? Math.min(84, step / 2 - 22) : Math.max(16, Math.min(f * 0.37, step / 2 - 14));
-    const ry = P + (big ? 110 : 52) + R;
-    const vf = big ? R * 0.4 : R * 0.52;
-    // Each ring and its number run to the reading: the number counts on the way.
-    const th = settings.statusBarThresholds;
-    const sCpu = shown(shownTw.cpu);
-    const sMem = shown(shownTw.mem);
-    const sLoad = shown(shownTw.load);
-    const sDisk = shown(shownTw.disk);
-    const free = diskFree(diskUsed, diskTotal);
-    const rings: [number | null, string, string, string, ThresholdLevel, string[]][] = [
-      [
-        ringFraction(sCpu, 100),
-        p.green,
-        fmtPct(sCpu),
-        "CPU",
-        thresholdLevel(sCpu, th.cpu),
-        [[cpuCount != null ? t("idle.cores", { n: cpuCount }) : "", cpuTemp != null ? `${Math.round(cpuTemp)} °C` : ""].filter(Boolean).join(" · ")],
-      ],
-      [
-        ringFraction(sMem, 100),
-        p.blue,
-        fmtPct(sMem),
-        "MEM",
-        thresholdLevel(sMem, th.ram),
-        [memUsed != null && memTotal != null ? `${fmtBytes(memUsed)} / ${fmtBytes(memTotal)}` : ""],
-      ],
-      [
-        ringFraction(sLoad, cpuCount),
-        p.yellow,
-        sLoad != null ? sLoad.toFixed(2) : "—",
-        "LOAD",
-        loadHealth(sLoad, sLoad != null && cpuCount ? sLoad / cpuCount : null, th.load),
-        [load5 != null && load15 != null ? `5m ${load5.toFixed(2)} · 15m ${load15.toFixed(2)}` : ""],
-      ],
-      [
-        ringFraction(sDisk, 100),
-        p.magenta,
-        fmtPct(sDisk),
-        "DISK",
-        thresholdLevel(sDisk, th.disk),
-        [free != null ? t("idle.diskFree", { size: fmtBytes(free) }) : ""],
-      ],
-    ];
-    rings.forEach(([frac, color, value, label, level, subs], i) => {
-      ringGauge(ctx, rx0 + step * i + step / 2, ry, R, big ? R * 0.1 : 4, frac, color, value, levelColor(level, p), label, big ? subs : [], vf, step, p);
-    });
+    // How the host is now — the status bar's own verdict — and what the charts do
+    // not show: disk, swap, network, temperature (ADR 0065). CPU, memory and load
+    // are told once, by the rings at the start of their charts.
+    const tw = rw - (nx - rx0);
+    const vy = P + (big ? 46 : 25) + (big ? 38 : 20);
+    const verdict = verdictLine(lastMetrics != null, barProblems(lastMetrics, settings.statusBarThresholds));
+    if (verdict.kind !== "none") {
+      const level = verdict.kind === "problem" ? verdict.problem.level : "ok";
+      const color = level === "crit" ? p.red : level === "warn" ? p.yellow : p.green;
+      ctx.fillStyle = color;
+      ctx.beginPath();
+      ctx.arc(rx0 + (big ? 9 : 6), vy + (big ? 9 : 7), big ? 5 : 4, 0, 7);
+      ctx.fill();
+      const text =
+        verdict.kind === "ok"
+          ? t("idle.verdictOk")
+          : [t(verdict.problem.key, verdict.problem.params), verdict.more ? t("idle.verdictMore", { n: verdict.more }) : ""]
+              .filter(Boolean)
+              .join(" · ");
+      ctx.font = `500 ${big ? 17 : 12}px ${MONO}`;
+      ctx.fillText(fit(ctx, text, tw), nx, vy);
+    }
+    const factsBottom = drawFacts(ctx, nx, vy + (big ? 44 : 26), tw, p, big);
 
-    // The history of the whole time away, the transfer under it.
+    // The history of the time away, the transfer under it.
     // The heading in small capitals; the duration keeps its own case ("53m", not "53M").
     const header = `${t("idle.away").toLocaleUpperCase(currentLocale())} · ${fmtUptime(Math.max(0, Math.round((wall - leftAt) / 1000)))}`;
+    const reach = t("idle.chartLast", { span: spanLabel(CHART_MS) });
     if (big) {
-      // Under the clock and the rings with their details, whichever reaches lower.
-      const ringsH = R + Math.max(8, vf * 0.4) + Math.max(10, Math.round(vf * 0.4)) + 7 + Math.max(10, Math.round(vf * 0.36)) + 5;
-      const y = Math.max(P + f * 1.36, ry + ringsH + 36) + 26;
+      // Under the clock and the facts, whichever reaches lower.
+      const y = Math.max(P + f * 1.36, factsBottom + 16) + 26;
       label(ctx, header, P, y, 12, p);
-      legend(ctx, W - P, y, 12, p);
+      aside(ctx, reach, W - P, y, 12, p);
       const ty = y + 26;
       const tileH = H - ty - 76 - jobH;
       ctx.fillStyle = hexAlpha(p.foreground, 0.04);
       roundRect(ctx, P, ty, W - 2 * P, tileH, 16);
       ctx.fill();
-      const gx = P + 28;
-      const gy = ty + 52;
-      const gw = W - 2 * P - 56;
-      const gh = tileH - 52 - 40;
-      const span = drawAway(ctx, gx, gy, gw, gh, p, true);
-      const hov = span ? hovered(gx, gy, gw, gh, span.from, span.to) : null;
-      // The time under the pointer stands on the axis; the labels it would touch step aside.
-      const clear = (x: number) => !hov || Math.abs(x - hov.x) >= 56;
-      ctx.font = `11px ${MONO}`;
-      ctx.fillStyle = faint(p);
-      ctx.textAlign = "right";
-      if (clear(gx + gw - 20)) ctx.fillText(t("idle.now"), gx + gw, gy + gh + 14);
-      ctx.textAlign = "center";
-      if (span) {
-        for (const at of timeTicks(span.from, span.to, off, Math.max(2, Math.floor(gw / 150)))) {
-          const x = timeX(at, span.from, span.to, gx, gw);
-          if (x + 24 < gx + gw - 70 && clear(x)) ctx.fillText(clockLabel(at, off), x, gy + gh + 14);
-        }
-      }
-      ctx.textAlign = "left";
+      const tip = drawAway(ctx, P + 28, ty + 26, W - 2 * P - 56, tileH - 26 - 18, p, true);
       if (tr) drawTransfer(ctx, P, ty + tileH + 22, W - 2 * P, 78, p, true, tr);
-      if (span && hov) drawHover(ctx, hov, span, gx, gy, gw, gh, ty + 10, ty + tileH - 10, p, true);
+      if (tip) tooltip(ctx, tip.rows, tip.x, tip.gx, tip.gw, tip.gy, ty + 10, tip.bottom, p, true);
     } else {
-      const y = Math.max(P + f * 1.4 + 22, ry + R + 30) + 8;
+      const y = Math.max(P + f * 1.4 + 22, factsBottom + 8) + 8;
       label(ctx, header, P, y, 10, p);
-      legend(ctx, W - P, y, 10, p);
-      const gy = y + 34;
-      const gh = H - gy - 50 - jobH;
-      const span = drawAway(ctx, P, gy, W - 2 * P, gh, p, false);
-      ctx.font = `10px ${MONO}`;
-      ctx.fillStyle = faint(p);
-      if (span) ctx.fillText(clockLabel(span.from, off), P, gy + gh + 6);
-      ctx.textAlign = "right";
-      ctx.fillText(t("idle.now"), W - P, gy + gh + 6);
-      ctx.textAlign = "left";
-      if (tr) drawTransfer(ctx, P, gy + gh + 24, W - 2 * P, 44, p, false, tr);
-      const hov = span ? hovered(P, gy, W - 2 * P, gh, span.from, span.to) : null;
-      if (span && hov) drawHover(ctx, hov, span, P, gy, W - 2 * P, gh, y + 18, H - 34, p, false);
+      aside(ctx, reach, W - P, y, 10, p);
+      const gy = y + 26;
+      const gh = H - gy - 46 - jobH;
+      const tip = drawAway(ctx, P, gy, W - 2 * P, gh, p, false);
+      if (tr) drawTransfer(ctx, P, gy + gh + 10, W - 2 * P, 44, p, false, tr);
+      if (tip) tooltip(ctx, tip.rows, tip.x, tip.gx, tip.gw, tip.gy, y + 18, tip.bottom, p, false);
     }
     hint(ctx, W, H, p);
   }
@@ -1163,47 +1154,132 @@
     ctx.fillText(text, x, y);
   }
 
-  /** The chart's legend, set flush right at `right`. */
-  function legend(ctx: CanvasRenderingContext2D, right: number, y: number, size: number, p: Pal) {
-    const items: [string, string][] = [
-      ["CPU", p.green],
-      ["MEM", p.blue],
-      [t("idle.legendLoad"), p.yellow],
-    ];
+  /** A faint note set flush right at `right`. */
+  function aside(ctx: CanvasRenderingContext2D, text: string, right: number, y: number, size: number, p: Pal) {
     ctx.font = `${size}px ${MONO}`;
-    let x = right;
-    for (const [text, color] of items.reverse()) {
-      x -= ctx.measureText(text).width;
-      ctx.fillStyle = faint(p);
-      ctx.fillText(text, x, y);
-      x -= size * 0.8;
-      ctx.fillStyle = color;
-      ctx.beginPath();
-      ctx.arc(x, y + size * 0.5, size * 0.3, 0, 7);
-      ctx.fill();
-      x -= size * 1.4;
-    }
+    ctx.fillStyle = faint(p);
+    ctx.textAlign = "right";
+    ctx.fillText(text, right, y);
+    ctx.textAlign = "left";
   }
 
-  /** One ring: its track, the filled share, the value inside, the name and details under it. */
-  function ringGauge(
+  /** One fact above the charts: its name, its value coloured by the thresholds, a bar when it has a ceiling, a note. */
+  interface Fact {
+    label: string;
+    value: string;
+    level: ThresholdLevel;
+    share: number | null;
+    color: string;
+    note: string;
+  }
+
+  /**
+   * What the charts do not show, two to a row from (`x`, `y`) across `w`: disk
+   * and swap against their size, network and temperature as they read. Each
+   * value runs to its reading like the rest. Returns the bottom of the block.
+   */
+  function drawFacts(ctx: CanvasRenderingContext2D, x: number, y: number, w: number, p: Pal, big: boolean): number {
+    const th = settings.statusBarThresholds;
+    const sDisk = shown(shownTw.disk);
+    const sSwap = shown(shownTw.swap);
+    const sRx = shown(shownTw.rx);
+    const sTx = shown(shownTw.tx);
+    const sTemp = shown(shownTw.temp);
+    const free = diskFree(diskUsed, diskTotal);
+    const swap = swapShare(lastMetrics?.swapUsed ?? null, lastMetrics?.swapTotal ?? null);
+    const swapBytes =
+      typeof swap === "number" && lastMetrics?.swapUsed != null && lastMetrics.swapTotal != null
+        ? `${fmtBytes(lastMetrics.swapUsed)} / ${fmtBytes(lastMetrics.swapTotal)}`
+        : "";
+    const facts: Fact[] = [
+      {
+        label: t("idle.factDisk"),
+        value: fmtPct(sDisk),
+        level: thresholdLevel(sDisk, th.disk),
+        share: ringFraction(sDisk, 100),
+        color: p.magenta,
+        note: free != null ? t("idle.diskFree", { size: fmtBytes(free) }) : "",
+      },
+      {
+        label: t("mon.swap"),
+        value: swap === "none" ? t("idle.noSwap") : fmtPct(sSwap),
+        level: swap === "none" ? "ok" : thresholdLevel(sSwap, th.swap),
+        share: swap === "none" ? null : ringFraction(sSwap, 100),
+        color: p.blue,
+        note: swapBytes,
+      },
+      {
+        label: t("mon.network"),
+        value: sRx == null && sTx == null ? "—" : `↓${fmtRate(sRx)} ↑${fmtRate(sTx)}`,
+        level: "ok",
+        share: null,
+        color: p.foreground,
+        note: "",
+      },
+      {
+        label: t("mon.temperature"),
+        value: sTemp == null ? "—" : `${Math.round(sTemp)} °C`,
+        level: thresholdLevel(sTemp, th.cpuTemp),
+        share: null,
+        color: p.foreground,
+        note: "",
+      },
+    ];
+    const gap = big ? 40 : 24;
+    const cw = (w - gap) / 2;
+    const rowH = big ? 64 : 28;
+    facts.forEach((f, i) => {
+      const fx = x + (i % 2) * (cw + gap);
+      const fy = y + Math.floor(i / 2) * rowH;
+      ctx.font = `500 ${big ? 12 : 11}px ${MONO}`;
+      ctx.fillStyle = muted(p);
+      const name = f.label.toLocaleUpperCase(currentLocale());
+      ctx.fillText(name, fx, fy + (big ? 6 : 2));
+      const nameW = ctx.measureText(name).width;
+      // A long value (the network's two rates) steps down a size before it is cut.
+      const room = cw - nameW - 10;
+      const sizes = big ? [22, 17] : [14, 12];
+      for (const size of sizes) {
+        ctx.font = `300 ${size}px ${MONO}`;
+        if (ctx.measureText(f.value).width <= room) break;
+      }
+      ctx.fillStyle = levelColor(f.level, p);
+      ctx.textAlign = "right";
+      ctx.fillText(fit(ctx, f.value, room), fx + cw, fy + (big ? 2 : 0));
+      ctx.textAlign = "left";
+      if (f.share != null) {
+        const by = fy + (big ? 30 : 19);
+        const bh = big ? 4 : 3;
+        ctx.fillStyle = hexAlpha(p.foreground, 0.08);
+        ctx.fillRect(fx, by, cw, bh);
+        ctx.fillStyle = f.color;
+        ctx.fillRect(fx, by, cw * f.share, bh);
+      }
+      if (big && f.note) {
+        ctx.font = `12px ${MONO}`;
+        ctx.fillStyle = faint(p);
+        ctx.fillText(fit(ctx, f.note, cw), fx, fy + 40);
+      }
+    });
+    return y + 2 * rowH;
+  }
+
+  /** A ring at the start of a chart: its track, the filled share, the value inside. */
+  function miniRing(
     ctx: CanvasRenderingContext2D,
     cx: number,
     cy: number,
     R: number,
-    sw: number,
     frac: number | null,
     color: string,
     value: string,
     valueColor: string,
-    name: string,
-    subs: string[],
-    vf: number,
-    room: number,
+    big: boolean,
     p: Pal,
   ) {
-    const r = R - sw / 2;
-    ctx.lineWidth = sw;
+    const lw = big ? 4 : 3;
+    const r = R - lw / 2;
+    ctx.lineWidth = lw;
     ctx.strokeStyle = hexAlpha(p.foreground, 0.08);
     ctx.beginPath();
     ctx.arc(cx, cy, r, 0, Math.PI * 2);
@@ -1219,99 +1295,390 @@
     ctx.textAlign = "center";
     ctx.textBaseline = "middle";
     ctx.fillStyle = valueColor;
-    ctx.font = `200 ${Math.round(vf)}px ${MONO}`;
-    ctx.fillText(fit(ctx, value, R * 1.7), cx, cy + 1);
+    ctx.font = `300 ${Math.max(11, Math.round(R * 0.5))}px ${MONO}`;
+    ctx.fillText(fit(ctx, value, 2 * r - lw - 2), cx, cy + 1);
     ctx.textBaseline = "top";
-    const lf = Math.max(10, Math.round(vf * 0.4));
-    let y = cy + R + Math.max(8, vf * 0.4);
-    ctx.font = `500 ${lf}px ${MONO}`;
-    ctx.fillStyle = muted(p);
-    ctx.fillText(name, cx, y);
-    y += lf + 7;
-    const sf = Math.max(10, Math.round(vf * 0.36));
-    ctx.font = `${sf}px ${MONO}`;
-    ctx.fillStyle = faint(p);
-    for (const sub of subs) {
-      if (sub) ctx.fillText(fit(ctx, sub, room - 8), cx, y);
-      y += sf + 5;
-    }
     ctx.textAlign = "left";
   }
 
-  /**
-   * The history of the time away in a `gw × gh` box: CPU (filled), memory and
-   * load on one 0…1 axis placed by time — the lines alone: what happened at a
-   * moment is the tooltip's (`drawHover`). Returns the time span drawn, or null
-   * before the first sample.
-   */
-  function drawAway(
-    ctx: CanvasRenderingContext2D,
-    gx: number,
-    gy: number,
-    gw: number,
-    gh: number,
-    p: Pal,
-    big: boolean,
-  ): { from: number; to: number } | null {
-    chartAxes(ctx, gx, gy, gw, gh, p);
-    const pts = away.points;
-    if (!pts.length) return null;
-    const from = pts[0].at;
-    // The right edge on its way to the newest point: the line draws itself on.
-    const to = tweenAt(axisTw, frameAt, ms(LINE_MS)) ?? pts[pts.length - 1].at;
-    const series = (points: readonly AwayPoint[], key: keyof IdleSample, color: string, fill: boolean) => {
-      for (const run of timeRuns(points, key, from, to, gx, gy, gw, gh)) {
-        if (fill && run.length > 1) {
-          ctx.beginPath();
-          ctx.moveTo(run[0].x, gy + gh);
-          run.forEach((pt) => ctx.lineTo(pt.x, pt.y));
-          ctx.lineTo(run[run.length - 1].x, gy + gh);
-          ctx.closePath();
-          ctx.fillStyle = hexAlpha(color, 0.12);
-          ctx.fill();
-        }
-        ctx.beginPath();
-        run.forEach((pt, i) => (i ? ctx.lineTo(pt.x, pt.y) : ctx.moveTo(pt.x, pt.y)));
-        if (run.length === 1) ctx.lineTo(run[0].x + 1, run[0].y);
-        ctx.strokeStyle = color;
-        ctx.lineWidth = big ? 1.8 : 1.4;
-        ctx.stroke();
-      }
-    };
-    const lines = (points: readonly AwayPoint[]) => {
-      series(points, "mem", p.blue, false);
-      series(points, "load", p.yellow, false);
-      series(points, "cpu", p.green, true);
-    };
-    // Just after its points merged, the old line fades out as the new one comes in —
-    // within whatever the card itself is drawn at (its layout may be fading too).
-    const base = ctx.globalAlpha;
-    const k = merged ? easeOut(progress(merged.at, frameAt, ms(MERGE_MS))) : 1;
-    if (merged && k < 1) {
-      ctx.globalAlpha = base * (1 - k);
-      lines(merged.points);
-      ctx.globalAlpha = base * k;
-    } else merged = null;
-    lines(pts);
-    ctx.globalAlpha = base;
-    return { from, to };
+  /** What the tooltip says about what is under the pointer, and the box it may stand in. */
+  interface HistoryTip {
+    rows: TipRow[];
+    x: number;
+    gx: number;
+    gw: number;
+    gy: number;
+    bottom: number;
   }
 
-  /** The point under the pointer on a chart drawn at `gx, gy` (`gw × gh`) over `from…to`, or null. */
-  function hovered(
-    gx: number,
-    gy: number,
-    gw: number,
-    gh: number,
-    from: number,
-    to: number,
-  ): { i: number; x: number } | null {
+  /** The three charts, top to bottom. */
+  const SERIES: [AwayKey, string][] = [
+    ["cpu", "CPU"],
+    ["mem", "MEM"],
+    ["load", "LOAD"],
+  ];
+  const seriesColor = (key: AwayKey, p: Pal) => (key === "cpu" ? p.green : key === "mem" ? p.blue : p.yellow);
+  const fmtValue = (key: AwayKey, v: number) => (key === "load" ? v.toFixed(2) : fmtPct(v));
+
+  /** The level a value of `key` stands at against the status bar's thresholds. */
+  function levelOf(key: AwayKey, v: number | null, cores: number | null): ThresholdLevel {
+    const th = settings.statusBarThresholds;
+    if (key === "cpu") return thresholdLevel(v, th.cpu);
+    if (key === "mem") return thresholdLevel(v, th.ram);
+    return loadHealth(v, v != null && cores ? v / cores : null, th.load);
+  }
+
+  /** The pointer over the layout as drawn — the burn-in shift taken off — or null when it shows no tooltip. */
+  function hovered(): { x: number; y: number } | null {
     if (!pointer || !hoverShown(movedAt, performance.now())) return null;
     const x = pointer.x - drift.dx;
     const y = pointer.y - drift.dy;
-    if (y < gy - HOVER_SLACK || y > gy + gh + HOVER_SLACK) return null;
-    const i = pointAt(away.points, x, from, to, gx, gw);
-    return i < 0 ? null : { i, x: timeX(away.points[i].at, from, to, gx, gw) };
+    return { x, y };
+  }
+
+  /**
+   * The history of the time away in a `w × h` block at (`x`, `y`): CPU, memory
+   * and load, each on a chart of its own over the last `CHART_MS` — the mean as
+   * a line, lowest to highest as a band around it — and under them the strip of
+   * the whole time away. The window slides right to left and never squeezes;
+   * what happened at a moment is the tooltip's. Returns what the tooltip says
+   * about what is under the pointer, or null.
+   */
+  function drawAway(
+    ctx: CanvasRenderingContext2D,
+    x: number,
+    y: number,
+    w: number,
+    h: number,
+    p: Pal,
+    big: boolean,
+  ): HistoryTip | null {
+    const lay = historyLayout(h, big);
+    const gut = big ? 210 : 116;
+    const gx = x + gut;
+    const gw = Math.max(1, w - gut);
+    const chartH = lay.axisY;
+    // The right edge on its way to the newest poll: the lines slide left, the scale holds.
+    const to = tweenAt(axisTw, frameAt, ms(LINE_MS)) ?? away.lastAt ?? Date.now();
+    const from = chartFrom(to);
+    const off = offsetMin ?? 0;
+    const pos = (at: number) => timeX(at, from, to, gx, gw);
+    const small = `${big ? 11 : 10}px ${MONO}`;
+    const gaps = awayGaps(away.buckets, away.bucketMs, away.pending, away.lastAt);
+    const ptr = hovered();
+    const onCharts = ptr != null && ptr.y >= y - HOVER_SLACK && ptr.y <= y + chartH + HOVER_SLACK;
+    const hitAt = ptr && onCharts ? timeAtX(ptr.x, from, to, gx, gw) : null;
+    const hit = hitAt == null ? null : chartHit(away.buckets, gaps, hitAt, from, to);
+    const hitSpan = hit && "span" in hit ? away.buckets[hit.span] : null;
+
+    // Where nothing was read: shaded, and named where there is room. The lines break there.
+    ctx.font = small;
+    for (const g of gaps) {
+      const x0 = Math.max(gx, pos(g.from));
+      const x1 = Math.min(gx + gw, pos(g.to));
+      if (x1 - x0 < 1) continue;
+      ctx.fillStyle = hexAlpha(p.foreground, hit && "gap" in hit && hit.gap === g ? 0.08 : 0.035);
+      ctx.fillRect(x0, y, x1 - x0, chartH);
+      const text = `${t("idle.tipNoData")} · ${spanLabel(g.to - g.from)}`;
+      if (x1 - x0 >= ctx.measureText(text).width + 24) {
+        ctx.fillStyle = faint(p);
+        ctx.textAlign = "center";
+        ctx.fillText(text, (x0 + x1) / 2, y + 4);
+        ctx.textAlign = "left";
+      }
+    }
+    // When the user left, while it is in sight: the history begins about there.
+    if (leftAt > from && leftAt < to) {
+      const lx = Math.round(pos(leftAt)) + 0.5;
+      ctx.strokeStyle = hexAlpha(p.foreground, 0.25);
+      ctx.lineWidth = 1;
+      ctx.setLineDash([3, 4]);
+      ctx.beginPath();
+      ctx.moveTo(lx, y);
+      ctx.lineTo(lx, y + chartH);
+      ctx.stroke();
+      ctx.setLineDash([]);
+      const text = t("idle.leftAt", { time: clockLabel(leftAt, off) });
+      ctx.fillStyle = faint(p);
+      if (lx - gx >= ctx.measureText(text).width + 12) {
+        ctx.textAlign = "right";
+        ctx.fillText(text, lx - 6, y + 4);
+        ctx.textAlign = "left";
+      } else ctx.fillText(text, lx + 6, y + 4);
+    }
+
+    // Three charts, each on its own scale: CPU and memory against 100 %, load
+    // against the cores or the highest load in sight — its ceiling moves, never jumps.
+    const wantTop = loadCeiling(windowPeak(away.buckets, "load", from), cpuCount);
+    loadTopTw = retarget(loadTopTw, wantTop, frameAt, ms(SCALE_MS), null);
+    const loadTop = tweenAt(loadTopTw, frameAt, ms(SCALE_MS)) ?? wantTop;
+    const values: Record<AwayKey, number | null> = {
+      cpu: shown(shownTw.cpu),
+      mem: shown(shownTw.mem),
+      load: shown(shownTw.load),
+    };
+    SERIES.forEach(([key, name], i) => {
+      const ry = y + lay.rowY[i];
+      const rh = lay.rowH;
+      const color = seriesColor(key, p);
+      const top = key === "load" ? loadTop : 100;
+      const yOf = (v: number) => ry + rh - Math.min(1, Math.max(0, v / top)) * rh;
+      // The floor, and a line to read the height by: half for CPU and memory, the cores for load.
+      ctx.lineWidth = 1;
+      ctx.strokeStyle = hexAlpha(p.foreground, 0.16);
+      ctx.beginPath();
+      ctx.moveTo(gx, Math.round(ry + rh) + 0.5);
+      ctx.lineTo(gx + gw, Math.round(ry + rh) + 0.5);
+      ctx.stroke();
+      if (key !== "load") {
+        const my = Math.round(yOf(50)) + 0.5;
+        ctx.strokeStyle = hexAlpha(p.foreground, 0.06);
+        ctx.beginPath();
+        ctx.moveTo(gx, my);
+        ctx.lineTo(gx + gw, my);
+        ctx.stroke();
+      } else if (cpuCount != null && cpuCount > 0) {
+        const cy = Math.round(yOf(cpuCount)) + 0.5;
+        ctx.strokeStyle = hexAlpha(p.yellow, 0.4);
+        ctx.setLineDash([3, 4]);
+        ctx.beginPath();
+        ctx.moveTo(gx, cy);
+        ctx.lineTo(gx + gw, cy);
+        ctx.stroke();
+        ctx.setLineDash([]);
+        if (rh >= 28) {
+          ctx.font = small;
+          ctx.fillStyle = faint(p);
+          ctx.textAlign = "right";
+          ctx.fillText(t("idle.cores", { n: cpuCount }), gx + gw, cy - (big ? 15 : 13));
+          ctx.textAlign = "left";
+        }
+      }
+      // The band and the mean, cut at the chart's sides.
+      ctx.save();
+      ctx.beginPath();
+      ctx.rect(gx, ry - 3, gw, rh + 6);
+      ctx.clip();
+      let end: { x: number; y: number } | null = null;
+      for (const run of bandRuns(away.buckets, key, away.bucketMs)) {
+        if (run.length > 1) {
+          ctx.beginPath();
+          run.forEach((pt, j) => (j ? ctx.lineTo(pos(pt.at), yOf(pt.hi)) : ctx.moveTo(pos(pt.at), yOf(pt.hi))));
+          for (let j = run.length - 1; j >= 0; j--) ctx.lineTo(pos(run[j].at), yOf(run[j].lo));
+          ctx.closePath();
+          ctx.fillStyle = hexAlpha(color, 0.2);
+          ctx.fill();
+        }
+        ctx.beginPath();
+        run.forEach((pt, j) => (j ? ctx.lineTo(pos(pt.at), yOf(pt.mean)) : ctx.moveTo(pos(pt.at), yOf(pt.mean))));
+        if (run.length === 1) ctx.lineTo(pos(run[0].at) + 1, yOf(run[0].mean));
+        ctx.strokeStyle = color;
+        ctx.lineWidth = big ? 1.8 : 1.4;
+        ctx.lineJoin = "round";
+        ctx.stroke();
+        ctx.lineJoin = "miter";
+        const last = run[run.length - 1];
+        end = { x: pos(last.at), y: yOf(last.mean) };
+      }
+      ctx.restore();
+      // Where the line is now — unless the newest poll read nothing.
+      const dots: { x: number; y: number }[] = [];
+      if (end && away.pending == null && end.x <= gx + gw + 0.5) dots.push(end);
+      const a = hitSpan?.[key];
+      if (hitSpan && a) dots.push({ x: pos(spanMid(hitSpan)), y: yOf(a.sum / a.n) });
+      for (const d of dots) {
+        ctx.fillStyle = p.background;
+        ctx.beginPath();
+        ctx.arc(d.x, d.y, big ? 5.5 : 4.5, 0, 7);
+        ctx.fill();
+        ctx.fillStyle = color;
+        ctx.beginPath();
+        ctx.arc(d.x, d.y, big ? 3.5 : 3, 0, 7);
+        ctx.fill();
+      }
+      // Its ring — the value now, at the start of its own chart, told nowhere else
+      // (ADR 0065) — its name, the highest in sight and, with room, what it is out of.
+      const v = values[key];
+      const vColor = v == null ? faint(p) : levelColor(levelOf(key, v, cpuCount), p);
+      const vText = v == null ? "—" : fmtValue(key, v);
+      const peak = windowPeak(away.buckets, key, from);
+      const peakText = peak == null ? "" : t("idle.peak", { value: key === "load" ? peak.toFixed(1) : `${Math.round(peak)}%` });
+      const R = gutterRing(rh, big);
+      if (R == null) {
+        // Too low for a ring: the name and the value on one line.
+        ctx.font = `500 ${big ? 12 : 10}px ${MONO}`;
+        ctx.fillStyle = muted(p);
+        ctx.fillText(name, x, ry);
+        const nw = ctx.measureText(`${name} `).width;
+        ctx.font = `${big ? 13 : 11}px ${MONO}`;
+        ctx.fillStyle = vColor;
+        ctx.fillText(fit(ctx, vText, gut - nw - 4), x + nw, ry - 1);
+      } else {
+        const cy = ry + rh / 2;
+        miniRing(ctx, x + R, cy, R, key === "load" ? ringFraction(v, cpuCount) : ringFraction(v, 100), color, vText, vColor, big, p);
+        const lx = x + 2 * R + (big ? 14 : 9);
+        const room = gut - (lx - x) - 4;
+        const detail = !big
+          ? ""
+          : key === "cpu"
+            ? cpuCount != null
+              ? t("idle.cores", { n: cpuCount })
+              : ""
+            : key === "mem"
+              ? memUsed != null && memTotal != null
+                ? `${fmtBytes(memUsed)} / ${fmtBytes(memTotal)}`
+                : ""
+              : load5 != null && load15 != null
+                ? `5m ${load5.toFixed(2)} · 15m ${load15.toFixed(2)}`
+                : "";
+        const lines: [string, string, string][] = [
+          [name, `500 ${big ? 12 : 11}px ${MONO}`, muted(p)],
+          ...(peakText ? ([[peakText, small, faint(p)]] as [string, string, string][]) : []),
+          ...(detail ? ([[detail, small, faint(p)]] as [string, string, string][]) : []),
+        ];
+        const lh = big ? 17 : 14;
+        let ly = cy - (lines.length * lh) / 2 + 1;
+        for (const [text, font, fill] of lines) {
+          ctx.font = font;
+          ctx.fillStyle = fill;
+          ctx.fillText(fit(ctx, text, room), lx, ly);
+          ly += lh;
+        }
+      }
+    });
+    // The moment under the pointer: a thin line down all three charts.
+    const hx = hitSpan ? pos(spanMid(hitSpan)) : null;
+    if (hx != null) {
+      const lx = Math.round(hx) + 0.5;
+      ctx.strokeStyle = hexAlpha(p.foreground, 0.22);
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.moveTo(lx, y);
+      ctx.lineTo(lx, y + chartH);
+      ctx.stroke();
+    }
+
+    // The time axis: round minutes of the server's clock, sliding with the charts.
+    const ay = y + lay.axisY + (big ? 8 : 5);
+    const clear = (tx: number) => hx == null || Math.abs(tx - hx) >= 56;
+    ctx.font = small;
+    ctx.fillStyle = faint(p);
+    ctx.textAlign = "right";
+    if (clear(gx + gw - 20)) ctx.fillText(t("idle.now"), gx + gw, ay);
+    ctx.textAlign = "center";
+    for (const at of timeTicks(from, to, off, Math.max(2, Math.floor(gw / (big ? 150 : 110))))) {
+      const tx = pos(at);
+      if (tx > gx + 20 && tx + 24 < gx + gw - 60 && clear(tx)) ctx.fillText(clockLabel(at, off), tx, ay);
+    }
+    ctx.textAlign = "left";
+    if (hitSpan && hx != null && big) timeChip(ctx, hx, ay - 4, clockLabel(spanMid(hitSpan), off), p);
+
+    // The strip of the whole time away, a step coarser whenever it runs out of room.
+    let tip: HistoryTip | null = null;
+    if (hitSpan) tip = { rows: bucketRows(hitSpan, big, p), x: hx ?? gx, gx, gw, gy: y, bottom: y + h };
+    else if (hit && "gap" in hit) {
+      const gx0 = Math.max(gx, pos(hit.gap.from));
+      const gx1 = Math.min(gx + gw, pos(hit.gap.to));
+      tip = { rows: gapRows(hit.gap), x: (gx0 + gx1) / 2, gx, gw, gy: y, bottom: y + h };
+    }
+    const since = away.firstAt;
+    if (since == null) return tip;
+    const sy = y + lay.stripY;
+    const cy = y + lay.cellY;
+    const rowsH = lay.stripRows * lay.cellStep - (lay.cellStep - lay.cellH);
+    label(ctx, t("idle.stripTitle").toLocaleUpperCase(currentLocale()), gx, sy, big ? 11 : 10, p);
+    aside(ctx, t("idle.stripFrame"), gx + gw, sy, big ? 11 : 10, p);
+    const view = stripView(away.cells, away.step, since, to, Math.max(8, Math.floor(gw / (big ? 5 : 4))));
+    // A step up redraws every cell: the old strip gives way to the new one.
+    if (!strip || strip.view.count !== view.count) strip = { view, was: null, at: frameAt };
+    else if (strip.view.step !== view.step) strip = { view, was: strip.view, at: frameAt };
+    else strip.view = view;
+    const k = strip.was ? easeOut(progress(strip.at, frameAt, ms(MERGE_MS))) : 1;
+    const base = ctx.globalAlpha;
+    if (strip.was && k < 1) {
+      ctx.globalAlpha = base * (1 - k);
+      drawStrip(ctx, { ...strip.was, from: to - strip.was.count * strip.was.step }, since, to, gx, gw, cy, lay, p);
+      ctx.globalAlpha = base * k;
+    } else strip.was = null;
+    const slots = drawStrip(ctx, view, since, to, gx, gw, cy, lay, p);
+    ctx.globalAlpha = base;
+    // The charts' half hour, framed.
+    const fx = Math.max(gx, stripX(view, from, gx, gw));
+    ctx.strokeStyle = hexAlpha(p.foreground, 0.5);
+    ctx.lineWidth = 1;
+    ctx.strokeRect(Math.round(fx) - 1.5, Math.round(cy) - 3.5, gx + gw - Math.round(fx) + 3, rowsH + 7);
+    if (big && lay.stripRows === 3) {
+      ctx.font = small;
+      ctx.fillStyle = faint(p);
+      SERIES.forEach(([, name], i) => ctx.fillText(name, x, cy + i * lay.cellStep - 2));
+    }
+    ctx.font = small;
+    ctx.fillStyle = faint(p);
+    ctx.fillText(clockLabel(since, off), Math.max(gx, stripX(view, since, gx, gw)), y + lay.stripLabelY);
+    ctx.textAlign = "right";
+    ctx.fillText(t("idle.now"), gx + gw, y + lay.stripLabelY);
+    ctx.textAlign = "left";
+    // The slot under the pointer: outlined, and told in the tooltip.
+    if (ptr && !onCharts && ptr.y >= cy - 6 && ptr.y <= cy + rowsH + 6) {
+      const i = stripHit(slots, view, ptr.x, gx, gw);
+      if (i >= 0) {
+        const cw = gw / view.count;
+        const sx = stripX(view, slots[i].at, gx, gw);
+        ctx.strokeStyle = hexAlpha(p.foreground, 0.85);
+        ctx.strokeRect(Math.round(sx) - 0.5, Math.round(cy) - 2.5, Math.max(2, Math.round(cw)), rowsH + 5);
+        tip = { rows: slotRows(slots, i, view.step, big, p), x: sx + cw / 2, gx, gw, gy: y, bottom: cy - 8 };
+      }
+    }
+    return tip;
+  }
+
+  /** A level as the colour of its cell: nothing read is barely there, ok is quiet, over a threshold is its colour. */
+  function cellColor(level: ThresholdLevel | null | undefined, p: Pal): string {
+    if (level === "crit") return p.red;
+    if (level === "warn") return p.yellow;
+    if (level === "ok") return hexAlpha(p.foreground, 0.16);
+    return hexAlpha(p.foreground, 0.045);
+  }
+
+  /** The worst of a cell's three levels — the strip's single row. */
+  const worstOf = (l: Record<AwayKey, ThresholdLevel | null>): ThresholdLevel | null =>
+    [l.cpu, l.mem, l.load].reduce<ThresholdLevel | null>(
+      (a, b) => (b == null ? a : a == null || (b === "crit" || (b === "warn" && a === "ok")) ? b : a),
+      null,
+    );
+
+  /**
+   * The slots of `view` from `since` to `to`, a row a metric (or one row, the
+   * worst of the three), cut at the strip's sides. Returns the slots drawn.
+   */
+  function drawStrip(
+    ctx: CanvasRenderingContext2D,
+    view: StripView,
+    since: number,
+    to: number,
+    gx: number,
+    gw: number,
+    top: number,
+    lay: HistoryLayout,
+    p: Pal,
+  ): StripSlot[] {
+    const slots = stripSlots(view, since, to);
+    const cw = gw / view.count;
+    const rows: (AwayKey | null)[] = lay.stripRows === 3 ? ["cpu", "mem", "load"] : [null];
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(gx, top - 1, gw, rows.length * lay.cellStep + 2);
+    ctx.clip();
+    rows.forEach((key, row) => {
+      const ry = top + row * lay.cellStep;
+      for (const slot of slots) {
+        const level = slot.cell ? (key ? slot.cell.level[key] : worstOf(slot.cell.level)) : undefined;
+        ctx.fillStyle = cellColor(level, p);
+        ctx.fillRect(stripX(view, slot.at, gx, gw), ry, Math.max(1, cw - (cw >= 4 ? 1.2 : 0.5)), lay.cellH);
+      }
+    });
+    ctx.restore();
+    return slots;
   }
 
   /** One line of the tooltip. */
@@ -1331,59 +1698,76 @@
     return from === to ? from : `${from}–${to}`;
   }
 
-  /**
-   * What the tooltip says about point `i`: its time, that it is the peak of the
-   * readings merged into it, each value coloured by the status bar's thresholds
-   * with what it is out of, and the events it is in — or, for a stretch vterm
-   * read nothing for, that it read nothing.
-   */
-  function tipRows(i: number, big: boolean, p: Pal): TipRow[] {
-    const pts = away.points;
-    const pt: AwayPoint = pts[i];
-    const off = offsetMin ?? 0;
-    const gap = gapAround(pts, i);
-    if (gap) {
-      return [
-        { kind: "head", text: clockRange(pts[gap.first].at, pts[gap.last].until), aside: "" },
-        { kind: "note", text: t("idle.tipNoData"), aside: t("idle.tipPollFailed") },
-      ];
-    }
-    const th = settings.statusBarThresholds;
-    const cpuPct = pt.cpu == null ? null : pt.cpu * 100;
-    const memPctV = pt.mem == null ? null : pt.mem * 100;
-    const perCore = pt.load1 != null && pt.cores ? pt.load1 / pt.cores : null;
+  /** That nothing was read, and why. */
+  const gapNote = (kind: GapKind): TipRow => ({
+    kind: "note",
+    text: t("idle.tipNoData"),
+    aside: t(kind === "failed" ? "idle.tipPollFailed" : "idle.tipNotPolled"),
+  });
+
+  /** A stretch of the charts nothing was read in. */
+  function gapRows(g: AwayGap): TipRow[] {
+    return [{ kind: "head", text: clockRange(g.from, g.to), aside: spanLabel(g.to - g.from) }, gapNote(g.kind)];
+  }
+
+  /** What each metric says beside its value: the busiest process, the bytes, the cores. */
+  function besides(key: AwayKey, s: AwaySpan, big: boolean): string {
+    if (key === "cpu") return s.top;
+    if (key === "mem") return big && s.memUsed != null && s.memTotal != null ? `${fmtBytes(s.memUsed)} / ${fmtBytes(s.memTotal)}` : "";
+    return s.cores != null ? t("idle.cores", { n: s.cores }) : "";
+  }
+
+  /** A bucket of the charts: the mean of each metric, coloured by the thresholds, lowest to highest beside it. */
+  function bucketRows(s: AwaySpan, big: boolean, p: Pal): TipRow[] {
     const rows: TipRow[] = [
-      { kind: "head", text: clockLabel(pt.at, off), aside: t("idle.tipAgo", { span: spanLabel(Date.now() - pt.at) }) },
+      { kind: "head", text: clockRange(s.first, s.last), aside: t("idle.tipAgo", { span: spanLabel(Date.now() - s.last) }) },
     ];
-    if (pt.n > 1) rows.push({ kind: "sub", text: t("idle.tipPeak", { span: spanLabel(pt.until - pt.at) }) });
-    rows.push(
-      {
+    if (s.n > 1) rows.push({ kind: "sub", text: t("idle.tipMean", { span: spanLabel(away.bucketMs) }) });
+    for (const [key, name] of SERIES) {
+      const a = s[key];
+      const mean = a ? a.sum / a.n : null;
+      const range = a && a.hi > a.lo ? `${fmtValue(key, a.lo)}–${fmtValue(key, a.hi)}` : "";
+      rows.push({
         kind: "metric",
-        color: p.green,
-        label: "CPU",
-        value: fmtPct(cpuPct),
-        valueColor: levelColor(thresholdLevel(cpuPct, th.cpu), p),
-        aside: pt.top,
-      },
-      {
+        color: seriesColor(key, p),
+        label: name,
+        value: mean == null ? "—" : fmtValue(key, mean),
+        valueColor: levelColor(levelOf(key, mean, s.cores), p),
+        aside: [range, besides(key, s, big)].filter(Boolean).join(" · "),
+      });
+    }
+    return [...rows, ...eventRows(s.first, s.last, big, p)];
+  }
+
+  /** A slot of the strip: the highest of each metric in it, coloured by the worst level reached — or that nothing was read. */
+  function slotRows(slots: readonly StripSlot[], i: number, len: number, big: boolean, p: Pal): TipRow[] {
+    const slot = slots[i];
+    const head = clockRange(slot.at, slot.at + len);
+    const cell = slot.cell;
+    if (!cell) return [{ kind: "head", text: head, aside: "" }, gapNote(slotGap(slots, i, away.pending))];
+    const rows: TipRow[] = [
+      { kind: "head", text: head, aside: t("idle.tipAgo", { span: spanLabel(Date.now() - cell.last) }) },
+    ];
+    if (cell.n > 1) rows.push({ kind: "sub", text: t("idle.tipPeak", { span: spanLabel(len) }) });
+    for (const [key, name] of SERIES) {
+      const a = cell[key];
+      rows.push({
         kind: "metric",
-        color: p.blue,
-        label: "MEM",
-        value: fmtPct(memPctV),
-        valueColor: levelColor(thresholdLevel(memPctV, th.ram), p),
-        aside: big && pt.memUsed != null && pt.memTotal != null ? `${fmtBytes(pt.memUsed)} / ${fmtBytes(pt.memTotal)}` : "",
-      },
-      {
-        kind: "metric",
-        color: p.yellow,
-        label: "LOAD",
-        value: pt.load1 != null ? pt.load1.toFixed(2) : "—",
-        valueColor: levelColor(loadHealth(pt.load1, perCore, th.load), p),
-        aside: pt.cores != null ? t("idle.cores", { n: pt.cores }) : "",
-      },
-    );
-    const events = eventsAt(away.events, pt);
-    if (events.length) rows.push({ kind: "rule" });
+        color: seriesColor(key, p),
+        label: name,
+        value: a ? fmtValue(key, a.hi) : "—",
+        valueColor: levelColor(cell.level[key] ?? "ok", p),
+        aside: besides(key, cell, big),
+      });
+    }
+    return [...rows, ...eventRows(cell.first, cell.last, big, p)];
+  }
+
+  /** The events a stretch shares time with: under a rule, each with when it was and its peak. */
+  function eventRows(from: number, to: number, big: boolean, p: Pal): TipRow[] {
+    const off = offsetMin ?? 0;
+    const events = eventsAt(away.events, from, to);
+    const rows: TipRow[] = events.length ? [{ kind: "rule" }] : [];
     for (const e of events) {
       const name = e.key === "cpu" ? "CPU" : e.key === "mem" ? "MEM" : "LOAD";
       const color = e.level === "crit" ? p.red : p.yellow;
@@ -1404,61 +1788,6 @@
       rows.push({ kind: "event", color, text: over, aside: `${when} · ${peak}` });
     }
     return rows;
-  }
-
-  /**
-   * The point under the pointer: a thin line down the chart, a dot on each line,
-   * its time on the axis (full form), the stretch with no readings shaded, and
-   * the tooltip beside it, kept between `top` and `bottom`.
-   */
-  function drawHover(
-    ctx: CanvasRenderingContext2D,
-    hov: { i: number; x: number },
-    span: { from: number; to: number },
-    gx: number,
-    gy: number,
-    gw: number,
-    gh: number,
-    top: number,
-    bottom: number,
-    p: Pal,
-    big: boolean,
-  ) {
-    const pts = away.points;
-    const pt = pts[hov.i];
-    const gap = gapAround(pts, hov.i);
-    if (gap) {
-      // From the last point read before the gap to the first one after it: where the line breaks.
-      const x0 = gap.first > 0 ? timeX(pts[gap.first - 1].at, span.from, span.to, gx, gw) : gx;
-      const x1 = gap.last < pts.length - 1 ? timeX(pts[gap.last + 1].at, span.from, span.to, gx, gw) : gx + gw;
-      ctx.fillStyle = hexAlpha(p.foreground, 0.05);
-      ctx.fillRect(x0, gy, Math.max(1, x1 - x0), gh);
-    }
-    const lx = Math.round(hov.x) + 0.5;
-    ctx.strokeStyle = hexAlpha(p.foreground, 0.22);
-    ctx.lineWidth = 1;
-    ctx.beginPath();
-    ctx.moveTo(lx, gy);
-    ctx.lineTo(lx, gy + gh);
-    ctx.stroke();
-    const dots: [keyof IdleSample, string][] = [
-      ["mem", p.blue],
-      ["load", p.yellow],
-      ["cpu", p.green],
-    ];
-    for (const [key, color] of dots) {
-      const v = pt[key];
-      if (v == null) continue;
-      ctx.fillStyle = color;
-      ctx.strokeStyle = p.background;
-      ctx.lineWidth = 2.5;
-      ctx.beginPath();
-      ctx.arc(hov.x, gy + gh - Math.min(1, Math.max(0, v)) * gh, big ? 4.5 : 3.5, 0, 7);
-      ctx.fill();
-      ctx.stroke();
-    }
-    if (big) timeChip(ctx, hov.x, gy + gh + 9, clockLabel(pt.at, offsetMin ?? 0), p);
-    tooltip(ctx, tipRows(hov.i, big, p), hov.x, gx, gw, gy, top, bottom, p, big);
   }
 
   /** The time under the pointer, on the axis. */
