@@ -23,7 +23,8 @@
   } from "../api";
   import { untrack } from "svelte";
   import { parentDir } from "./filemove";
-  import { isRoot, joinPath, parentOf } from "./fspath";
+  import { baseName, isRoot, joinPath, parentOf } from "./fspath";
+  import { MARK_DOT, type SftpGroup } from "./groupupload";
   import type { FileBrowserAdapter } from "./filebrowser";
   import type { FileEntry } from "../types";
   import { notifyError } from "../stores/toasts.svelte";
@@ -53,6 +54,7 @@
     followTerminal = false,
     visible = true,
     prod = false,
+    group = null,
     onToggleFollowTerminal,
     onOpenFile,
     onUserNavigate,
@@ -69,6 +71,12 @@
     visible?: boolean;
     /** A production server: taking on another user says so in red. */
     prod?: boolean;
+    /**
+     * Synchronous input is on for this session (ADR 0064): an upload goes to the
+     * same folder on every server of the group, and the folder can be compared
+     * with theirs. Null — the panel uploads to its own server alone.
+     */
+    group?: SftpGroup | null;
     onToggleFollowTerminal?: () => void;
     onOpenFile?: (path: string, name: string, gotoLine?: number) => void;
     onUserNavigate?: (path: string) => void;
@@ -89,6 +97,11 @@
 
   /** Upload local files into `destDir`. A name already there is asked about first. */
   async function uploadPaths(destDir: string, paths: string[]) {
+    if (group) {
+      // The group's own question names every server and what its folder holds.
+      group.upload(destDir, paths.map((path) => ({ path, name: baseName(path), isDir: false })));
+      return;
+    }
     await startTransfer({
       src: DISK,
       dst: here,
@@ -227,12 +240,48 @@
   testPrefix="sftp"
   onSync={() => (showSync = true)}
   syncActive={isBusy(peekSyncJob(sessionId))}
-  banner={userRow ? fileUserBanner : undefined}
+  banner={userRow || group ? panelBanner : undefined}
+  rowMark={group ? (entry) => group.marks(cwd, entry) : undefined}
   {footer}
   footerCount={transferList.length}
 />
 
-{#snippet fileUserBanner()}
+{#snippet panelBanner()}
+  {#if group}
+    {@const compared = group.compared(cwd)}
+    {@const only = group.elsewhere(cwd)}
+    <div class="border-b border-edge bg-accent/5 px-2 py-1 text-meta" data-testid="sftp-group">
+      <div class="flex items-center gap-2">
+        <Icon name="broadcast" size={13} class="shrink-0 text-accent" />
+        <span class="min-w-0 flex-1 truncate text-text">{t("groupUpload.strip", { count: group.servers })}</span>
+        {#if only.length > 0}
+          <span
+            class="shrink-0 text-muted"
+            data-testid="sftp-group-elsewhere"
+            use:tooltip={only.map((o) => `${o.name} — ${o.on.join(", ")}`).join("\n")}
+          >
+            {t("groupUpload.elsewhere", { count: only.length })}
+          </span>
+        {/if}
+        <button
+          type="button"
+          data-testid="sftp-group-compare"
+          class="shrink-0 rounded border border-edge px-1.5 py-0.5 text-muted hover:text-text"
+          onclick={() => (compared ? group.clearCompare() : group.compare(cwd))}
+        >
+          {compared ? (compared.loading ? t("groupUpload.comparing") : t("groupUpload.hideCompare")) : t("groupUpload.compare")}
+        </button>
+      </div>
+      {#if compared && !compared.loading}
+        <div class="mt-0.5 flex flex-wrap gap-x-3 text-caption text-muted" data-testid="sftp-group-legend">
+          <span class="flex items-center gap-1"><span class="size-1.5 rounded-full {MARK_DOT.same}"></span>{t("groupUpload.markSame")}</span>
+          <span class="flex items-center gap-1"><span class="size-1.5 rounded-full {MARK_DOT.differs}"></span>{t("groupUpload.markDiffers")}</span>
+          <span class="flex items-center gap-1"><span class="size-1.5 rounded-full {MARK_DOT.absent}"></span>{t("groupUpload.markAbsent")}</span>
+          <span class="flex items-center gap-1"><span class="size-1.5 rounded-full {MARK_DOT.unknown}"></span>{t("groupUpload.markUnknown")}</span>
+        </div>
+      {/if}
+    </div>
+  {/if}
   {#if userRow}
     <FileUserBar
       row={userRow}

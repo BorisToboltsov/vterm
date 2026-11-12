@@ -24,6 +24,7 @@
     isAppShortcut,
     isFindChord,
     isHistoryChord,
+    isMacHistoryChord,
     isPlainCtrlVChord,
     isTermCopyChord,
     isTermPasteChord,
@@ -99,6 +100,9 @@
     onviewmode,
     onfilelink,
     filelinkDirs = true,
+    onkeys,
+    ongrouphistory,
+    onscreen,
   }: {
     sessionId: string;
     serverId: string;
@@ -172,6 +176,16 @@
     onfilelink?: (target: FileLinkTarget) => void;
     /** Folders are links too: the file panel can show them (it is not hidden). */
     filelinkDirs?: boolean;
+    /**
+     * Keys mode of synchronous input (ADR 0064): this terminal is the one typed
+     * into, and what it is given goes on to the group. Only the terminal in focus
+     * gets it; every other terminal leaves it unset.
+     */
+    onkeys?: (data: string) => void;
+    /** This terminal is in a synchronous-input group: ⌘R opens the group's history, not its own. */
+    ongrouphistory?: () => void;
+    /** The buffer on screen changed: a full-screen program started or ended. */
+    onscreen?: (screen: "normal" | "alternate") => void;
   } = $props();
 
   let container: HTMLDivElement;
@@ -614,6 +628,25 @@
     term?.focus();
   }
 
+  /**
+   * Paste `text` without taking the keyboard (ADR 0064: "paste into all", and a
+   * paste typed into the group's source in keys mode) — the same xterm paste,
+   * bracketed if the program here asked for it, whatever the others asked.
+   */
+  export function pasteInto(text: string) {
+    if (text) term?.paste(text);
+  }
+
+  /** Which buffer is on screen: a full-screen program (vim, nano, less) is in the alternate one. */
+  export function screen(): "normal" | "alternate" | null {
+    return term ? term.buffer.active.type : null;
+  }
+
+  /** What was typed into this session's shell this run, newest first (the Ctrl+R capture). */
+  export function typedCommands(): string[] {
+    return [...capturedCommands];
+  }
+
   /** Wipe the scrollback from outside (the session bar). */
   export function clear() {
     term?.clear();
@@ -845,7 +878,13 @@
       onactivity?.();
       if (historyEnabled) recordTyped(d);
       writeToTerminal(sessionId, encoder.encode(d)).catch(writtenByCall);
+      onkeys?.(d);
     });
+
+    // Which screen is up — a full-screen program or the shell — for keys mode of
+    // synchronous input (ADR 0064): the group's keys go only where it matches.
+    onscreen?.(term.buffer.active.type);
+    term.buffer.onBufferChange((b) => onscreen?.(b.type));
 
     // Copy-on-select (optional) and bell handling.
     term.onSelectionChange(() => {
@@ -886,6 +925,15 @@
       if (historyEnabled && isHistoryChord(e)) {
         e.preventDefault();
         openHistory();
+        return false;
+      }
+      // ⌘R on macOS (ADR 0064): in a synchronous-input group, the group's history
+      // in its line; otherwise this terminal's own, as Ctrl+R. It has no meaning
+      // to a shell, so the group's needs no setting to take it.
+      if (isMacHistoryChord(e, hostEnv.os) && (ongrouphistory || historyEnabled)) {
+        e.preventDefault();
+        if (ongrouphistory) ongrouphistory();
+        else openHistory();
         return false;
       }
       if (isTermCopyChord(e) && term.hasSelection()) {

@@ -43,6 +43,8 @@ import type { CdShell } from "../pathsync/cdterminal";
 import type { DragLook } from "../api";
 import { quotePaths } from "../terminal/termcmd";
 import { DISK, startTransfer } from "../files/transferflow";
+import type { UploadSource } from "../files/groupupload";
+import { baseName } from "../files/fspath";
 import type { CopyFlow } from "./copyflow.svelte";
 
 /** What the page tells the file-drag flow, each read when it is needed. */
@@ -58,6 +60,11 @@ export interface FileDragDeps {
   otherWindows: () => boolean;
   /** What the label at the pointer looks like, for the window that draws it next. */
   ghostLook: () => DragLook | null;
+  /**
+   * Files from the desktop let go over a member's file panel while synchronous
+   * input is on (ADR 0064): the group's upload takes them. False — not a group's.
+   */
+  groupSend?: (sessionId: string, dir: string, sources: UploadSource[]) => boolean;
 }
 
 /** What the system says of a drag over the window from outside it. */
@@ -122,6 +129,8 @@ export function createFileDragFlow(deps: FileDragDeps) {
         const target = deps.copy.mine.find((x) => x.sessionId === meaning.to);
         if (!target) return;
         const carried = await withKinds(files);
+        const sources = carried.entries.map((e) => ({ path: e.path, name: baseName(e.path), isDir: e.isDir }));
+        if (deps.groupSend?.(meaning.to, meaning.dir, sources)) return;
         void startTransfer({
           src: DISK,
           dst: sideOf(target),

@@ -3,6 +3,11 @@
   // current session's shell history. Presentational + keyboard-only; the parent
   // (Terminal) supplies the parsed command list and handles accept (insert into
   // the PTY line). Pure filtering lives in history.ts.
+  //
+  // The command line of synchronous input opens the same palette over the
+  // group's history (ADR 0064): above the line, with its facets, a mark on each
+  // command (sent by the group, on how many members) and the members whose
+  // history could not be read named under the list.
   import Icon from "../ui/Icon.svelte";
   import { tooltip } from "../actions/tooltip";
   import { t } from "../i18n";
@@ -14,6 +19,12 @@
     loading = false,
     error = null,
     server = "",
+    place = "top",
+    facets = [],
+    facet = "",
+    onfacet,
+    describe,
+    note = "",
     onaccept,
     onclose,
   }: {
@@ -24,6 +35,16 @@
     error?: string | null;
     /** Server/host label for the header (empty for local shell tabs). */
     server?: string;
+    /** Over the top of a terminal, or above the line it was opened from. */
+    place?: "top" | "above";
+    /** Which part of the history to show — the parent filters `items` by it. */
+    facets?: { id: string; label: string }[];
+    facet?: string;
+    onfacet?: (id: string) => void;
+    /** What to say beside a command: a badge and a count, with a hint for the count. */
+    describe?: (command: string) => { badge?: string; count?: string; hint?: string } | null;
+    /** A line under the list (what could not be read). */
+    note?: string;
     onaccept: (command: string) => void;
     onclose: () => void;
   } = $props();
@@ -85,7 +106,10 @@
 
 {#if open}
   <!-- z-40: above the JSON toggle (z-30) and search (z-20) so it owns the field. -->
-  <div class="absolute inset-x-0 top-2 z-40 flex justify-center px-3" data-testid="command-history">
+  <div
+    class="absolute inset-x-0 z-40 flex justify-center px-3 {place === 'above' ? 'bottom-full mb-1' : 'top-2'}"
+    data-testid="command-history"
+  >
     <div class="flex max-h-[60vh] w-full max-w-2xl flex-col overflow-hidden rounded-lg border border-edge bg-panel shadow-lg">
       <!-- Search field -->
       <div class="flex items-center gap-2 border-b border-edge px-3 py-2">
@@ -116,6 +140,25 @@
         </button>
       </div>
 
+      {#if facets.length > 0}
+        <div class="flex flex-wrap gap-1 px-3 pt-1.5 text-meta" role="group" data-testid="command-history-facets">
+          {#each facets as f (f.id)}
+            <button
+              type="button"
+              aria-pressed={facet === f.id}
+              onclick={() => {
+                onfacet?.(f.id);
+                selected = 0;
+                inputEl?.focus();
+              }}
+              class="rounded px-2 py-0.5 {facet === f.id ? 'bg-accent/20 text-text' : 'text-muted hover:text-text'}"
+            >
+              {f.label}
+            </button>
+          {/each}
+        </div>
+      {/if}
+
       <!-- Results -->
       <div bind:this={listEl} class="min-h-0 flex-1 overflow-auto p-1">
         {#if loading}
@@ -128,21 +171,31 @@
           <p class="py-6 text-center text-xs text-muted">{t("history.noMatches")}</p>
         {:else}
           {#each filtered as cmd, i (i)}
+            {@const mark = describe?.(cmd) ?? null}
             <button
               type="button"
               data-idx={i}
               onclick={() => accept(cmd)}
               onmousemove={() => (selected = i)}
-              class="block w-full truncate rounded px-2 py-1 text-left font-mono text-xs {i === selected
+              class="flex w-full items-center gap-2 rounded px-2 py-1 text-left text-xs {i === selected
                 ? 'bg-accent/20 text-text'
                 : 'text-muted hover:text-text'}"
               title={cmd}
             >
-              {cmd}
+              <span class="min-w-0 flex-1 truncate font-mono">{cmd}</span>
+              {#if mark?.badge}
+                <span class="shrink-0 text-meta text-accent">{mark.badge}</span>
+              {/if}
+              {#if mark?.count}
+                <span class="shrink-0 text-meta tabular-nums" use:tooltip={mark.hint ?? ""}>{mark.count}</span>
+              {/if}
             </button>
           {/each}
         {/if}
       </div>
+      {#if note}
+        <p class="border-t border-edge px-3 py-1 text-meta text-warn" data-testid="command-history-note">{note}</p>
+      {/if}
 
       <!-- Key hints -->
       <div class="flex flex-wrap gap-x-4 gap-y-1 border-t border-edge px-3 py-1.5 text-meta text-muted">

@@ -4,6 +4,7 @@ import {
   isAppShortcut,
   isFindChord,
   isHistoryChord,
+  isMacHistoryChord,
   isNewTabChord,
   isPaletteChord,
   isPaneChord,
@@ -181,6 +182,13 @@ describe("terminal chords", () => {
     expect(isHistoryChord(chord("r", { ctrl: true }))).toBe(true);
     expect(isHistoryChord(chord("r", { ctrl: true, alt: true }))).toBe(false);
     expect(isHistoryChord(chord("r", {}))).toBe(false);
+  });
+  it("⌘R is the history on macOS only, and only with no other modifier", () => {
+    expect(isMacHistoryChord(chord("r", { meta: true }), "macos")).toBe(true);
+    expect(isMacHistoryChord(chord("r", { meta: true }), "windows")).toBe(false);
+    expect(isMacHistoryChord(chord("r", { meta: true, shift: true }), "macos")).toBe(false);
+    expect(isMacHistoryChord(chord("r", { meta: true, ctrl: true }), "macos")).toBe(false);
+    expect(isMacHistoryChord(chord("r", { ctrl: true }), "macos")).toBe(false);
   });
   it("plain Ctrl+F / Ctrl+C / Ctrl+V stay with the shell", () => {
     expect(isFindChord(chord("f", { ctrl: true }))).toBe(false);

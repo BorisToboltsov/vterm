@@ -309,6 +309,16 @@ export function createEditorFlow(deps: EditorDeps) {
       }
     },
 
+    /**
+     * Write the file now, without the diff before saving: the edit on the group
+     * (ADR 0064) has shown it already, beside every other server's. Resolves
+     * whether it was written; a failure is said and kept beside Save as ever.
+     */
+    saveNow(sid: string, doc: EditorDoc): Promise<boolean> {
+      if (doc.readOnly || savingId || doc.content === doc.baseContent) return Promise.resolve(false);
+      return write(sid, doc, doc.baseSha256);
+    },
+
     /** Save: nothing to do if unchanged; show the diff first when enabled. */
     save(sid: string, doc: EditorDoc) {
       if (doc.readOnly || savingId || doc.content === doc.baseContent) return;

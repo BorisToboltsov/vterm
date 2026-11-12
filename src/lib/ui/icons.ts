@@ -129,6 +129,9 @@ export const ICONS = {
   // Synchronous multi-server input — a broadcast antenna radiating waves.
   broadcast:
     '<circle cx="12" cy="12" r="2"/><path d="M8.5 8.5a5 5 0 0 0 0 7M15.5 8.5a5 5 0 0 1 0 7M5.5 5.5a9 9 0 0 0 0 13M18.5 5.5a9 9 0 0 1 0 13"/>',
+  // Keys mode of synchronous input (ADR 0064) — the keys themselves go to the group.
+  keyboard:
+    '<rect x="2" y="6" width="20" height="12" rx="2"/><path d="M6 10h.01M10 10h.01M14 10h.01M18 10h.01M6 14h.01M18 14h.01M10 14h4"/>',
   // Send the composed command to every target — a paper plane.
   send: '<path d="M22 2L11 13"/><path d="M22 2l-7 20-4-9-9-4z"/>',
   // Broadcast layout: tiled terminals.
