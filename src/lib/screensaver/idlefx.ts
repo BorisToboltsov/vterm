@@ -96,6 +96,9 @@ export function idleSample(
   return { cpu: pct(cpuPct), mem: pct(memPct), load: loadFraction(load1, cpuCount) };
 }
 
+/** A moment nothing was read: the small cards' line breaks there (v1.34). */
+export const NO_SAMPLE: IdleSample = Object.freeze({ cpu: null, mem: null, load: null });
+
 /** Samples a small card's chart spans. */
 export const HIST_POINTS = 70;
 /**
