@@ -1520,6 +1520,7 @@ export const en = {
   "git.searchCase": "Match case",
   "git.filterBranch": "Branch",
   "git.filterBranchAll": "All branches",
+  "git.filterBranchCurrent": "Current branch",
   "git.filterAuthor": "Author",
   "git.filterAuthorAll": "All authors",
   "git.filterDate": "Date",

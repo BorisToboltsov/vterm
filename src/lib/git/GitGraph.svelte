@@ -36,6 +36,7 @@
     branchContainsArgs,
     commitDetailArgs,
     commitDiffArgs,
+    CURRENT_BRANCH,
     isFiltered,
     LOG_CAP,
     mergeFilesArgs,
@@ -151,9 +152,12 @@
   const filtered = $derived(isFiltered(filter));
   const commits = $derived(rows.map((r) => r.commit));
   // The commits of the current branch stand out; a search shows scattered commits,
-  // where what HEAD reaches says nothing.
+  // where what HEAD reaches says nothing, and the current branch's own history is
+  // all of it.
   const onHead = $derived(
-    settings.gitHighlightCurrent && !filtered ? reachableFromHead(commits) : new Set<string>(),
+    settings.gitHighlightCurrent && !filtered && filter.branch !== CURRENT_BRANCH
+      ? reachableFromHead(commits)
+      : new Set<string>(),
   );
   const authors = $derived.by(() => {
     const seen = new Map<string, number>();

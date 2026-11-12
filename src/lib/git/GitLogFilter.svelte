@@ -9,7 +9,16 @@
   import { tooltip } from "../actions/tooltip";
   import type { MenuAction, MenuItem, OpenMenu } from "../ui/ctxmenu";
   import { settings } from "../settings/settings.svelte";
-  import { isFiltered, LOG_SINCE, NO_FILTER, type GitBranch, type LogFilter, type LogSince } from "./git";
+  import {
+    CURRENT_BRANCH,
+    isFiltered,
+    LOG_SINCE,
+    scopeFilter,
+    type GitBranch,
+    type LogFilter,
+    type LogScope,
+    type LogSince,
+  } from "./git";
   import { untrack } from "svelte";
   import { t } from "../i18n";
 
@@ -72,6 +81,13 @@
           : t("git.filterYear");
 
   const refName = (ref: string): string => ref.replace(/^refs\/(heads|remotes|tags)\//, "");
+  /** One branch by its name, not the scope the history is read in. */
+  const named = (branch: string | null): branch is string => !!branch && branch !== CURRENT_BRANCH;
+  /** The current branch or every ref: the user's choice, kept for the next history (ADR 0067). */
+  function pickScope(scope: LogScope) {
+    settings.gitLogScope = scope;
+    onfilter({ ...filter, branch: scopeFilter(scope).branch });
+  }
 
   function branchItems(): MenuAction[] {
     const locals = branches.filter((b) => !b.remote);
@@ -81,9 +97,10 @@
       .sort((a, b) => b.date - a.date)
       .slice(0, RECENT_BRANCHES);
     const pickable = [...first, ...recent].map((b) => b.fullRef);
-    if (filter.branch && !pickable.includes(filter.branch)) pickable.unshift(filter.branch);
+    if (named(filter.branch) && !pickable.includes(filter.branch)) pickable.unshift(filter.branch);
     return [
-      { label: t("git.filterBranchAll"), checked: !filter.branch, onSelect: () => onfilter({ ...filter, branch: null }) },
+      { label: t("git.filterBranchAll"), checked: !filter.branch, onSelect: () => pickScope("all") },
+      { label: t("git.filterBranchCurrent"), checked: filter.branch === CURRENT_BRANCH, onSelect: () => pickScope("head") },
       ...pickable.map((ref) => ({
         label: refName(ref),
         checked: filter.branch === ref,
@@ -159,6 +176,8 @@
       {
         label: t("git.viewCurrent"),
         checked: settings.gitHighlightCurrent,
+        // Every commit of the current branch's history is on it: nothing to stand out from.
+        disabled: filter.branch === CURRENT_BRANCH,
         onSelect: () => (settings.gitHighlightCurrent = !settings.gitHighlightCurrent),
       },
     ];
@@ -176,18 +195,21 @@
   function reset() {
     clearTimeout(timer);
     draft = "";
-    onfilter(NO_FILTER);
+    onfilter(scopeFilter(settings.gitLogScope));
   }
 
   /** A filter's button says what it is set to. */
   function filterLabel(which: "branch" | "author" | "date" | "path"): string {
-    if (which === "branch") return filter.branch ? refName(filter.branch) : t("git.filterBranch");
+    if (which === "branch") {
+      if (filter.branch === CURRENT_BRANCH) return t("git.filterBranchCurrent");
+      return filter.branch ? refName(filter.branch) : t("git.filterBranch");
+    }
     if (which === "author") return filter.author ?? t("git.filterAuthor");
     if (which === "date") return filter.since ? SINCE_LABEL(filter.since) : t("git.filterDate");
     return filter.path ?? t("git.filterPath");
   }
   const active = (which: "branch" | "author" | "date" | "path"): boolean =>
-    which === "branch" ? !!filter.branch : which === "author" ? !!filter.author : which === "date" ? !!filter.since : !!filter.path;
+    which === "branch" ? named(filter.branch) : which === "author" ? !!filter.author : which === "date" ? !!filter.since : !!filter.path;
   const FILTERS = ["branch", "author", "date", "path"] as const;
   const itemsOf = (which: (typeof FILTERS)[number]): MenuItem[] =>
     which === "branch" ? branchItems() : which === "author" ? authorItems() : which === "date" ? dateItems() : pathItems();

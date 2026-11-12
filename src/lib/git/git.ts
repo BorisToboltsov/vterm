@@ -32,7 +32,7 @@ export interface LogFilter {
   /** `text` is an extended regular expression, not a literal string. */
   regex: boolean;
   matchCase: boolean;
-  /** A full ref (`refs/heads/x`); null is every ref. */
+  /** A full ref (`refs/heads/x`), `CURRENT_BRANCH`, or null for every ref. */
   branch: string | null;
   author: string | null;
   since: LogSince | null;
@@ -62,8 +62,38 @@ export const NO_FILTER: LogFilter = {
   follow: false,
 };
 
+/**
+ * The branch checked out, whichever it is: `git log HEAD` (ADR 0067). After a
+ * checkout the history is that branch's — the same filter, other commits.
+ */
+export const CURRENT_BRANCH = "HEAD";
+
+/** How the history is read when nothing narrows it: the current branch, or every ref. */
+export type LogScope = "head" | "all";
+
+/** The filter a scope starts from — what a reset and another repository come back to. */
+export const scopeFilter = (scope: LogScope): LogFilter =>
+  scope === "head" ? { ...NO_FILTER, branch: CURRENT_BRANCH } : NO_FILTER;
+
+/**
+ * The history is narrowed past its scope: a search, an author, a date, a path, or
+ * one named branch. The current branch is a way to read the history, not a search,
+ * so it narrows nothing here.
+ */
 export const isFiltered = (f: LogFilter): boolean =>
-  !!(f.text || f.branch || f.author || f.since || f.path);
+  !!(f.text || (f.branch && f.branch !== CURRENT_BRANCH) || f.author || f.since || f.path);
+
+/**
+ * Where HEAD stands — its commit and its branch (`HEAD` when detached) — for the
+ * panel to see a checkout, commit or reset made outside it. Reads no index, so it
+ * never holds the lock a git command in the terminal wants.
+ */
+export function headArgs(): string[] {
+  return ["rev-parse", "HEAD", "--symbolic-full-name", "HEAD"];
+}
+
+/** How often the panel on screen asks `headArgs`, ms. */
+export const HEAD_POLL_MS = 3000;
 
 const escapeRegex = (s: string): string => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 

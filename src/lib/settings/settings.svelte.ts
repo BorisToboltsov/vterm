@@ -65,6 +65,7 @@ import {
 } from "../topbar/topbaractions";
 import { sanitizeStoredOrders, type StoredOrder } from "../ui/listview";
 import { DEFAULT_FAVORITE_BRANCHES, sanitizeFavoriteBranches } from "../git/gitrefs";
+import type { LogScope } from "../git/git";
 import { defaultAiSettings, sanitizeAiSettings, type AiSettings } from "../ai/ai";
 import {
   clampIdleTimeout,
@@ -291,6 +292,9 @@ export interface Settings {
   gitFavoriteBranches: string[];
   gitShowTags: boolean;
   gitHighlightCurrent: boolean;
+  // Whether the history is the current branch's or every ref's (ADR 0067): the
+  // last of the two the user picked, for every repository.
+  gitLogScope: LogScope;
   // Docker registry credentials (Phase 36) — non-secret half (url + username);
   // the password lives only in the OS keychain, keyed by url. See docker.ts.
   dockerRegistries: DockerRegistry[];
@@ -466,6 +470,7 @@ const DEFAULTS: Settings = {
   gitFavoriteBranches: [...DEFAULT_FAVORITE_BRANCHES],
   gitShowTags: true,
   gitHighlightCurrent: true,
+  gitLogScope: "head",
   hiddenPanels: [],
   topbar: [...DEFAULT_TOPBAR],
   topbarKnown: [...BUILTIN_ACTIONS],
@@ -605,6 +610,7 @@ function load(): Settings {
         : [...DEFAULT_FAVORITE_BRANCHES],
       gitShowTags: raw.gitShowTags !== false,
       gitHighlightCurrent: raw.gitHighlightCurrent !== false,
+      gitLogScope: raw.gitLogScope === "all" ? "all" : "head",
       hiddenPanels: sanitizeHiddenPanels(raw.hiddenPanels),
       topbar: sanitizeTopbar(raw.topbar, knownBuiltins(raw.topbarKnown)),
       topbarKnown: [...BUILTIN_ACTIONS],

@@ -1,5 +1,5 @@
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/svelte";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const gitRun = vi.fn();
 vi.mock("../api", () => ({
@@ -10,6 +10,8 @@ vi.mock("../api", () => ({
 import GitPanel from "./GitPanel.svelte";
 import { removeDockState, setDockCwd } from "../stores/dockstate.svelte";
 import { panelSplits, resetPanelShares } from "../stores/panelsplit.svelte";
+import { settings } from "../settings/settings.svelte";
+import { HEAD_POLL_MS } from "./git";
 
 const ok = (stdout = "") => ({ stdout, stderr: "", exitCode: 0 });
 
@@ -587,12 +589,22 @@ describe("GitPanel commit details", () => {
     expect(within(commitRow(FEAT)).getByTestId("git-row-author").textContent).toBe("Anna Author*");
   });
 
-  it("the commits of the current branch stand out, and merges step back", async () => {
+  it("the commits of the current branch stand out among every ref's, and merges step back", async () => {
+    settings.gitLogScope = "all";
+    try {
+      await mountHistory();
+      const head = commitRow(MERGE);
+      expect(head.dataset.onHead).toBe("true");
+      expect(within(head).getByText(MERGE.subject).className).toContain("text-muted");
+      expect(within(commitRow(FEAT)).getByText(FEAT.subject).className).toContain("text-text");
+    } finally {
+      settings.gitLogScope = "head";
+    }
+  });
+
+  it("in the current branch's own history nothing stands out: all of it is the branch", async () => {
     await mountHistory();
-    const head = commitRow(MERGE);
-    expect(head.dataset.onHead).toBe("true");
-    expect(within(head).getByText(MERGE.subject).className).toContain("text-muted");
-    expect(within(commitRow(FEAT)).getByText(FEAT.subject).className).toContain("text-text");
+    expect(commitRow(MERGE).dataset.onHead).toBe("false");
   });
 
   it("every line takes its colour from the theme, and the commit's labels follow it", async () => {
@@ -846,5 +858,102 @@ describe("GitPanel commit details", () => {
     await waitFor(() => expect(asked).toHaveLength(2));
     await fireEvent.click(screen.getByTestId("git-subtab-branches"));
     expect(await screen.findByText("main")).toBeInTheDocument();
+  });
+});
+
+describe("GitPanel follows HEAD (ADR 0067)", () => {
+  const at = (hash: string, branch: string) => `${hash.repeat(40)}\n${branch}\n`;
+  let head = at("a", "refs/heads/main");
+  /** Asks where HEAD stands, as opposed to where the repository is. */
+  const headReads = () => calls("rev-parse").filter((a) => a.includes("--symbolic-full-name"));
+  beforeEach(() => {
+    head = at("a", "refs/heads/main");
+    gitRun.mockReset().mockImplementation(async (_s: string, _c: string, args: string[]) =>
+      args[0] !== "rev-parse" ? ok() : args.includes("--show-toplevel") ? ok("/repo\n") : ok(head),
+    );
+  });
+  afterEach(() => {
+    settings.gitLogScope = "head";
+    vi.useRealTimers();
+  });
+  async function mountFake(props: Record<string, unknown> = {}) {
+    vi.useFakeTimers();
+    const view = render(GitPanel, { props: { sessionId: "s1", terminalCwd: "/repo", ...props } });
+    await vi.advanceTimersByTimeAsync(0);
+    return view;
+  }
+
+  it("reads the current branch's history by default", async () => {
+    await mount();
+    await waitFor(() => expect(calls("log").length).toBeGreaterThan(0));
+    expect(calls("log").every((a) => a.at(-1) === "HEAD")).toBe(true);
+  });
+
+  it("reads every ref's history when the user picked that", async () => {
+    settings.gitLogScope = "all";
+    await mount();
+    await waitFor(() => expect(calls("log").length).toBeGreaterThan(0));
+    expect(calls("log").every((a) => a.at(-1) === "--all")).toBe(true);
+  });
+
+  it("a checkout made outside the panel reads the history again; the same HEAD does not", async () => {
+    await mountFake();
+    const logs = calls("log").length;
+    expect(logs).toBeGreaterThan(0);
+    await vi.advanceTimersByTimeAsync(HEAD_POLL_MS);
+    expect(headReads().length).toBeGreaterThan(1);
+    expect(calls("log")).toHaveLength(logs);
+
+    head = at("b", "refs/heads/feat");
+    await vi.advanceTimersByTimeAsync(HEAD_POLL_MS);
+    expect(calls("log")).toHaveLength(logs + 1);
+    // It settles on the HEAD it has just read.
+    await vi.advanceTimersByTimeAsync(HEAD_POLL_MS * 2);
+    expect(calls("log")).toHaveLength(logs + 1);
+
+    // The same commit on another branch is another history too.
+    head = at("b", "refs/heads/other");
+    await vi.advanceTimersByTimeAsync(HEAD_POLL_MS);
+    expect(calls("log")).toHaveLength(logs + 2);
+  });
+
+  it("a panel off screen does not ask where HEAD stands", async () => {
+    const view = await mountFake();
+    await view.rerender({ sessionId: "s1", terminalCwd: "/repo", visible: false });
+    gitRun.mockClear();
+    await vi.advanceTimersByTimeAsync(HEAD_POLL_MS * 3);
+    expect(headReads()).toHaveLength(0);
+  });
+
+  it("asks one read at a time, however long the answer takes", async () => {
+    await mountFake();
+    let answer: (v: unknown) => void = () => {};
+    gitRun.mockImplementation((_s: string, _c: string, args: string[]) =>
+      args.includes("--symbolic-full-name") ? new Promise((resolve) => (answer = resolve)) : Promise.resolve(ok("/repo\n")),
+    );
+    gitRun.mockClear();
+    await vi.advanceTimersByTimeAsync(HEAD_POLL_MS * 4);
+    expect(headReads()).toHaveLength(1);
+    answer(ok(head));
+    await vi.advanceTimersByTimeAsync(0);
+  });
+
+  it("a failed read is a strip in the panel, not a toast, and the next good one takes it away", async () => {
+    await mountFake();
+    gitRun.mockImplementation(async (_s: string, _c: string, args: string[]) => {
+      if (args.includes("--symbolic-full-name")) throw new Error("session lost");
+      return args[0] === "rev-parse" ? ok("/repo\n") : ok();
+    });
+    await vi.advanceTimersByTimeAsync(HEAD_POLL_MS * 2);
+    const strip = screen.getByTestId("git-poll-fail");
+    expect(strip.textContent).toContain("session lost");
+    expect(screen.getByTestId("git-poll-fail-count").textContent).toBe("×2");
+    expect(document.querySelector("[data-testid='toast']")).toBeNull();
+
+    gitRun.mockImplementation(async (_s: string, _c: string, args: string[]) =>
+      args[0] !== "rev-parse" ? ok() : args.includes("--show-toplevel") ? ok("/repo\n") : ok(head),
+    );
+    await vi.advanceTimersByTimeAsync(HEAD_POLL_MS);
+    expect(screen.queryByTestId("git-poll-fail")).toBeNull();
   });
 });
