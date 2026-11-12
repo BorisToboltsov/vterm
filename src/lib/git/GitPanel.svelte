@@ -25,11 +25,14 @@
     branchesArgs,
     tagsArgs,
     hashLookupArgs,
+    headArgs,
+    HEAD_POLL_MS,
     looksLikeHash,
     isFiltered,
     LOG_CAP,
     LOG_PAGE,
     NO_FILTER,
+    scopeFilter,
     stashListArgs,
     fetchArgs,
     pullArgs,
@@ -68,6 +71,11 @@
   import PanelDivider from "../ui/PanelDivider.svelte";
   import { partWidth } from "../stores/panelsplit.svelte";
   import { gitCwd } from "../pathsync/followcwd";
+  import PollFailStrip from "../ui/PollFailStrip.svelte";
+  import { pollFailed, singleFlight, type PollFailure } from "../ui/poll";
+  import { settings } from "../settings/settings.svelte";
+  import { diag } from "../api/diag";
+  import { aboutSession } from "../stores/diag.svelte";
   import { untrack } from "svelte";
   import { t } from "../i18n";
 
@@ -146,8 +154,9 @@
   let tags = $state<GitTag[]>([]);
   let stashes = $state<GitStashEntry[]>([]);
 
-  // The history as loaded: git narrows it by `filter`, a page at a time.
-  let filter = $state.raw<LogFilter>(NO_FILTER);
+  // The history as loaded: git narrows it by `filter`, a page at a time. It starts
+  // from the scope the user last picked: the current branch, or every ref (ADR 0067).
+  let filter = $state.raw<LogFilter>(untrack(() => scopeFilter(settings.gitLogScope)));
   let commits: GitCommit[] = [];
   // How many commits came from the log proper; a hash found by a search is not one of them.
   let logged = 0;
@@ -158,6 +167,11 @@
   // A commit for the history to bring up (from the branch tree).
   let reveal = $state<{ hash: string; seq: number } | null>(null);
   let revealSeq = 0;
+  // Where the last read of the repository saw HEAD (`headArgs`); null before one.
+  let headMark: string | null = null;
+  const headOf = (res: { stdout: string; exitCode: number }): string => `${res.exitCode}\n${res.stdout}`;
+  // Asking where HEAD stands failing in a row (ADR 0062).
+  let pollFailure = $state<PollFailure | null>(null);
 
   // Network-op (fetch/pull/push) status strip + persistent remote-error badge.
   type SyncKind = "pull" | "push" | "fetch";
@@ -383,6 +397,7 @@
       if (root.exitCode !== 0) {
         isRepo = false;
         repoRoot = null;
+        headMark = null;
         status = null;
         rows = [];
         commits = [];
@@ -398,18 +413,20 @@
       // Another repository: its refs and paths are not this filter's, and what was
       // loaded of the last one says nothing about how much to ask of this one.
       if (nextRoot !== repoRoot) {
-        filter = NO_FILTER;
+        filter = scopeFilter(settings.gitLogScope);
         logged = 0;
         searchError = null;
       }
       repoRoot = nextRoot;
-      const [st, , br, tg, stash] = await Promise.all([
+      const [st, , br, tg, stash, head] = await Promise.all([
         gitRun(sessionId, cwd, statusArgs()),
         loadLog(Math.max(LOG_PAGE, logged)),
         loadBranches(),
         gitRun(sessionId, cwd, tagsArgs()),
         gitRun(sessionId, cwd, stashListArgs()),
+        gitRun(sessionId, cwd, headArgs()),
       ]);
+      headMark = headOf(head);
       status = parseStatus(st.stdout);
       branches = parseBranches(br.stdout);
       tags = parseTags(tg.stdout);
@@ -492,11 +509,50 @@
     if (!revealShort(short)) void setFilter({ ...NO_FILTER, branch: ref }, short);
   }
 
-  /** The history of one file, through its renames. */
+  /** The history of one file, through its renames, in the scope the history is read in. */
   function showFileHistory(path: string) {
     if (!wide) chosen = "graph";
-    void setFilter({ ...NO_FILTER, path, follow: true });
+    void setFilter({ ...scopeFilter(settings.gitLogScope), path, follow: true });
   }
+
+  // HEAD moved outside the panel — a checkout, a commit, a reset or a pull in the
+  // terminal (ADR 0067). The panel on screen asks where HEAD stands every
+  // `HEAD_POLL_MS`, one read in flight, and reads the repository again when the
+  // answer changed: after a checkout the current branch's history is another one.
+  async function readNow() {
+    const at = cwd;
+    if (!at || busy || isRepo !== true) return;
+    try {
+      const mark = headOf(await gitRun(sessionId, at, headArgs()));
+      if (pollFailure) {
+        const failures = pollFailure.count;
+        diag.info("git", `poll back after ${failures} failures`, { failures }, { ...aboutSession(sessionId), code: "poll-back" });
+      }
+      pollFailure = null;
+      // An answer about a directory the panel has left, or from before its own
+      // operation, says nothing about what is on screen now.
+      if (at !== cwd || busy || headMark === null) return;
+      if (mark !== headMark) await loadAll();
+    } catch (e) {
+      failedRead(String(e));
+    }
+  }
+
+  /** Ask where HEAD stands — one read at a time (ADR 0062). */
+  const refresh = singleFlight(readNow);
+
+  /** A read failed: a strip in the panel, and — once per streak — an event of the diagnostics. */
+  function failedRead(text: string) {
+    const { failure, news } = pollFailed(pollFailure, text, Date.now());
+    pollFailure = failure;
+    if (news) diag.warn("git", `poll failed: ${text}`, undefined, { ...aboutSession(sessionId), code: "poll-failed" });
+  }
+
+  $effect(() => {
+    if (!(cwd && sessionReady && visible && isRepo)) return;
+    const timer = setInterval(() => void refresh(), HEAD_POLL_MS);
+    return () => clearInterval(timer);
+  });
 
   // Reload when the terminal cwd changes, and once when the tab comes back into
   // view — a `cd` that happened while the panel was hidden still has to land, and
@@ -651,6 +707,8 @@
         <span class="truncate">{syncOp.message}</span>
       </div>
     {/if}
+
+    <PollFailStrip failure={pollFailure} onretry={() => void refresh()} testid="git-poll-fail" />
 
     <!-- Sub-tabs: a strip of their own in a narrow dock. -->
     {#if !wide}

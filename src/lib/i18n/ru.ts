@@ -1510,6 +1510,7 @@ export const ru: Record<MessageKey, string> = {
   "git.searchCase": "С учётом регистра",
   "git.filterBranch": "Ветка",
   "git.filterBranchAll": "Все ветки",
+  "git.filterBranchCurrent": "Текущая ветка",
   "git.filterAuthor": "Автор",
   "git.filterAuthorAll": "Все авторы",
   "git.filterDate": "Дата",

@@ -65,6 +65,7 @@ const FILES = {
   rust: "src-tauri/src/journal.rs",
   docker: "src/lib/docker/DockerPanel.svelte",
   k8s: "src/lib/k8s/K8sPanel.svelte",
+  git: "src/lib/git/GitPanel.svelte",
 } as const;
 type Sources = Record<keyof typeof FILES, string>;
 const sources = (): Sources =>
@@ -194,7 +195,7 @@ describe("journal guard", () => {
   });
 
   it("a panel's poll is one read at a time, and a failed one is a strip", () => {
-    expect([...pollViolations(s.docker, "Docker"), ...pollViolations(s.k8s, "k8s")]).toEqual([]);
+    expect([...pollViolations(s.docker, "Docker"), ...pollViolations(s.k8s, "k8s"), ...pollViolations(s.git, "git")]).toEqual([]);
   });
 });
 
@@ -266,6 +267,9 @@ describe("journal guard — catches what it exists for", () => {
       "Docker reads over a read still out",
     ]);
     expect(pollViolations(mutate(s.k8s, "<PollFailStrip", "<div"), "k8s")).toEqual(["k8s does not say a failed read"]);
+    expect(pollViolations(mutate(s.git, "const refresh = singleFlight(readNow);", "const refresh = readNow;"), "git")).toEqual([
+      "git reads over a read still out",
+    ]);
     const loud = mutate(s.docker, "failedRead(String(e));", 'notifyError(String(e), { source: "docker", sessionId });');
     expect(pollViolations(loud, "Docker")).toEqual([
       "Docker does not take a failed read to its strip",

@@ -10,7 +10,7 @@
 //  - an edge runs from the centre of one row to the centre of the next, so every
 //    turn has the same shape (`edgePath`).
 
-import { isFiltered, type GitCommit, type LogFilter } from "./git";
+import { CURRENT_BRANCH, type GitCommit, type LogFilter } from "./git";
 
 /** Colours a line can take: `--color-rail-0…6`. The first is the main line's alone. */
 export const RAIL_COLORS = 7;
@@ -46,30 +46,40 @@ export interface GraphRow {
 /** The branches a history is read along, in order. */
 const MAIN_BRANCHES = ["main", "master", "develop"];
 
+const findHash = (commits: readonly GitCommit[], test: (c: GitCommit) => boolean): string | null =>
+  commits.find(test)?.hash ?? null;
+
+/** A ref names the main branch `name`: the local one, or any remote's. */
+const namesMain = (ref: GitCommit["refs"][number], name: string): boolean =>
+  ref.kind === "local" || ref.kind === "head"
+    ? ref.name === name
+    : ref.kind === "remote" && ref.name.replace(/^[^/]+\//, "") === name;
+
 /**
- * The commit the main line starts from: the local main branch, or the remote's,
- * or HEAD. Null when none is loaded.
+ * The commit the main line starts from: the newer of the local main branch and
+ * the remote's — the first of them in `git log` order — or HEAD. A local `main`
+ * nobody updated would otherwise start the line far down, and the trunk above it
+ * would run on a side lane. Null when none is loaded.
  */
 export function mainTip(commits: readonly GitCommit[]): string | null {
-  const find = (test: (c: GitCommit) => boolean) => commits.find(test)?.hash ?? null;
   for (const name of MAIN_BRANCHES) {
-    const tip =
-      find((c) => c.refs.some((r) => (r.kind === "local" || r.kind === "head") && r.name === name)) ??
-      find((c) => c.refs.some((r) => r.kind === "remote" && r.name.replace(/^[^/]+\//, "") === name));
+    const tip = findHash(commits, (c) => c.refs.some((r) => namesMain(r, name)));
     if (tip) return tip;
   }
-  return find((c) => c.head);
+  return findHash(commits, (c) => c.head);
 }
 
 /**
  * The commit the main line starts from for what a filter left. A search shows
  * scattered commits, so no line is the main one; one branch alone is read along
- * itself, from its tip.
+ * itself, from its tip, and the current branch from HEAD — not from a main branch
+ * it grew out of.
  */
 export function primaryFor(commits: readonly GitCommit[], filter: LogFilter): string | null {
-  if (!isFiltered(filter)) return mainTip(commits);
-  const onlyBranch = filter.branch && !filter.text && !filter.author && !filter.since && !filter.path;
-  return onlyBranch ? (commits[0]?.hash ?? null) : null;
+  if (filter.text || filter.author || filter.since || filter.path) return null;
+  if (filter.branch === CURRENT_BRANCH) return findHash(commits, (c) => c.head) ?? commits[0]?.hash ?? null;
+  if (filter.branch) return commits[0]?.hash ?? null;
+  return mainTip(commits);
 }
 
 /** FNV-1a: small, stable, and enough to spread names over a few colours. */

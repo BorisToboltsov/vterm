@@ -9,7 +9,7 @@ import {
   TURN_RADIUS,
   type GraphRow,
 } from "./gitlanes";
-import { NO_FILTER, type GitCommit, type GitRef } from "./git";
+import { CURRENT_BRANCH, NO_FILTER, scopeFilter, type GitCommit, type GitRef } from "./git";
 
 const c = (hash: string, parents: string[], refs: GitRef[] = [], head = false): GitCommit => ({
   hash,
@@ -220,6 +220,26 @@ describe("mainTip", () => {
   it("takes a checked-out main like any other", () => {
     expect(mainTip([c("a", [], [{ kind: "head", name: "main" }], true)])).toBe("a");
   });
+  it("starts from the newer of the local main and the remote's, not from a local one left behind", () => {
+    const remote: GitRef = { kind: "remote", name: "origin/main" };
+    // Nobody updated the local main: the trunk above it is the remote's.
+    expect(mainTip([c("r2", ["r1"], [remote]), c("f", ["r1"], [local("feat")], true), c("r1", ["m"]), c("m", [], [local("main")])])).toBe("r2");
+    // Commits on main not pushed yet: the local one is ahead.
+    expect(mainTip([c("m2", ["m1"], [local("main")]), c("m1", [], [remote])])).toBe("m2");
+  });
+  it("draws a trunk the local main fell behind on the left lane, in the main colour, from the top", () => {
+    const rows = buildGraph([
+      c("r2", ["r1"], [{ kind: "remote", name: "origin/main" }]),
+      c("f", ["r1"], [local("feat")], true),
+      c("r1", ["m"]),
+      c("m", [], [local("main")]),
+    ]);
+    expect(rows.filter((r) => r.commit.hash !== "f").map((r) => [r.col, r.color])).toEqual([
+      [0, 0],
+      [0, 0],
+      [0, 0],
+    ]);
+  });
 });
 
 describe("primaryFor", () => {
@@ -230,9 +250,18 @@ describe("primaryFor", () => {
   it("reads one branch along itself", () => {
     expect(primaryFor(history, { ...NO_FILTER, branch: "refs/heads/feat" })).toBe("t");
   });
+  it("reads the current branch along HEAD, not along a main branch it grew out of", () => {
+    const onFeat = [c("t", ["m"], [{ kind: "head", name: "feat" }], true), c("m", [], [local("main")])];
+    expect(primaryFor(onFeat, scopeFilter("head"))).toBe("t");
+    expect(buildGraph(onFeat, primaryFor(onFeat, scopeFilter("head"))).map((r) => r.col)).toEqual([0, 0]);
+    // Detached, or HEAD not first in date order: still HEAD.
+    const detached = [c("n", ["h"]), c("h", ["m"], [], true), c("m", [], [local("main")])];
+    expect(primaryFor(detached, { ...NO_FILTER, branch: CURRENT_BRANCH })).toBe("h");
+  });
   it("has no main line in a search", () => {
     expect(primaryFor(history, { ...NO_FILTER, text: "x" })).toBeNull();
     expect(primaryFor(history, { ...NO_FILTER, branch: "refs/heads/feat", author: "a" })).toBeNull();
+    expect(primaryFor(history, { ...scopeFilter("head"), text: "x" })).toBeNull();
   });
 });
 

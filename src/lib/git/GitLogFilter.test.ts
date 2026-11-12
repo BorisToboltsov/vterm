@@ -1,7 +1,7 @@
 import { fireEvent, render, screen } from "@testing-library/svelte";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import GitLogFilter from "./GitLogFilter.svelte";
-import { NO_FILTER, type GitBranch, type LogFilter } from "./git";
+import { CURRENT_BRANCH, NO_FILTER, scopeFilter, type GitBranch, type LogFilter } from "./git";
 import { settings } from "../settings/settings.svelte";
 
 const branch = (name: string, extra: Partial<GitBranch> = {}): GitBranch => ({
@@ -27,6 +27,7 @@ function setup(props: { filter?: LogFilter; full?: boolean; authors?: string[]; 
 afterEach(() => {
   settings.gitShowTags = true;
   settings.gitHighlightCurrent = true;
+  settings.gitLogScope = "head";
 });
 
 describe("GitLogFilter", () => {
@@ -57,7 +58,7 @@ describe("GitLogFilter", () => {
     });
     await fireEvent.click(screen.getByTestId("git-filter-branch"));
     const labels = screen.getAllByRole("menuitemcheckbox").map((b) => b.textContent?.trim());
-    expect(labels).toEqual(["All branches", "main", "here", "new", "old"]);
+    expect(labels).toEqual(["All branches", "Current branch", "main", "here", "new", "old"]);
     await fireEvent.click(screen.getByText("new"));
     expect(onfilter).toHaveBeenCalledWith({ ...NO_FILTER, branch: "refs/heads/new" });
   });
@@ -95,7 +96,46 @@ describe("GitLogFilter", () => {
     expect(screen.getByTestId("git-filter-date").textContent).toContain("Last 30 days");
     expect(screen.getByTestId("git-filter-path").textContent).toContain("p.ts");
     await fireEvent.click(screen.getByTestId("git-filter-reset"));
-    expect(onfilter).toHaveBeenCalledWith(NO_FILTER);
+    // Back to the scope the history is read in, not to every ref.
+    expect(onfilter).toHaveBeenLastCalledWith({ ...NO_FILTER, branch: CURRENT_BRANCH });
+    settings.gitLogScope = "all";
+    await fireEvent.click(screen.getByTestId("git-filter-reset"));
+    expect(onfilter).toHaveBeenLastCalledWith(NO_FILTER);
+  });
+
+  it("reads the current branch as a scope, not a search: named on its button, never a narrowing", async () => {
+    setup({ filter: scopeFilter("head") });
+    const button = screen.getByTestId("git-filter-branch");
+    expect(button.textContent).toContain("Current branch");
+    expect(button.className).not.toContain("text-accent");
+    expect(screen.queryByTestId("git-filter-reset")).toBeNull();
+    await fireEvent.click(button);
+    expect(screen.getByRole("menuitemcheckbox", { name: "Current branch" })).toHaveAttribute("aria-checked", "true");
+  });
+
+  it("narrow: the current branch does not light the filter button", () => {
+    setup({ full: false, filter: scopeFilter("head") });
+    expect(screen.getByTestId("git-filter-menu").className).not.toContain("text-accent");
+  });
+
+  it("remembers whether the history is the current branch's or every ref's", async () => {
+    const onfilter = setup({ filter: scopeFilter("head") });
+    await fireEvent.click(screen.getByTestId("git-filter-branch"));
+    await fireEvent.click(screen.getByRole("menuitemcheckbox", { name: "All branches" }));
+    expect(settings.gitLogScope).toBe("all");
+    expect(onfilter).toHaveBeenLastCalledWith(NO_FILTER);
+    await fireEvent.click(screen.getByTestId("git-filter-branch"));
+    await fireEvent.click(screen.getByRole("menuitemcheckbox", { name: "Current branch" }));
+    expect(settings.gitLogScope).toBe("head");
+    expect(onfilter).toHaveBeenLastCalledWith({ ...NO_FILTER, branch: CURRENT_BRANCH });
+  });
+
+  it("a named branch keeps the scope the user picked", async () => {
+    const onfilter = setup({ filter: scopeFilter("head"), branches: [branch("feat")] });
+    await fireEvent.click(screen.getByTestId("git-filter-branch"));
+    await fireEvent.click(screen.getByRole("menuitemcheckbox", { name: "feat" }));
+    expect(onfilter).toHaveBeenLastCalledWith({ ...NO_FILTER, branch: "refs/heads/feat" });
+    expect(settings.gitLogScope).toBe("head");
   });
 
   it("switches how the text is read", async () => {
@@ -121,5 +161,11 @@ describe("GitLogFilter", () => {
     await fireEvent.click(screen.getByTestId("git-view-menu"));
     await fireEvent.click(screen.getByText("Highlight the current branch"));
     expect(settings.gitHighlightCurrent).toBe(false);
+  });
+
+  it("has nothing to highlight in the current branch's own history", async () => {
+    setup({ filter: scopeFilter("head") });
+    await fireEvent.click(screen.getByTestId("git-view-menu"));
+    expect(screen.getByRole("menuitemcheckbox", { name: "Highlight the current branch" })).toBeDisabled();
   });
 });

@@ -2,7 +2,7 @@ import { fireEvent, render, screen } from "@testing-library/svelte";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import GitGraph from "./GitGraph.svelte";
 import { buildGraph } from "./gitlanes";
-import { NO_FILTER, type GitCommit } from "./git";
+import { NO_FILTER, scopeFilter, type GitCommit } from "./git";
 import { settings } from "../settings/settings.svelte";
 
 const commit: GitCommit = {
@@ -42,7 +42,7 @@ describe("Git history context controls", () => {
     await fireEvent.contextMenu(screen.getByTestId("git-graph-column"));
     await fireEvent.click(screen.getByRole("menuitem", { name: "Filters" }));
     await fireEvent.click(screen.getByRole("menuitem", { name: "Reset filters" }));
-    expect(onfilter).toHaveBeenLastCalledWith(NO_FILTER);
+    expect(onfilter).toHaveBeenLastCalledWith(scopeFilter(settings.gitLogScope));
     await fireEvent.contextMenu(screen.getByTestId("git-graph-column"));
     await fireEvent.click(screen.getByRole("menuitem", { name: "Refresh" }));
     expect(refresh).toHaveBeenCalledOnce();

@@ -149,8 +149,8 @@ describe("dock panel guard", () => {
     }
   });
 
-  it("stops the Docker and k8s pollers while the panel is hidden", () => {
-    for (const file of ["docker/DockerPanel.svelte", "k8s/K8sPanel.svelte"]) {
+  it("stops the Docker, k8s and git pollers while the panel is hidden", () => {
+    for (const file of ["docker/DockerPanel.svelte", "k8s/K8sPanel.svelte", "git/GitPanel.svelte"]) {
       expect(pollEffect(code(file)), `${file} gates its interval on visibility`).toMatch(
         /\bvisible\b/,
       );
@@ -158,8 +158,8 @@ describe("dock panel guard", () => {
   });
 
   it("keeps the git panel from reloading behind another tab", () => {
-    // Git has no interval, but it reloads on every terminal `cd` (OSC 7). Hidden,
-    // that is a `git status`/`log`/`branch` batch per directory change nobody sees.
+    // Besides asking where HEAD stands, git reloads on every terminal `cd` (OSC 7).
+    // Hidden, that is a `git status`/`log`/`branch` batch per directory change nobody sees.
     const src = code("git/GitPanel.svelte");
     const at = src.indexOf("loadAll()", src.indexOf("$effect"));
     expect(at).toBeGreaterThan(-1);

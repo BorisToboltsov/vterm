@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 import {
   statusArgs,
+  CURRENT_BRANCH,
+  headArgs,
+  scopeFilter,
   logArgs,
   branchesArgs,
   stageArgs,
@@ -399,6 +402,18 @@ describe("logArgs", () => {
       expect(a.startsWith("--output")).toBe(false);
     }
   });
+  it("reads the current branch as HEAD, whichever branch that is", () => {
+    expect(tail({ branch: CURRENT_BRANCH })).toEqual(["HEAD"]);
+    expect(logArgs(10, 0, scopeFilter("head")).at(-1)).toBe("HEAD");
+    expect(logArgs(10, 0, scopeFilter("all")).at(-1)).toBe("--all");
+    expect(tail({ ...scopeFilter("head"), path: "a.ts", follow: true })).toEqual(["--follow", "HEAD", "--", "a.ts"]);
+  });
+});
+
+describe("headArgs", () => {
+  it("asks for HEAD's commit and its branch, and nothing that takes the index lock", () => {
+    expect(headArgs()).toEqual(["rev-parse", "HEAD", "--symbolic-full-name", "HEAD"]);
+  });
 });
 
 describe("isFiltered", () => {
@@ -408,6 +423,9 @@ describe("isFiltered", () => {
     for (const f of [{ text: "x" }, { branch: "refs/heads/x" }, { author: "a" }, { since: "week" as const }, { path: "p" }]) {
       expect(isFiltered({ ...NO_FILTER, ...f })).toBe(true);
     }
+    // The current branch is how the history is read, not a search.
+    expect(isFiltered(scopeFilter("head"))).toBe(false);
+    expect(isFiltered({ ...scopeFilter("head"), author: "a" })).toBe(true);
   });
 });
 
