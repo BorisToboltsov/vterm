@@ -220,6 +220,18 @@ export const ICONS = {
   // A field with its characters masked — the password generator. The padlock
   // stays with TLS, so the two stand apart when both are on the top bar.
   password: '<rect x="3" y="7" width="18" height="10" rx="2"/><path d="M8 12h.01M12 12h.01M16 12h.01"/>',
+  // A job's place in a pipeline's run (ADR 0068): will start, waiting its turn,
+  // running, done, left out, undecided, refused.
+  circle: '<circle cx="12" cy="12" r="8"/>',
+  circleDashed: '<circle cx="12" cy="12" r="8" stroke-dasharray="2.6 3.6"/>',
+  loader: '<path d="M12 3a9 9 0 1 0 9 9"/>',
+  circleCheck: '<circle cx="12" cy="12" r="9"/><path d="M8.5 12.5l2.5 2.5 4.5-5"/>',
+  circleOff: '<circle cx="12" cy="12" r="9"/><path d="M5.6 5.6l12.8 12.8"/>',
+  help: '<circle cx="12" cy="12" r="9"/><path d="M9.6 9.4a2.5 2.5 0 1 1 3.4 2.4c-.6.3-1 .8-1 1.5v.5"/><path d="M12 17h.01"/>',
+  octagon: '<path d="M8.3 3h7.4L21 8.3v7.4L15.7 21H8.3L3 15.7V8.3z"/><path d="M12 8v4M12 16h.01"/>',
+  // A pipeline's schema: one job above, two below it.
+  hierarchy:
+    '<rect x="9" y="3" width="6" height="5" rx="1"/><rect x="3" y="16" width="6" height="5" rx="1"/><rect x="15" y="16" width="6" height="5" rx="1"/><path d="M12 8v4M6 16v-2a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2v2"/>',
   // A wrench (Feather "tool") — the "Utilities" settings group and panel.
   wrench:
     '<path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/>',

@@ -337,6 +337,19 @@ const CASES: Record<string, { bad: [string, string][]; good: [string, string][] 
       ],
     ],
   },
+  "lazy-import": {
+    bad: [
+      ["src/lib/pipeline/yamldoc.ts", `import { parse } from "yaml";\nexport const p = parse;`],
+      ["src/lib/editor/zz_probe.ts", `import * as Y from "yaml";\nexport const p = Y;`],
+      ["src/lib/editor/zz_probe.ts", `export const load = () => import("yaml");`],
+    ],
+    good: [
+      ["src/lib/pipeline/yamldoc.ts", `import type * as Y from "yaml";\nexport type T = typeof Y;\nexport const load = () => import("yaml");`],
+      ["src/lib/editor/zz_probe.ts", `import type { Document } from "yaml";\nexport type D = Document;`],
+      // The name of the package in prose is not an import.
+      ["src/lib/editor/zz_probe.ts", `// the yaml package is loaded by yamldoc.ts\nexport const x = "yaml";`],
+    ],
+  },
   "forbidden-imports": {
     bad: [
       ["src/lib/stores/tabs.svelte.ts", `import { getWorkspace } from "./workspaces.svelte";\nexport const x = getWorkspace;`],

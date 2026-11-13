@@ -541,6 +541,45 @@ const rules = {
     },
   },
 
+  "lazy-import": {
+    meta: {
+      type: "problem",
+      docs: { description: "A package loaded on first use is imported dynamically, by its one loader" },
+      schema: [
+        {
+          type: "object",
+          additionalProperties: {
+            type: "object",
+            properties: { owner: { type: "string" }, why: { type: "string" } },
+            required: ["owner", "why"],
+            additionalProperties: false,
+          },
+        },
+      ],
+      messages: {
+        static: "{{pkg}} is loaded on first use — import(\"{{pkg}}\") in {{owner}}, never a static import: {{why}}",
+        elsewhere: "{{pkg}} is loaded by {{owner}} alone: {{why}}",
+      },
+    },
+    create(context) {
+      const lazy = context.options[0] ?? {};
+      const rel = path.relative(ROOT, context.filename).split(path.sep).join("/");
+      const pkgOf = (src) => (src?.type === "Literal" && typeof src.value === "string" && Object.hasOwn(lazy, src.value) ? src.value : null);
+      const report = (node, messageId, pkg) => context.report({ node, messageId, data: { pkg, owner: lazy[pkg].owner, why: lazy[pkg].why } });
+      return {
+        ImportDeclaration(node) {
+          const pkg = pkgOf(node.source);
+          const typeOnly = node.importKind === "type" || (node.specifiers.length > 0 && node.specifiers.every((s) => s.importKind === "type"));
+          if (pkg && !typeOnly) report(node, "static", pkg);
+        },
+        ImportExpression(node) {
+          const pkg = pkgOf(node.source);
+          if (pkg && lazy[pkg].owner !== rel) report(node, "elsewhere", pkg);
+        },
+      };
+    },
+  },
+
   "owned-writes": {
     meta: {
       type: "problem",

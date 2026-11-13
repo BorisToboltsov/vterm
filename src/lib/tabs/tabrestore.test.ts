@@ -376,6 +376,8 @@ describe("where a tab was (v1.36)", () => {
     expect(saved.docs?.map((d) => d.id)).toEqual(["d"]);
     expect(JSON.stringify(saved)).not.toContain("hunter2");
     expect(keepsDoc(doc({ sudo: true }))).toBe(false);
+    // The map of a group of pipelines is read anew from its files, not reopened (ADR 0068).
+    expect(keepsDoc(doc({ pipelines: { targets: [{ path: "/r/.github/workflows", isDir: true }] } }))).toBe(false);
     // Nothing worth reopening: neither files nor zones are written.
     const none = savedTab(tab(), facts({ workspace: { editors: [editors[0]], layout: views } }));
     expect(none.docs).toBeUndefined();

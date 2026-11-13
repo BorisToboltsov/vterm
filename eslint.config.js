@@ -232,6 +232,16 @@ export default defineConfig(
           ),
         },
       ],
+      // A package the app carries only once it is needed (ADR 0068).
+      "vterm/lazy-import": [
+        "error",
+        {
+          yaml: {
+            owner: "src/lib/pipeline/yamldoc.ts",
+            why: "the YAML parser is loaded when a pipeline schema is first drawn, not with the app, and its options (alias cap, duplicate keys) are set in one place",
+          },
+        },
+      ],
       // A setting one place decides: the Settings panel, and the question it silences.
       "vterm/owned-writes": [
         "error",

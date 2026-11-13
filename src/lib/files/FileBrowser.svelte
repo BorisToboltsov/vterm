@@ -85,6 +85,7 @@
   import { targetsFrom } from "./copyto";
   import { MARK_DOT, type Mark } from "./groupupload";
   import { t } from "../i18n";
+  import { holdsPipelines, isPipelineDir, pipelineKindOf } from "../pipeline/pipefiles";
 
   let {
     adapter,
@@ -96,6 +97,7 @@
     followTerminal = false,
     onToggleFollowTerminal,
     onOpenFile,
+    onPipelines,
     onUserNavigate,
     // Kind-specific behaviour ----------------------------------------------------
     /** Require an explicit Connect action before listing (SFTP); local FS is instant. */
@@ -149,6 +151,8 @@
      * local wrapper's `(path) => void` ignores it (fewer params is assignable).
      */
     onOpenFile?: (path: string, name: string, gotoLine?: number) => void;
+    /** Show the pipelines of files and folders (ADR 0068): one file on its schema, the rest on a map. */
+    onPipelines?: (targets: { path: string; isDir: boolean }[]) => void;
     onUserNavigate?: (path: string) => void;
     requiresConnect?: boolean;
     sessionReady?: boolean;
@@ -910,6 +914,16 @@
         items.push({ icon: "download", label: t("ctx.download"), onSelect: () => adapter.download?.(entry) });
       }
     }
+    // Pipelines (ADR 0068): a pipeline file, a workflows folder, or several of them.
+    const asPipelines = sel.filter((e) => (e.isDir ? isPipelineDir(e.path) : pipelineKindOf(e.path) !== null));
+    if (onPipelines && asPipelines.length === sel.length && sel.length > 0) {
+      const one = !multi && !entry.isDir;
+      items.push({
+        icon: "hierarchy",
+        label: one ? t("ctx.pipelineSchema") : t("ctx.pipelinesSchema"),
+        onSelect: () => onPipelines?.(sel.map((e) => ({ path: e.path, isDir: e.isDir }))),
+      });
+    }
     // Copy to another open session (v1.12): its server, or — a local tab —
     // this machine. Offered only where there is somewhere to copy to.
     const targets = sessionKey ? targetsFrom(copyTargetList(), sessionKey) : [];
@@ -985,6 +999,15 @@
       if (clipboard) {
         items.push({ icon: "paperclip", label: t("ctx.paste"), onSelect: () => paste() });
       }
+      items.push({ kind: "separator" });
+    }
+    // The folder shown holds pipelines — a repository, a `.github`, a workflows folder.
+    if (onPipelines && (isPipelineDir(cwd) || holdsPipelines(entries.map((x) => x.name)))) {
+      items.push({
+        icon: "hierarchy",
+        label: t("ctx.pipelinesSchema"),
+        onSelect: () => onPipelines?.([{ path: cwd, isDir: true }]),
+      });
       items.push({ kind: "separator" });
     }
     items.push(...panelMenu());

@@ -28,6 +28,8 @@ import {
   setSessionZoneRatio,
   showSessionView,
   splitSessionView,
+  addPipelinesView,
+  showEditorSchema,
   type EditorDoc,
 } from "./workspaces.svelte";
 import { layoutProblems, paneOf, panes } from "../layout/splitlayout";
@@ -104,6 +106,31 @@ describe("store mutators", () => {
     expect(ws.editors[0].loading).toBe(true);
     expect(ws.editors[0].source).toBe("sftp"); // default source
     expect(findEditorByPath("s1", "/etc/app.yaml")?.id).toBe(id);
+  });
+
+  it("opens a pipeline file on its schema, and asks for it again on an open one (ADR 0068)", () => {
+    const id = addEditor("s1", "/r/.gitlab-ci.yml", ".gitlab-ci.yml", LANG, "sftp", { view: "schema" });
+    expect(getWorkspace("s1").editors[0]).toMatchObject({ startView: "schema" });
+    expect(getWorkspace("s1").editors[0].viewSeq).toBeUndefined();
+    showEditorSchema("s1", id);
+    showEditorSchema("s1", id);
+    expect(getWorkspace("s1").editors[0].viewSeq).toBe(2);
+    showEditorSchema("s1", "nope");
+    expect(getWorkspace("s1").editors).toHaveLength(1);
+  });
+
+  it("shows the pipelines of files and folders as a view with no text, once per set", () => {
+    const targets = [{ path: "/r/.github/workflows", isDir: true }];
+    const id = addPipelinesView("s1", "sftp", targets, "Pipelines · workflows");
+    const doc = getWorkspace("s1").editors[0];
+    expect(doc).toMatchObject({ id, readOnly: true, loading: false, content: "", pipelines: { targets }, name: "Pipelines · workflows" });
+    expect(isDirty(doc)).toBe(false);
+    addEditor("s1", "/etc/app.yaml", "app.yaml", LANG);
+    expect(addPipelinesView("s1", "sftp", [{ path: "/r/.github/workflows", isDir: true }], "x")).toBe(id);
+    expect(getWorkspace("s1").editors).toHaveLength(2);
+    expect(addPipelinesView("s1", "sftp", [{ path: "/r/.github/workflows", isDir: false }], "y")).not.toBe(id);
+    // A file opened at the same path is not the view.
+    expect(findEditorByPath("s1", "/r/.github/workflows")).toBeNull();
   });
 
   it("gotoEditorLine asks an open editor for a line — again for the same line", () => {

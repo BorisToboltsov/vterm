@@ -92,6 +92,9 @@ const THROUGH_THE_SCALE: Record<string, [RegExp, string][]> = {
     [/isLogWide\(listWidth, uiPx\(REM_PX\)\)/, "the history's threshold"],
   ],
   "src/routes/+page.svelte": [[/const VIEW_STRIP = \$derived\(uiPx\(28\)\)/, "the strip of views"]],
+  // The pipeline schema (ADR 0068): the graph's rows and the map's cards hold text in rem.
+  "src/lib/pipeline/PipelineGraph.svelte": [[/const k = uiPx\(1\);/, "the graph's rows and columns"]],
+  "src/lib/pipeline/PipelinesTab.svelte": [[/scale: uiPx\(1\)/, "the map's cards and events"]],
   "src/lib/layout/Dock.svelte": [
     [/const BOTTOM_STRIP = \$derived\(uiPx\(24\) \+ 1\)/, "the collapsed bottom dock"],
     [/const rail = \$derived\(uiPx\(COLLAPSED_RAIL\)\)/, "the collapsed side dock"],

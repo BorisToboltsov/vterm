@@ -126,6 +126,9 @@ function modelImports(store: string): string[] {
   return names;
 }
 
+/** The steps that add a document — each with its view. */
+const OPENERS = ["addEditor", "addScratchEditor", "addPipelinesView"];
+
 export function storeViolations(store: string): string[] {
   const c = code(store);
   const out: string[] = [];
@@ -157,8 +160,9 @@ export function storeViolations(store: string): string[] {
   if (/kind:\s*["'](?:pane|split)["']|\.tabs\s*=(?!=)|\.active\s*=(?!=)|\broot:\s*\{/.test(c)) {
     out.push("the store builds or edits a layout tree by hand");
   }
-  // A document and its view, in one step.
-  for (const name of ["addEditor", "addScratchEditor"]) {
+  // A document and its view, in one step — a file, a generated script, the
+  // map of a group of pipelines (ADR 0068).
+  for (const name of OPENERS) {
     // `beside` (v1.35) is the opener's own option: still the model's one step.
     if (!/patch\(sessionId, \{ editors: \[\.\.\.ws\.editors, doc\], layout: openView\(ws\.layout, id(?:, opts\.beside \?\? false)?\) \}\);/.test(fn(c, name))) {
       out.push(`${name} adds a document without opening its view`);
@@ -170,11 +174,11 @@ export function storeViolations(store: string): string[] {
   ) {
     out.push("closeEditor removes a document and leaves its view in a zone");
   }
-  // Nobody else changes which documents there are: three writers, and the one
-  // that only edits a document in place (`updateDoc`, a `map`).
+  // Nobody else changes which documents there are: the openers and the one
+  // closer, and the one that only edits a document in place (`updateDoc`, a `map`).
   const writers = (c.match(/\beditors: (?:\[\.\.\.ws\.editors, doc\]|ws\.editors\.filter\()/g) ?? []).length;
-  if (writers !== 3) {
-    out.push(`documents are added or removed in ${writers} places, not three`);
+  if (writers !== OPENERS.length + 1) {
+    out.push(`documents are added or removed in ${writers} places, not ${OPENERS.length + 1}`);
   }
   // A layout that came from another window is rebuilt, not taken.
   if (!/const layout = loadViews\(ws\.layout,/.test(fn(c, "adoptWorkspace"))) {
@@ -439,7 +443,7 @@ describe("session views guard — catches what it exists for", () => {
           "export function closeAll(sessionId: string): void {\n  const ws = ensure(sessionId);\n  patch(sessionId, { editors: ws.editors.filter(() => false) });\n}\n\nexport function removeWorkspace(",
         ),
       ),
-    ).toEqual(["documents are added or removed in 4 places, not three"]);
+    ).toEqual([`documents are added or removed in ${OPENERS.length + 2} places, not ${OPENERS.length + 1}`]);
   });
 
   it("a layout from another window taken as it came", () => {

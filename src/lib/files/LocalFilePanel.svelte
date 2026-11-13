@@ -29,6 +29,7 @@
     visible = true,
     onToggleFollowTerminal,
     onOpenFile,
+    onPipelines,
     onUserNavigate,
   }: {
     /** Owning terminal tab — the key its directory is remembered under (v1.0.14). */
@@ -43,6 +44,8 @@
     visible?: boolean;
     onToggleFollowTerminal?: () => void;
     onOpenFile?: (path: string) => void;
+    /** "Pipeline schema" on files and folders (ADR 0068). */
+    onPipelines?: (targets: { path: string; isDir: boolean }[]) => void;
     onUserNavigate?: (path: string) => void;
   } = $props();
 
@@ -78,6 +81,7 @@
   sessionKey={sessionId}
   {onToggleFollowTerminal}
   {onOpenFile}
+  {onPipelines}
   {onUserNavigate}
   drives
   stripLabel={t("localfiles.label")}

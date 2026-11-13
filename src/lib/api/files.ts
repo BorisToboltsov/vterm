@@ -140,6 +140,24 @@ export function localList(path: string): Promise<FileEntry[]> {
   return call<FileEntry[]>("local_list", { path });
 }
 
+/**
+ * Read text and list folders through one connection — a session's SFTP, or this
+ * computer when `sessionId` is null — for whatever reads the files beside the
+ * one it was opened on (a pipeline's includes, ADR 0068). The same commands the
+ * file panel and the editor use: no other way to a file is opened.
+ */
+export function connectionFiles(sessionId: string | null, maxBytes: number) {
+  return {
+    async read(path: string): Promise<string> {
+      const file = sessionId ? await sftpReadText(sessionId, path, maxBytes) : await readLocalText(path, maxBytes);
+      return file.content;
+    },
+    list(dir: string): Promise<FileEntry[]> {
+      return sessionId ? sftpList(sessionId, dir) : localList(dir);
+    },
+  };
+}
+
 /** Which of `paths` are folders (files dropped on the window name only their paths). */
 export function localKinds(paths: string[]): Promise<boolean[]> {
   return call<boolean[]>("local_kinds", { paths });
