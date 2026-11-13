@@ -43,7 +43,11 @@ export function buildMap(pipelines: readonly Pipeline[], defaultBranch = "main")
     cards.push({ id: p.file, pipeline: p, called });
   };
   pipelines.forEach((p) => add(p, p.callable));
+  // The loader reads calls to a fixed depth; a pipeline met again is not walked twice.
+  const walked = new Set<Pipeline>();
   const visit = (p: Pipeline) => {
+    if (walked.has(p)) return;
+    walked.add(p);
     for (const job of p.jobs) {
       const inner = job.call?.pipeline;
       if (!inner) continue;

@@ -447,3 +447,143 @@ export function layoutMap(input: MapInput): MapLayout {
   });
   return { events, cards, links, width, height: height + 6 };
 }
+
+// ── The run of a group, as lanes ─────────────────────────────────────────────
+
+export interface LanesInput {
+  /** Lanes top to bottom; `depth` — how far down calls it stands (indented). */
+  lanes: readonly { key: string; depth: number }[];
+  /** Jobs: their lane, their wave (the column, from 1) and their row in it. */
+  nodes: readonly { key: string; lane: string; wave: number; row: number }[];
+  links: readonly { from: string; to: string; kind: string }[];
+  waves: number;
+  /** What starts the run: the key links name it by. */
+  event: string;
+  /** The cards the event starts nothing in: small boxes in a row under the lanes. */
+  idle: readonly string[];
+  width: number;
+  /** The interface scale (`uiPx(1)`). */
+  scale?: number;
+}
+
+export interface LanesLayout {
+  lanes: Map<string, Box>;
+  nodes: Map<string, Box>;
+  event: Box;
+  /** Each wave's column, for its title and the line that marks the wave running. */
+  columns: Box[];
+  links: { key: string; from: string; to: string; kind: string; d: string }[];
+  idle: Map<string, Box>;
+  /** The title of the row of cards not started, when there are any. */
+  idleTitle: Box | null;
+  width: number;
+  height: number;
+}
+
+/**
+ * The lanes' geometry at 100 %: the event's column on the left, then one column
+ * per wave. A lane is its title (`laneHead`) and its rows; a job is as tall as
+ * a job of the pipeline's own graph.
+ */
+const LANES = {
+  pad: 12,
+  event: 128,
+  eventH: 22,
+  gap: 44,
+  head: 24,
+  laneHead: 24,
+  node: 26,
+  row: 32,
+  lanePad: 4,
+  laneGap: 8,
+  indent: 10,
+  minColumn: 150,
+  maxJob: 220,
+  gutter: 36,
+  radius: 8,
+  idleW: 150,
+  idleH: 24,
+  idleGap: 6,
+  idleTitle: 18,
+};
+
+/** Lanes stacked under the wave titles; links turn in the gutters and never cross a job. */
+export function layoutLanes(input: LanesInput): LanesLayout {
+  const M = Object.fromEntries(Object.entries(LANES).map(([key, v]) => [key, v * (input.scale ?? 1)])) as typeof LANES;
+  const waves = Math.max(1, input.waves);
+  const x0 = M.pad + M.event + M.gap;
+  // As wide as a job and its gutter at most: a wide window does not pull the waves apart.
+  const colW = Math.min(M.maxJob + M.gutter, Math.max(M.minColumn, (input.width - x0 - M.pad) / waves));
+  const width = Math.max(input.width, x0 + waves * colW + M.pad);
+  const jw = Math.min(M.maxJob, colW - M.gutter);
+  const colX = (wave: number) => x0 + (wave - 1) * colW;
+  const columns = Array.from({ length: waves }, (_, i) => ({ x: colX(i + 1), y: 0, w: colW, h: M.head }));
+
+  const lanes = new Map<string, Box>();
+  const nodes = new Map<string, Box>();
+  /** Lines between rows and between lanes a link may run along. */
+  const gaps: number[] = [];
+  let y = M.head;
+  for (const lane of input.lanes) {
+    const mine = input.nodes.filter((n) => n.lane === lane.key);
+    const rows = mine.length ? Math.max(...mine.map((n) => n.row)) + 1 : 0;
+    const x = x0 - M.gutter / 2 + Math.min(2, lane.depth) * M.indent;
+    const h = M.laneHead + rows * M.row + M.lanePad;
+    lanes.set(lane.key, { x, y, w: width - M.pad - x, h });
+    for (const n of mine) nodes.set(n.key, { x: colX(n.wave) + (colW - jw) / 2, y: y + M.laneHead + n.row * M.row + (M.row - M.node) / 2, w: jw, h: M.node });
+    for (let r = 1; r < rows; r++) gaps.push(y + M.laneHead + r * M.row);
+    gaps.push(y + h + M.laneGap / 2);
+    y += h + M.laneGap;
+  }
+
+  // The event stands level with the jobs it starts.
+  const started = input.links.filter((l) => l.from === input.event).map((l) => nodes.get(l.to)).filter((b): b is Box => !!b);
+  const mids = started.map((b) => b.y + b.h / 2);
+  const centre = mids.length ? (Math.min(...mids) + Math.max(...mids)) / 2 : M.head + M.eventH / 2;
+  const event = { x: M.pad, y: centre - M.eventH / 2, w: M.event, h: M.eventH };
+
+  const boxes = [...nodes.values()];
+  const blocked = (x1: number, x2: number, ly: number, except: Box[]) =>
+    boxes.some((b) => !except.includes(b) && b.x < Math.max(x1, x2) && b.x + b.w > Math.min(x1, x2) && ly > b.y - 2 && ly < b.y + b.h + 2);
+  // Into the first wave the lines turn left of the lanes, clear of their titles.
+  const firstBus = M.pad + M.event + (M.gap - M.gutter / 2) / 2;
+  const links = input.links.flatMap((l) => {
+    const s = l.from === input.event ? event : nodes.get(l.from);
+    const t = nodes.get(l.to);
+    if (!s || !t) return [];
+    const sx = s.x + s.w;
+    const sy = s.y + s.h / 2;
+    const tx = t.x;
+    const ty = t.y + t.h / 2;
+    const bus = tx < x0 + colW ? firstBus : tx - M.gutter / 2;
+    let points: [number, number][] = [[sx, sy], [bus, sy], [bus, ty], [tx, ty]];
+    if (blocked(sx, bus, sy, [s, t])) {
+      // Along the free line between rows nearest its ends.
+      const out = sx + M.gutter * 0.3;
+      const free = gaps.filter((g) => !blocked(out, bus, g, [s, t]));
+      const gy = free.length ? free.reduce((a, b) => (Math.abs(b - sy) + Math.abs(b - ty) < Math.abs(a - sy) + Math.abs(a - ty) ? b : a)) : M.head - 4;
+      points = [[sx, sy], [out, sy], [out, gy], [bus, gy], [bus, ty], [tx, ty]];
+    }
+    return [{ key: `${l.from}>${l.to}`, from: l.from, to: l.to, kind: l.kind, d: roundedPath(points, M.radius) }];
+  });
+
+  // The cards the event starts nothing in: a row under the lanes.
+  const idle = new Map<string, Box>();
+  let idleTitle: Box | null = null;
+  let bottom = Math.max(y, event.y + event.h + M.pad);
+  if (input.idle.length) {
+    idleTitle = { x: M.pad, y: bottom + 2, w: width - 2 * M.pad, h: M.idleTitle };
+    let ix = M.pad;
+    let iy = idleTitle.y + M.idleTitle + 2;
+    for (const id of input.idle) {
+      if (ix > M.pad && ix + M.idleW > width - M.pad) {
+        ix = M.pad;
+        iy += M.idleH + M.idleGap;
+      }
+      idle.set(id, { x: ix, y: iy, w: M.idleW, h: M.idleH });
+      ix += M.idleW + M.idleGap;
+    }
+    bottom = iy + M.idleH + M.pad;
+  }
+  return { lanes, nodes, event, columns, links, idle, idleTitle, width, height: bottom };
+}

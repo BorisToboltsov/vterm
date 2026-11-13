@@ -120,7 +120,7 @@ jobs:
     expect(test.allowFailure).toBe(true);
     expect(test.vars).toEqual({ CI: "1" });
     expect(e2e.needs).toEqual([{ job: "lint", optional: false }, { job: "test", optional: false }]);
-    expect(e2e.call).toEqual({ file: "./.github/workflows/e2e.yml", pipeline: null, missing: null });
+    expect(e2e.call).toEqual({ file: "./.github/workflows/e2e.yml", pipeline: null, missing: null, waits: true });
     expect(deploy.name).toBe("Deploy");
     expect(deploy.condition).toBe("github.ref == 'refs/heads/main'");
     expect(deploy.environment).toBe("production");
