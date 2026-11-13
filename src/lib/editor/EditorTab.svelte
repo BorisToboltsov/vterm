@@ -2,12 +2,14 @@
   import { swallow, swallowed } from "../api/diag";
   import { onDestroy, onMount } from "svelte";
   import { tooltip } from "../actions/tooltip";
-  import { EditorState, Compartment } from "@codemirror/state";
+  import { EditorState, Compartment, RangeSetBuilder, StateEffect, StateField } from "@codemirror/state";
   import { unifiedMergeView } from "@codemirror/merge";
   import { ICONS } from "../ui/icons";
   import {
+    Decoration,
     EditorView,
     keymap,
+    type DecorationSet,
     lineNumbers,
     highlightActiveLine,
     highlightActiveLineGutter,
@@ -34,7 +36,10 @@
   import { parseStaticBadge } from "../markdown/badge";
   import { snippetsForLang } from "./snippets";
   import { columnOffset } from "./editorplace";
-  import { lintRemote, readLocalBytes, sftpReadBytes } from "../api";
+  import { connectionFiles, lintRemote, readLocalBytes, sftpReadBytes } from "../api";
+  import PipelineView from "../pipeline/PipelineView.svelte";
+  import { looksLikeGitlab, pipelineKindOf } from "../pipeline/pipefiles";
+  import type { SourceSpan } from "../pipeline/pipeline";
   import { hasRemoteLinter, parseLint, type LintMsg } from "./remotelint";
   import { notifyError, notifySuccess } from "../stores/toasts.svelte";
   import Icon from "../ui/Icon.svelte";
@@ -52,6 +57,7 @@
     onLintMissing,
     groupServers = null,
     onGroup,
+    onOpenFileAt,
   }: {
     sessionId: string;
     doc: EditorDoc;
@@ -69,6 +75,8 @@
     groupServers?: number | null;
     /** Carry the unsaved edit to the same file on the group's other servers. */
     onGroup?: () => void;
+    /** Open another file of the connection on a line (a pipeline's include, ADR 0068). */
+    onOpenFileAt?: (path: string, line: number) => void;
   } = $props();
 
   let host: HTMLDivElement;
@@ -214,6 +222,79 @@
     notifySuccess(t("editor.previewReloaded"), { source: "editor", sessionId: sessionId });
   }
 
+  // A CI pipeline (ADR 0068) gets Code ⇄ Schema ⇄ Side by side: named by its
+  // path (workflows, .gitlab-ci.yml), or — a GitLab fragment — by what it holds.
+  const pipelineKind = $derived(
+    pipelineKindOf(doc.path) ?? (/\.ya?ml$/i.test(doc.path) && looksLikeGitlab(doc.content) ? "gitlab" : null),
+  );
+  let pipeView = $state<"code" | "schema" | "split">("code");
+  const PIPE_VIEWS = [
+    { v: "code", icon: "code", key: "editor.viewCode" },
+    { v: "schema", icon: "hierarchy", key: "editor.viewSchema" },
+    { v: "split", icon: "splitRight", key: "editor.viewSplit" },
+  ] as const;
+  /** The editor's cursor line, for the schema beside it to pick the job. */
+  let cursorLine = $state<number | null>(null);
+  const codeHidden = $derived(preview || (!!pipelineKind && pipeView === "schema"));
+  const pipeReader = $derived(connectionFiles(doc.source === "sftp" ? sessionId : null, settings.sftp.maxOpenMb * 1024 * 1024));
+  // Asked again for the schema of a file already open ("Pipeline schema" in the file panel).
+  $effect(() => {
+    if (doc.viewSeq && doc.startView === "schema") pipeView = "schema";
+  });
+
+  // The job picked in the schema, lit in the code beside it.
+  const setJobLines = StateEffect.define<{ from: number; to: number } | null>();
+  const jobLine = Decoration.line({ class: "cm-pipeline-job" });
+  const jobLines = StateField.define<DecorationSet>({
+    create: () => Decoration.none,
+    update(deco, tr) {
+      let next = deco.map(tr.changes);
+      for (const e of tr.effects) {
+        if (!e.is(setJobLines)) continue;
+        if (!e.value) {
+          next = Decoration.none;
+          continue;
+        }
+        const b = new RangeSetBuilder<Decoration>();
+        for (let n = e.value.from; n <= e.value.to; n++) {
+          const line = tr.state.doc.line(n);
+          b.add(line.from, line.from, jobLine);
+        }
+        next = b.finish();
+      }
+      return next;
+    },
+    provide: (f) => EditorView.decorations.from(f),
+  });
+  const jobLineTheme = EditorView.theme({
+    ".cm-pipeline-job": { backgroundColor: "color-mix(in srgb, var(--color-accent) 12%, transparent)" },
+  });
+
+  function lightJob(span: SourceSpan | null) {
+    if (!view) return;
+    if (!span || span.file !== doc.path || pipeView !== "split") {
+      view.dispatch({ effects: setJobLines.of(null) });
+      return;
+    }
+    const last = view.state.doc.lines;
+    const from = Math.min(Math.max(1, span.line), last);
+    const to = Math.min(Math.max(from, span.endLine), last);
+    view.dispatch({
+      effects: [setJobLines.of({ from, to }), EditorView.scrollIntoView(view.state.doc.line(from).from, { y: "nearest" })],
+    });
+  }
+
+  /** "Open in code" from the schema: this file beside the schema, another file in its own editor. */
+  function jumpFromSchema(file: string, line: number) {
+    if (file !== doc.path) {
+      onOpenFileAt?.(file, line);
+      return;
+    }
+    if (pipeView === "schema") pipeView = "split";
+    jumpTo(line);
+    view?.focus();
+  }
+
   // Config snippets/templates relevant to this file's language (from settings).
   const snippets = $derived(snippetsForLang(doc.lang.kind, settings.snippets));
   let showSnippets = $state(false);
@@ -333,6 +414,7 @@
 
   onMount(() => {
     preview = isMarkdown; // markdown opens in preview by default
+    if (doc.startView === "schema") pipeView = "schema";
     const state = EditorState.create({
       doc: doc.content,
       extensions: [
@@ -358,6 +440,8 @@
             ]
           : []),
         langC.of([]),
+        jobLines,
+        jobLineTheme,
         lintC.of(lintExt()),
         themeC.of(editorTheme(activeTerminalTheme())),
         // Mod+S saves; Mod+C/X/V use the backend clipboard. These sit before the
@@ -371,6 +455,7 @@
         keymap.of([...defaultKeymap, ...historyKeymap, ...searchKeymap, indentWithTab]),
         EditorView.updateListener.of((u) => {
           if (u.docChanged) setEditorContent(sessionId, doc.id, u.state.doc.toString());
+          if (u.selectionSet || u.docChanged) cursorLine = u.state.doc.lineAt(u.state.selection.main.head).number;
         }),
       ],
     });
@@ -472,6 +557,28 @@
           </button>
         </div>
       {/if}
+      {#if pipelineKind}
+        <!-- Code ⇄ Schema ⇄ Side by side (CI pipelines, ADR 0068). -->
+        <div class="flex overflow-hidden rounded border border-edge" data-testid="editor-pipeline-view">
+          {#each PIPE_VIEWS as b (b.v)}
+            <button
+              type="button"
+              class="flex items-center gap-1 px-2 py-0.5 {b.v !== 'code' ? 'border-l border-edge' : ''} {pipeView === b.v
+                ? 'bg-edge text-accent'
+                : 'text-muted hover:text-accent'}"
+              aria-pressed={pipeView === b.v}
+              use:tooltip={t(b.key)}
+              onclick={() => {
+                pipeView = b.v;
+                if (b.v !== "split") view?.dispatch({ effects: setJobLines.of(null) });
+              }}
+            >
+              <Icon name={b.icon} size={13} />
+              {t(b.key)}
+            </button>
+          {/each}
+        </div>
+      {/if}
       {#if isMarkdown && preview}
         <!-- Re-read inline images from source (close/reopen without losing edits). -->
         <button
@@ -484,7 +591,7 @@
           <Icon name="refresh" size={13} />
         </button>
       {/if}
-      {#if canRemoteLint && !preview}
+      {#if canRemoteLint && !codeHidden}
         <button
           class="flex items-center gap-1 rounded px-2 py-0.5 text-muted hover:bg-edge hover:text-text disabled:opacity-40"
           use:tooltip={t("editor.lintServer")}
@@ -496,7 +603,7 @@
           {linting ? t("editor.linting") : t("editor.lintServer")}
         </button>
       {/if}
-      {#if snippets.length > 0 && !doc.readOnly && !preview}
+      {#if snippets.length > 0 && !doc.readOnly && !codeHidden}
         <div class="relative">
           <button
             class="flex items-center gap-1 rounded px-2 py-0.5 text-muted hover:bg-edge hover:text-text"
@@ -523,7 +630,7 @@
           {/if}
         </div>
       {/if}
-      {#if groupServers && onGroup && !preview}
+      {#if groupServers && onGroup && !codeHidden}
         <button
           class="flex items-center gap-1 rounded px-2 py-0.5 text-muted hover:bg-edge hover:text-text disabled:opacity-40"
           data-testid="editor-group"
@@ -570,11 +677,31 @@
       </div>
     {/if}
   </div>
-  <!-- CodeMirror host (always mounted so edits keep flowing); hidden in preview. -->
-  <div
-    bind:this={host}
-    class="min-h-0 flex-1 overflow-hidden text-sm [&_.cm-editor]:h-full {preview ? 'hidden' : ''}"
-  ></div>
+  <!-- CodeMirror host (always mounted so edits keep flowing); hidden in the
+       markdown preview and on a pipeline's schema, beside the schema otherwise. -->
+  <div class="min-h-0 flex-1 {preview ? 'hidden' : 'flex'}">
+    <div
+      bind:this={host}
+      class="min-h-0 min-w-0 flex-1 overflow-hidden text-sm [&_.cm-editor]:h-full {codeHidden ? 'hidden' : ''} {pipelineKind && pipeView === 'split'
+        ? 'border-r border-edge'
+        : ''}"
+    ></div>
+    {#if pipelineKind && pipeView !== "code"}
+      <div class="min-h-0 min-w-0 {pipeView === 'split' ? 'w-1/2 shrink-0' : 'flex-1'}">
+        <PipelineView
+          path={doc.path}
+          text={doc.content}
+          kind={pipelineKind}
+          reader={pipeReader}
+          {sessionId}
+          compact={pipeView === "split"}
+          cursorLine={pipeView === "split" ? cursorLine : null}
+          onjump={jumpFromSchema}
+          onselectjob={lightJob}
+        />
+      </div>
+    {/if}
+  </div>
   {#if isMarkdown && preview}
     <!-- Preview of a file opened over SFTP/locally — untrusted; see markdown.ts. -->
     <div class="markdown-preview min-h-0 flex-1 overflow-auto px-4 py-3 text-sm" use:mdLinks>

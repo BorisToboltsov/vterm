@@ -24,6 +24,8 @@ import {
   writeLocalText,
 } from "../api";
 import { couldBeNginxInclude, editorLangOrPlain, editorLangWithDialect, editorLangWithIncludes } from "../editor/editorlang";
+import { baseName, parentOf } from "../files/fspath";
+import { pipelineKindOf } from "../pipeline/pipefiles";
 import { t } from "../i18n";
 import { settings } from "../settings/settings.svelte";
 import { isRecording } from "../stores/recordings.svelte";
@@ -31,6 +33,7 @@ import type { Tab } from "../stores/tabs.svelte";
 import { notifyError, notifyInfo, notifySuccess } from "../stores/toasts.svelte";
 import {
   addEditor,
+  addPipelinesView,
   closeEditor,
   fillEditor,
   findEditorByPath,
@@ -40,8 +43,10 @@ import {
   setEditorSaveIssue,
   setEditorSudo,
   setEditorWriteAccess,
+  showEditorSchema,
   showSessionView,
   type EditorDoc,
+  type PipelineTarget,
 } from "../stores/workspaces.svelte";
 import { lineDiffStat } from "../ui/util";
 
@@ -63,6 +68,8 @@ export interface OpenOptions {
   sudo?: boolean;
   sudoPassword?: string;
   gitBase?: string;
+  /** A pipeline file opened on its schema (ADR 0068). */
+  view?: "schema";
 }
 
 export function createEditorFlow(deps: EditorDeps) {
@@ -114,6 +121,7 @@ export function createEditorFlow(deps: EditorDeps) {
     if (existing) {
       showSessionView(sid, existing.id);
       if (opts.gotoLine) gotoEditorLine(sid, existing.id, opts.gotoLine, opts.gotoColumn);
+      if (opts.view) showEditorSchema(sid, existing.id);
       return;
     }
     // For a config-shaped file not already recognised as nginx, also consult the set
@@ -146,6 +154,7 @@ export function createEditorFlow(deps: EditorDeps) {
       sudo: opts.sudo,
       sudoPassword: opts.sudoPassword,
       gitBase: opts.gitBase,
+      view: opts.view,
     });
     fillEditor(sid, id, file);
     // Whether a save will land is asked ahead of editing, not found out at Save.
@@ -164,13 +173,14 @@ export function createEditorFlow(deps: EditorDeps) {
   async function openLocal(
     sid: string,
     path: string,
-    opts: { gitBase?: string; gotoLine?: number; gotoColumn?: number } = {},
+    opts: { gitBase?: string; gotoLine?: number; gotoColumn?: number; view?: "schema" } = {},
   ) {
     const name = path.split(/[\\/]/).pop() ?? path;
     const existing = findEditorByPath(sid, path);
     if (existing) {
       showSessionView(sid, existing.id);
       if (opts.gotoLine) gotoEditorLine(sid, existing.id, opts.gotoLine, opts.gotoColumn);
+      if (opts.view) showEditorSchema(sid, existing.id);
       return;
     }
     let file;
@@ -185,8 +195,26 @@ export function createEditorFlow(deps: EditorDeps) {
       gitBase: opts.gitBase,
       gotoLine: opts.gotoLine,
       gotoColumn: opts.gotoColumn,
+      view: opts.view,
     });
     fillEditor(sid, id, file);
+  }
+
+  /**
+   * "Pipeline schema" from the file panel (ADR 0068): one pipeline file opens in
+   * the editor on its schema; a folder or several files open the map of their
+   * pipelines, in the connection's file zone.
+   */
+  function openPipelines(sid: string, source: "sftp" | "local", targets: readonly PipelineTarget[]) {
+    if (targets.length === 0) return;
+    const one = targets.length === 1 && !targets[0].isDir ? targets[0].path : null;
+    if (one && pipelineKindOf(one)) {
+      if (source === "sftp") void openFile(sid, one, baseName(one), { view: "schema" });
+      else void openLocal(sid, one, { view: "schema" });
+      return;
+    }
+    const named = targets.length === 1 ? targets[0].path : parentOf(targets[0].path);
+    addPipelinesView(sid, source, targets, t("pipeline.group.docName", { name: baseName(named) }));
   }
 
   /**
@@ -274,6 +302,7 @@ export function createEditorFlow(deps: EditorDeps) {
     maxBytes,
     openFile,
     openLocal,
+    openPipelines,
 
     /** Open a git-changed file as an editable inline diff (from the git panel). */
     openGitDiff(sid: string, absPath: string, gitBase: string) {

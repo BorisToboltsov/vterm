@@ -150,6 +150,7 @@
   import DockPanel from "#lib/layout/DockPanel.svelte";
   import DockDragGhost from "#lib/layout/DockDragGhost.svelte";
   import EditorTab from "#lib/editor/EditorTab.svelte";
+  import PipelinesTab from "#lib/pipeline/PipelinesTab.svelte";
   import DiffModal from "#lib/editor/DiffModal.svelte";
   import ToolInstallDialog from "#lib/editor/ToolInstallDialog.svelte";
   import type { ToolStatus } from "#lib/editor/servertools.ts";
@@ -2701,6 +2702,7 @@
         sftpGroup={sftpGroupOf(tab.sessionId)}
         onOpenFile={(path, name, gotoLine) => editors.openFile(tab.sessionId, path, name, { gotoLine })}
         onOpenLocalFile={(path) => editors.openLocal(tab.sessionId, path)}
+        onPipelines={(targets) => editors.openPipelines(tab.sessionId, tab.kind === "ssh" ? "sftp" : "local", targets)}
         onOpenGitDiff={(absPath, gitBase) => editors.openGitDiff(tab.sessionId, absPath, gitBase)}
         onIgnoreGitignore={(path, pattern) => editors.appendGitignore(tab.sessionId, path, pattern)}
         onSftpNavigate={(path) => cdTerminalTo(tab.sessionId, path)}
@@ -3542,10 +3544,24 @@
                           <div class="p-4 text-sm text-muted" data-testid="doc-awaiting">{t("editor.awaiting")}</div>
                         {:else if ed.loading}
                           <div class="p-4 text-sm text-muted">{t("editor.loading")}</div>
+                        {:else if ed.pipelines}
+                          <!-- The map of a group of pipelines (ADR 0068): no text of its own. -->
+                          <PipelinesTab
+                            sessionId={tab.sessionId}
+                            doc={ed}
+                            onOpenFile={(path, line) =>
+                              ed.source === "sftp"
+                                ? void editors.openFile(tab.sessionId, path, path.split("/").pop() ?? path, { gotoLine: line })
+                                : void editors.openLocal(tab.sessionId, path, { gotoLine: line })}
+                          />
                         {:else}
                           <EditorTab
                             sessionId={tab.sessionId}
                             doc={ed}
+                            onOpenFileAt={(path, line) =>
+                              ed.source === "sftp"
+                                ? void editors.openFile(tab.sessionId, path, path.split("/").pop() ?? path, { gotoLine: line })
+                                : void editors.openLocal(tab.sessionId, path, { gotoLine: line })}
                             saving={editors.savingId === ed.id}
                             onsave={() => editors.save(tab.sessionId, ed)}
                             onCheckSudo={() => editors.askSudo(tab.sessionId, ed, "check")}

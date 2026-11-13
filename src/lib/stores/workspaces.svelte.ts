@@ -90,6 +90,25 @@ export interface EditorDoc {
    * `unifiedMergeView`) against this base — undefined for ordinary file opens.
    */
   gitBase?: string;
+  /**
+   * The view a pipeline file shows (ADR 0068): opened from "Pipeline schema",
+   * it starts on the schema; `viewSeq` bumps when it is asked for again on a
+   * file already open.
+   */
+  startView?: "schema";
+  viewSeq?: number;
+  /**
+   * Not a file but the pipelines of these files and folders (ADR 0068): the
+   * map of a group. It has no text, is never saved, and is not reopened at
+   * launch — it is read anew from its files.
+   */
+  pipelines?: { targets: PipelineTarget[] };
+}
+
+/** A file or folder a pipelines view was opened on. */
+export interface PipelineTarget {
+  path: string;
+  isDir: boolean;
 }
 
 /** Options passed when opening an editor (sudo / line jump / git diff base). */
@@ -101,6 +120,8 @@ export interface OpenEditorOpts {
   gotoLine?: number;
   gotoColumn?: number;
   gitBase?: string;
+  /** Open a pipeline file on its schema (ADR 0068). */
+  view?: "schema";
 }
 
 export interface Workspace {
@@ -228,7 +249,7 @@ function patch(sessionId: string, next: Partial<Workspace>): void {
 
 /** Find an already-open editor for a path (so a second open just refocuses). */
 export function findEditorByPath(sessionId: string, path: string): EditorDoc | null {
-  return ensure(sessionId).editors.find((e) => e.path === path) ?? null;
+  return ensure(sessionId).editors.find((e) => e.path === path && !e.pipelines) ?? null;
 }
 
 /** Add a placeholder (loading) editor — shown, in the connection's file zone — and return its id. */
@@ -263,6 +284,7 @@ export function addEditor(
     gotoLine: opts.gotoLine ?? null,
     gotoColumn: opts.gotoLine ? (opts.gotoColumn ?? null) : null,
     gitBase: opts.gitBase,
+    ...(opts.view ? { startView: opts.view } : {}),
   };
   const ws = ensure(sessionId);
   patch(sessionId, { editors: [...ws.editors, doc], layout: openView(ws.layout, id, opts.beside ?? false) });
@@ -355,6 +377,60 @@ export function gotoEditorLine(sessionId: string, id: string, line: number, colu
   const doc = workspacesState.map[sessionId]?.editors.find((e) => e.id === id);
   if (!doc || line < 1) return;
   updateDoc(sessionId, id, { gotoLine: line, gotoColumn: column ?? null, gotoSeq: (doc.gotoSeq ?? 0) + 1 });
+}
+
+/** Show an open pipeline file on its schema (ADR 0068): asked again from the file panel. */
+export function showEditorSchema(sessionId: string, id: string): void {
+  const doc = workspacesState.map[sessionId]?.editors.find((e) => e.id === id);
+  if (!doc) return;
+  updateDoc(sessionId, id, { startView: "schema", viewSeq: (doc.viewSeq ?? 0) + 1 });
+}
+
+const sameTargets = (a: readonly PipelineTarget[], b: readonly PipelineTarget[]): boolean =>
+  a.length === b.length && a.every((t, i) => t.path === b[i].path && t.isDir === b[i].isDir);
+
+/**
+ * Show the pipelines of files and folders (ADR 0068) in the connection's file
+ * zone: a document with no text, standing where files stand. The same set asked
+ * for again is shown, not opened twice.
+ */
+export function addPipelinesView(
+  sessionId: string,
+  source: "sftp" | "local",
+  targets: readonly PipelineTarget[],
+  name: string,
+): string {
+  const ws = ensure(sessionId);
+  const known = ws.editors.find((e) => e.pipelines && sameTargets(e.pipelines.targets, targets));
+  if (known) {
+    patch(sessionId, { layout: showView(ws.layout, known.id) });
+    return known.id;
+  }
+  const id = crypto.randomUUID();
+  const doc: EditorDoc = {
+    id,
+    source,
+    path: targets[0]?.path ?? "",
+    name,
+    lang: { kind: "plain", label: "Pipelines" },
+    content: "",
+    baseContent: "",
+    baseSha256: "",
+    eol: "lf",
+    encoding: "utf-8",
+    mode: null,
+    readOnly: true,
+    writeAccess: "unknown",
+    saveIssue: "none",
+    loading: false,
+    loadError: null,
+    sudo: false,
+    sudoPassword: "",
+    gotoLine: null,
+    pipelines: { targets: targets.map((t) => ({ ...t })) },
+  };
+  patch(sessionId, { editors: [...ws.editors, doc], layout: openView(ws.layout, id) });
+  return id;
 }
 
 /** Mark an editor as elevated (sudo) and remember its password for later saves. */

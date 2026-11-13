@@ -36,6 +36,7 @@
     onEnablePathSync,
     onOpenFile,
     onOpenLocalFile,
+    onPipelines,
     onOpenGitDiff,
     onIgnoreGitignore,
     onSftpNavigate,
@@ -72,6 +73,8 @@
     onEnablePathSync?: () => void;
     onOpenFile?: (path: string, name: string, gotoLine?: number) => void;
     onOpenLocalFile?: (path: string) => void;
+    /** "Pipeline schema" in the file panel (ADR 0068). */
+    onPipelines?: (targets: { path: string; isDir: boolean }[]) => void;
     /** Open a git-changed file as an editable inline diff (absolute path + HEAD base). */
     onOpenGitDiff?: (absPath: string, gitBase: string) => void;
     /** Append a pattern to the repo's `.gitignore` (absolute path + pattern). */
@@ -114,6 +117,7 @@
       group={sftpGroup}
       {onToggleFollowTerminal}
       {onOpenFile}
+      {onPipelines}
       onUserNavigate={onSftpNavigate}
     />
   {:else}
@@ -125,6 +129,7 @@
       {visible}
       {onToggleFollowTerminal}
       onOpenFile={onOpenLocalFile}
+      {onPipelines}
       onUserNavigate={onSftpNavigate}
     />
   {/if}

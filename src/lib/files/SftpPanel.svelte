@@ -57,6 +57,7 @@
     group = null,
     onToggleFollowTerminal,
     onOpenFile,
+    onPipelines,
     onUserNavigate,
   }: {
     sessionId: string;
@@ -79,6 +80,8 @@
     group?: SftpGroup | null;
     onToggleFollowTerminal?: () => void;
     onOpenFile?: (path: string, name: string, gotoLine?: number) => void;
+    /** "Pipeline schema" on files and folders (ADR 0068). */
+    onPipelines?: (targets: { path: string; isDir: boolean }[]) => void;
     onUserNavigate?: (path: string) => void;
   } = $props();
 
@@ -231,6 +234,7 @@
   sessionKey={sessionId}
   {onToggleFollowTerminal}
   {onOpenFile}
+  {onPipelines}
   {onUserNavigate}
   requiresConnect
   {sessionReady}

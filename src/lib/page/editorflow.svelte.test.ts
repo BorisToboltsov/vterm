@@ -64,6 +64,45 @@ afterEach(() => {
   removeWorkspace(SID);
 });
 
+describe("editor flow: pipelines (ADR 0068)", () => {
+  it("opens one pipeline file on its schema, and turns an open one to it", async () => {
+    const { flow, cleanup } = harness();
+    flow.openPipelines(SID, "sftp", [{ path: "/r/.gitlab-ci.yml", isDir: false }]);
+    await settled();
+    expect(doc("/r/.gitlab-ci.yml")).toMatchObject({ startView: "schema", loading: false });
+    flow.openPipelines(SID, "sftp", [{ path: "/r/.gitlab-ci.yml", isDir: false }]);
+    await settled();
+    expect(doc("/r/.gitlab-ci.yml")?.viewSeq).toBe(1);
+    expect(getWorkspace(SID).editors).toHaveLength(1);
+    cleanup();
+  });
+
+  it("opens a local pipeline file through the local read", async () => {
+    api.readLocalText.mockImplementation(async () => file("on: push"));
+    const { flow, cleanup } = harness("local");
+    flow.openPipelines(SID, "local", [{ path: "/r/.github/workflows/ci.yml", isDir: false }]);
+    await settled();
+    expect(api.readLocalText).toHaveBeenCalled();
+    expect(doc("/r/.github/workflows/ci.yml")?.startView).toBe("schema");
+    cleanup();
+  });
+
+  it("opens a folder or several files on the map of their pipelines", () => {
+    const { flow, cleanup } = harness();
+    flow.openPipelines(SID, "sftp", [{ path: "/r/.github/workflows", isDir: true }]);
+    flow.openPipelines(SID, "sftp", [
+      { path: "/r/.github/workflows/a.yml", isDir: false },
+      { path: "/r/.github/workflows/b.yml", isDir: false },
+    ]);
+    flow.openPipelines(SID, "sftp", []);
+    const views = getWorkspace(SID).editors.filter((e) => e.pipelines);
+    expect(views.map((v) => v.name)).toEqual(["Pipelines · workflows", "Pipelines · workflows"]);
+    expect(views[1].pipelines?.targets).toHaveLength(2);
+    expect(api.sftpReadText).not.toHaveBeenCalled();
+    cleanup();
+  });
+});
+
 describe("editor flow: opening", () => {
   it("reads first, opens the file filled, and asks ahead of editing whether a save will land", async () => {
     api.sftpWriteAccess.mockResolvedValueOnce("restricted");
