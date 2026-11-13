@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { evalGithub, evalGitlab, ghRefFilter, hasStatusCheck, safeRegex, truth, UNKNOWN, unwrapExpr, type ExprValue, type GhScope } from "./pipexpr";
+import { evalGithub, evalGitlab, ghRefFilter, hasStatusCheck, riskyPattern, safeRegex, truth, UNKNOWN, unwrapExpr, type ExprValue, type GhScope } from "./pipexpr";
 
 const ctx: Record<string, ExprValue> = {
   "github.event_name": "push",
@@ -130,9 +130,20 @@ describe("evalGitlab", () => {
 });
 
 describe("safeRegex", () => {
-  it("refuses patterns that could hang on a short name", () => {
+  // The risky shapes are checked by the predicate alone: a catastrophic pattern
+  // is never handed to anything that builds a RegExp, not even in a test. That
+  // safeRegex refuses one is shown through the GitLab `=~` test above.
+  it("names the patterns that could hang on a short name", () => {
+    expect(riskyPattern("(a+)+$")).toBe(true);
+    expect(riskyPattern("(x*)*y")).toBe(true);
+    expect(riskyPattern("(ab+){2,}")).toBe(true);
+    expect(riskyPattern("x".repeat(201))).toBe(true);
+    expect(riskyPattern("^v\\d+$")).toBe(false);
+    expect(riskyPattern("^(main|release-.*)$")).toBe(false);
+  });
+
+  it("builds the rest, and refuses what does not compile", () => {
     expect(safeRegex("^v\\d+", "")?.test("v12")).toBe(true);
-    expect(safeRegex("(a+)+$", "")).toBeNull();
     expect(safeRegex("x".repeat(201), "")).toBeNull();
     expect(safeRegex("[", "")).toBeNull();
     expect(safeRegex("a", "gx")?.flags).toBe("");

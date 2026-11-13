@@ -273,9 +273,16 @@ type GlTok =
 const MAX_PATTERN = 200;
 const RISKY_PATTERN = /\([^)]*[+*][^)]*\)\s*[+*{]/;
 
+/**
+ * Whether a pattern from the file is too risky to run: too long, or a group
+ * with a quantifier inside that is itself quantified (`(a+)+`), the shape that
+ * backtracks exponentially on a short name.
+ */
+export const riskyPattern = (body: string): boolean => body.length > MAX_PATTERN || RISKY_PATTERN.test(body);
+
 /** A GitLab `/pattern/flags` as a RegExp, or null when it is too risky or not valid. */
 export function safeRegex(body: string, flags: string): RegExp | null {
-  if (body.length > MAX_PATTERN || RISKY_PATTERN.test(body)) return null;
+  if (riskyPattern(body)) return null;
   try {
     return new RegExp(body, flags.replace(/[^imsu]/g, ""));
   } catch {
