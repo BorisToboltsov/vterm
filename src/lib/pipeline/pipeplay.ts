@@ -34,14 +34,22 @@ export function startPlayback(plan: Plan): Playback {
 
 const done = (s: RunState | undefined) => s === "ok" || s === "warn";
 
+/**
+ * Whether a job waits for `dep` even when `dep` stops at its gate: it does,
+ * except for a GitLab manual job allowed to fail that it does not name in
+ * `needs` — such a job does not hold the stages after it.
+ */
+export function holdsThroughGate(pipeline: Pipeline, plan: Plan, jobId: string, dep: string): boolean {
+  const job = pipeline.jobs.find((j) => j.id === jobId);
+  const explicit = job?.needs?.some((n) => n.job === dep) ?? false;
+  return explicit || plan.jobs.get(dep)?.gate !== "manual" || plan.jobs.get(dep)?.allowFailure !== true;
+}
+
 /** Whether a dependency lets a job start: finished, or a manual job that does not hold the stages after it. */
 function cleared(pipeline: Pipeline, plan: Plan, pb: Playback, jobId: string, dep: string): boolean {
   const s = pb.states[dep];
   if (done(s)) return true;
-  if (s !== "gate") return false;
-  const job = pipeline.jobs.find((j) => j.id === jobId);
-  const explicit = job?.needs?.some((n) => n.job === dep) ?? false;
-  return !explicit && plan.jobs.get(dep)?.gate === "manual" && plan.jobs.get(dep)?.allowFailure === true;
+  return s === "gate" && !holdsThroughGate(pipeline, plan, jobId, dep);
 }
 
 /**
@@ -89,7 +97,7 @@ export function openGate(pb: Playback, id: string): Playback {
 }
 
 /** Where the playback stands. */
-export function playbackPhase(pb: Playback): "running" | "waiting" | "done" {
+export function playbackPhase(pb: Pick<Playback, "states">): "running" | "waiting" | "done" {
   const states = Object.values(pb.states);
   if (states.includes("run") || states.includes("wait") && !states.includes("gate")) return "running";
   return states.includes("gate") ? "waiting" : "done";

@@ -179,7 +179,7 @@ export function parseWorkflow(file: string, doc: YamlFile): Pipeline {
       stage: null,
       needs: needs ? needs.map((n): JobNeed => ({ job: n, optional: false })) : null,
       matrix,
-      call: uses ? { file: uses, pipeline: null, missing: isLocalUses(uses) ? null : "external" } : null,
+      call: uses ? { file: uses, pipeline: null, missing: isLocalUses(uses) ? null : "external", waits: true } : null,
       environment: str(j.environment) ?? (isObj(j.environment) ? str(j.environment.name) : null),
       when: "on_success",
       startIn: null,

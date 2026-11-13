@@ -3366,4 +3366,11 @@ export const ru: Record<MessageKey, string> = {
   "pipeline.group.hint": "Щелчок по пайплайну — его задачи, по событию — проиграть его",
   "pipeline.group.failed": "Не прочитан: {path}",
   "pipeline.group.reload": "Перечитать",
+  "pipeline.group.map": "Карта",
+  "pipeline.group.mapHint": "Вернуться к карте пайплайнов",
+  "pipeline.group.wave": "Волна {n}",
+  "pipeline.group.calledFrom": "вызван из {pipeline} · {job}",
+  "pipeline.group.startedFrom": "запущен из {pipeline} · {job}, его не ждут",
+  "pipeline.group.notStarted": "Не запускаются",
+  "pipeline.group.leftOut": "не войдут: {n}",
 };

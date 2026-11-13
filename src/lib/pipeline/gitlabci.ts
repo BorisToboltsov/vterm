@@ -203,16 +203,18 @@ function needsOf(v: unknown): JobNeed[] | null {
 /** A job's `trigger:` — a child pipeline from this repository, or another project's pipeline. */
 export function triggerOf(v: unknown): JobCall | null {
   if (v === undefined || v === null) return null;
+  // Only `depend` and `mirror` keep the trigger job running until the child ends.
+  const waits = isObj(v) && (v.strategy === "depend" || v.strategy === "mirror");
   const project = str(v) ?? (isObj(v) ? str(v.project) : null);
-  if (project !== null) return { file: project, pipeline: null, missing: "external" };
+  if (project !== null) return { file: project, pipeline: null, missing: "external", waits };
   if (!isObj(v)) return null;
   const includes = Array.isArray(v.include) ? v.include : [v.include];
   for (const inc of includes) {
     const local = str(inc) ?? (isObj(inc) ? str(inc.local) : null);
-    if (local !== null) return { file: local, pipeline: null, missing: null };
-    if (isObj(inc) && inc.artifact !== undefined) return { file: `artifact: ${str(inc.artifact) ?? "?"}`, pipeline: null, missing: "external" };
-    if (isObj(inc) && inc.project !== undefined) return { file: `project: ${str(inc.project) ?? "?"}`, pipeline: null, missing: "external" };
-    if (isObj(inc) && inc.template !== undefined) return { file: `template: ${str(inc.template) ?? "?"}`, pipeline: null, missing: "external" };
+    if (local !== null) return { file: local, pipeline: null, missing: null, waits };
+    if (isObj(inc) && inc.artifact !== undefined) return { file: `artifact: ${str(inc.artifact) ?? "?"}`, pipeline: null, missing: "external", waits };
+    if (isObj(inc) && inc.project !== undefined) return { file: `project: ${str(inc.project) ?? "?"}`, pipeline: null, missing: "external", waits };
+    if (isObj(inc) && inc.template !== undefined) return { file: `template: ${str(inc.template) ?? "?"}`, pipeline: null, missing: "external", waits };
   }
   return null;
 }

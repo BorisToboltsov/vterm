@@ -1,8 +1,10 @@
 import { beforeAll, describe, expect, it } from "vitest";
 import { parseWorkflow } from "./ghactions";
 import { buildGitlab } from "./gitlabci";
-import { cardLines, columnsOf, layoutMap, layoutPipeline, METRICS, roundedPath, startJobs, subLines } from "./pipelayout";
+import { EVENT, groupRun } from "./pipelanes";
+import { cardLines, columnsOf, layoutLanes, layoutMap, layoutPipeline, METRICS, roundedPath, startJobs, subLines, type Box } from "./pipelayout";
 import type { Pipeline } from "./pipeline";
+import { buildMap, startedBy } from "./pipemap";
 import { loadYaml, parseYaml, type Obj, type Yaml } from "./yamldoc";
 
 let Y: Yaml;
@@ -262,5 +264,128 @@ describe("the map at the interface scale", () => {
       expect(big.events.get("push")![key]).toBeCloseTo(plain.events.get("push")![key] * 1.25);
     }
     expect(big.height).toBeGreaterThan(plain.height);
+  });
+});
+
+/** The straight pieces of a path drawn by `roundedPath`: the turns between them are left out. */
+function straights(d: string): [number, number, number, number][] {
+  const tokens = d.match(/[MLA]|-?\d+(\.\d+)?/g) ?? [];
+  const out: [number, number, number, number][] = [];
+  let at: [number, number] = [0, 0];
+  for (let i = 0; i < tokens.length; ) {
+    const cmd = tokens[i];
+    if (cmd === "M" || cmd === "L") {
+      const next: [number, number] = [Number(tokens[i + 1]), Number(tokens[i + 2])];
+      if (cmd === "L") out.push([at[0], at[1], next[0], next[1]]);
+      at = next;
+      i += 3;
+    } else {
+      at = [Number(tokens[i + 6]), Number(tokens[i + 7])];
+      i += 8;
+    }
+  }
+  return out;
+}
+
+/** Whether a straight piece runs through a box (its ends may touch the boxes it joins). */
+const crosses = ([x1, y1, x2, y2]: [number, number, number, number], b: Box) =>
+  Math.min(x1, x2) < b.x + b.w - 1 && Math.max(x1, x2) > b.x + 1 && Math.min(y1, y2) < b.y + b.h - 1 && Math.max(y1, y2) > b.y + 1;
+
+describe("layoutLanes", () => {
+  const vterm = () => {
+    const ci = gh("name: CI\non: { push: { branches: [main] }, workflow_call: }\njobs:\n  web: { steps: [] }\n  rust: { steps: [] }\n");
+    const deep = parseWorkflow("/w/deep.yml", parseYaml(Y, "name: Deep\non: workflow_call\njobs:\n  fuzz: { steps: [] }\n"));
+    const release = parseWorkflow(
+      "/w/release.yml",
+      parseYaml(Y, "on: { push: { tags: [v*] } }\njobs:\n  tag: { steps: [] }\n  verify: { needs: tag, uses: ./ci.yml }\n  deep: { needs: tag, uses: ./deep.yml }\n  rel: { needs: [verify, deep], steps: [] }\n"),
+    );
+    release.jobs[1].call!.pipeline = ci;
+    release.jobs[2].call!.pipeline = deep;
+    const train = parseWorkflow("/w/train.yml", parseYaml(Y, "on: { push: { branches: [main] } }\njobs:\n  check: { steps: [] }\n"));
+    return buildMap([ci, deep, release, train]);
+  };
+  const lay = (map: ReturnType<typeof buildMap>, kind: "tag" | "push", width = 900, scale = 1) => {
+    const e = { kind, ref: kind === "tag" ? "v1.0.0" : "main", defaultBranch: "main" };
+    const run = groupRun(map, e, startedBy(map, e));
+    return { run, layout: layoutLanes({ ...run, lanes: run.lanes, event: EVENT, width, scale }) };
+  };
+
+  it("stands each wave in its column and each called lane under its caller, indented", () => {
+    const { run, layout } = lay(vterm(), "tag");
+    expect(layout.columns).toHaveLength(3);
+    const xOf = (wave: number) => new Set(run.nodes.filter((n) => n.wave === wave).map((n) => layout.nodes.get(n.key)!.x));
+    expect([1, 2, 3].map((w) => xOf(w).size)).toEqual([1, 1, 1]);
+    expect([...xOf(1)][0]).toBeLessThan([...xOf(2)][0]);
+    const lanes = run.lanes.map((l) => layout.lanes.get(l.key)!);
+    for (let i = 1; i < lanes.length; i++) expect(lanes[i].y).toBeGreaterThanOrEqual(lanes[i - 1].y + lanes[i - 1].h);
+    expect(lanes[1].x).toBeGreaterThan(lanes[0].x);
+    // Every job inside its lane.
+    for (const n of run.nodes) {
+      const b = layout.nodes.get(n.key)!;
+      const l = layout.lanes.get(n.lane)!;
+      expect(b.y).toBeGreaterThan(l.y);
+      expect(b.y + b.h).toBeLessThanOrEqual(l.y + l.h);
+      expect(b.x).toBeGreaterThan(l.x);
+    }
+    // The event level with the job it starts; Train on the shelf under the lanes.
+    const tag = layout.nodes.get("/w/release.yml#tag")!;
+    expect(layout.event.y + layout.event.h / 2).toBe(tag.y + tag.h / 2);
+    expect(layout.idleTitle!.y).toBeGreaterThan(lanes[2].y + lanes[2].h);
+    expect(layout.idle.get("/w/train.yml")!.y).toBeGreaterThan(layout.idleTitle!.y);
+    expect(layout.height).toBeGreaterThan(layout.idle.get("/w/train.yml")!.y);
+  });
+
+  it("never runs a line through a job, and turns into the first wave left of the lanes", () => {
+    for (const kind of ["tag", "push"] as const) {
+      const { layout } = lay(vterm(), kind);
+      for (const l of layout.links) {
+        const ends = [l.from, l.to];
+        for (const [key, box] of layout.nodes) {
+          if (ends.includes(key)) continue;
+          for (const seg of straights(l.d)) expect(crosses(seg, box), `${l.key} through ${key}`).toBe(false);
+        }
+      }
+      const left = Math.min(...[...layout.lanes.values()].map((b) => b.x));
+      for (const l of layout.links.filter((x) => x.from === EVENT)) {
+        const vertical = straights(l.d).filter(([x1, , x2]) => x1 === x2);
+        for (const [x] of vertical) expect(x).toBeLessThan(left);
+      }
+    }
+  });
+
+  it("runs a link past a job of the lane along the free line between rows", () => {
+    const p = gh("on: push\njobs:\n  a: { steps: [] }\n  side: { steps: [] }\n  b: { needs: a, steps: [] }\n  c: { needs: [a, b], steps: [] }\n");
+    const map = buildMap([p]);
+    const e = { kind: "push" as const, ref: "main", defaultBranch: "main" };
+    const run = groupRun(map, e, startedBy(map, e));
+    const layout = layoutLanes({ ...run, event: EVENT, width: 800 });
+    const long = layout.links.find((l) => l.from.endsWith("#a") && l.to.endsWith("#c"))!;
+    const b = layout.nodes.get("/r/.github/workflows/ci.yml#b")!;
+    for (const seg of straights(long.d)) expect(crosses(seg, b)).toBe(false);
+    expect(straights(long.d).length).toBeGreaterThan(3);
+  });
+
+  it("widens rather than squeeze its columns, and grows with the interface scale", () => {
+    const narrow = lay(vterm(), "tag", 300).layout;
+    expect(narrow.width).toBeGreaterThan(300);
+    expect(narrow.columns[0].w).toBe(150);
+    // A wide window keeps the columns a job wide; the lanes still run to its edge.
+    const wide = lay(vterm(), "tag", 2000).layout;
+    expect(wide.columns[0].w).toBe(256);
+    expect(wide.width).toBe(2000);
+    const first = [...wide.lanes.values()][0];
+    expect(first.x + first.w).toBe(2000 - 12);
+    const big = lay(vterm(), "tag", 300, 2).layout;
+    expect(big.columns[0].w).toBe(300);
+    expect(big.nodes.get("/w/release.yml#tag")!.h).toBe(52);
+  });
+
+  it("draws an empty run: no lanes, every card on the shelf", () => {
+    const map = vterm();
+    const layout = layoutLanes({ lanes: [], nodes: [], links: [], waves: 0, event: EVENT, idle: map.cards.map((c) => c.id), width: 400 });
+    expect(layout.columns).toHaveLength(1);
+    expect(layout.idle.size).toBe(4);
+    // Two to a row at this width.
+    expect(new Set([...layout.idle.values()].map((b) => b.y)).size).toBe(2);
   });
 });

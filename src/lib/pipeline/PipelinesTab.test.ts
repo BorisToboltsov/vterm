@@ -80,16 +80,84 @@ describe("PipelinesTab", () => {
     expect(tree.asked).toEqual([null]);
   });
 
-  it("plays an event across the map, and a call with it", async () => {
+  it("plays an event as lanes: a call under its caller, a pipeline after the one it waits for, the rest on the shelf", async () => {
     render(PipelinesTab, { props: { sessionId: "s1", doc: doc([{ path: "/r/.github/workflows", isDir: true }]) } });
     await waitFor(() => expect(screen.getAllByTestId("pipeline-card")).toHaveLength(4));
     vi.useFakeTimers();
-    await fireEvent.click(screen.getByRole("button", { name: /Play/ }));
+    await fireEvent.click(screen.getByTestId("pipelines-play"));
+    const W = "/r/.github/workflows";
+    const lanes = screen.getAllByTestId("pipeline-lane");
+    expect(lanes.map((l) => l.dataset.lane)).toEqual([`${W}/ci.yml`, `${W}/ci.yml>e2e`, `${W}/ci.yml~${W}/docs.yml`]);
+    expect(lanes[1].textContent).toContain("called from CI · e2e");
+    expect(lanes[2].textContent).toContain("after CI");
+    // The tag's pipeline does not run on a push: it waits on the shelf.
+    expect(screen.getByText("Not started")).toBeInTheDocument();
+    const shelved = screen.getAllByTestId("pipeline-card").filter((c) => c.dataset.shelved);
+    expect(shelved.map((c) => c.textContent)).toEqual([expect.stringContaining("Release")]);
+    const job = (key: string) => document.querySelector(`[data-job="${key}"]`) as HTMLElement;
+    expect(job(`${W}/ci.yml#test`).dataset.state).toBe("wait");
+    await vi.advanceTimersByTimeAsync(900);
+    expect(job(`${W}/ci.yml#test`).dataset.state).toBe("run");
+    expect(job(`${W}/ci.yml>e2e#smoke`).dataset.state).toBe("wait");
+    expect(screen.getByTestId("pipelines-status").textContent).toContain("wave 1");
+    expect(screen.getByText("Wave 1").className).toContain("text-accent");
     await vi.advanceTimersByTimeAsync(10000);
-    const e2e = screen.getAllByTestId("pipeline-card").find((c) => c.textContent?.includes("E2E"))!;
-    expect(e2e.className).toContain("border-ok");
-    const docs = screen.getAllByTestId("pipeline-card").find((c) => c.textContent?.includes("Docs"))!;
-    expect(docs.className).toContain("border-ok");
+    for (const key of [`${W}/ci.yml#test`, `${W}/ci.yml>e2e#smoke`, `${W}/ci.yml~${W}/docs.yml#site`]) expect(job(key).dataset.state).toBe("ok");
+    expect(screen.getByTestId("pipelines-status").textContent).toContain("done · waves: 3");
+    expect(screen.getAllByTestId("pipeline-lane").map((l) => l.dataset.state)).toEqual(["ok", "ok", "ok"]);
+    // The lanes stay after the run; the map takes the cards back.
+    await fireEvent.click(screen.getByRole("button", { name: /Map/ }));
+    expect(screen.queryAllByTestId("pipeline-lane")).toHaveLength(0);
+    expect(screen.queryByTestId("pipelines-status")).toBeNull();
+    expect(screen.getAllByTestId("pipeline-card").filter((c) => c.dataset.shelved)).toHaveLength(0);
+  });
+
+  it("stops at an approval in its lane and goes on once it is given", async () => {
+    tree.files = {
+      "/r/.github/workflows/train.yml": "name: Train\non: { push: { branches: [main] } }\njobs:\n  check: { steps: [] }\n  cut: { needs: check, environment: release, steps: [] }\n",
+    };
+    render(PipelinesTab, { props: { sessionId: "s1", doc: doc([{ path: "/r/.github/workflows", isDir: true }]) } });
+    await waitFor(() => expect(screen.getAllByTestId("pipeline-card")).toHaveLength(1));
+    vi.useFakeTimers();
+    await fireEvent.click(screen.getByTestId("pipelines-play"));
+    await vi.advanceTimersByTimeAsync(5000);
+    const cut = () => document.querySelector('[data-job="/r/.github/workflows/train.yml#cut"]') as HTMLElement;
+    expect(cut().dataset.state).toBe("gate");
+    expect(screen.getByTestId("pipelines-status").textContent).toContain("waits for a person");
+    await fireEvent.click(screen.getByRole("button", { name: "Approve" }));
+    await vi.advanceTimersByTimeAsync(2000);
+    expect(cut().dataset.state).toBe("ok");
+    expect(screen.getByTestId("pipelines-status").textContent).toContain("done · waves: 2");
+  });
+
+  it("stops a run and plays it again", async () => {
+    render(PipelinesTab, { props: { sessionId: "s1", doc: doc([{ path: "/r/.github/workflows", isDir: true }]) } });
+    await waitFor(() => expect(screen.getAllByTestId("pipeline-card")).toHaveLength(4));
+    vi.useFakeTimers();
+    await fireEvent.click(screen.getByTestId("pipelines-play"));
+    await vi.advanceTimersByTimeAsync(900);
+    expect(screen.getByTestId("pipelines-play").textContent).toContain("Stop");
+    await fireEvent.click(screen.getByTestId("pipelines-play"));
+    expect(screen.getByTestId("pipelines-play").textContent).toContain("Play");
+    expect(screen.queryByTestId("pipelines-status")).toBeNull();
+    // Stopped, the lanes stay with nothing running.
+    expect(screen.getAllByTestId("pipeline-lane")).toHaveLength(3);
+    expect(document.querySelector('[data-job="/r/.github/workflows/ci.yml#test"]')?.getAttribute("data-state")).toBe("idle");
+  });
+
+  it("shows the lines and the jobs when stopped before the cards have landed", async () => {
+    render(PipelinesTab, { props: { sessionId: "s1", doc: doc([{ path: "/r/.github/workflows", isDir: true }]) } });
+    await waitFor(() => expect(screen.getAllByTestId("pipeline-card")).toHaveLength(4));
+    vi.useFakeTimers();
+    await fireEvent.click(screen.getByTestId("pipelines-play"));
+    // The glide hides the lines and holds the jobs at their lane's start.
+    expect(document.querySelector(".pipe-links")?.classList.contains("hidden-links")).toBe(true);
+    expect(screen.getAllByTestId("pipeline-lane-job")[0].classList.contains("entering")).toBe(true);
+    await fireEvent.click(screen.getByTestId("pipelines-play"));
+    expect(document.querySelector(".pipe-links")?.classList.contains("hidden-links")).toBe(false);
+    expect(screen.getAllByTestId("pipeline-lane-job")[0].classList.contains("entering")).toBe(false);
+    await vi.advanceTimersByTimeAsync(3000);
+    expect(document.querySelector(".pipe-links")?.classList.contains("hidden-links")).toBe(false);
   });
 
   it("shows the tag's pipeline and nothing for a pull request's", async () => {

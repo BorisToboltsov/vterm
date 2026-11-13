@@ -36,6 +36,12 @@ export interface JobCall {
   pipeline: Pipeline | null;
   /** Why there is none: a file of another repository, or one that could not be read. */
   missing: "external" | "unread" | null;
+  /**
+   * The calling job ends with the called pipeline: a reusable workflow always; a
+   * GitLab child pipeline only with `strategy: depend`/`mirror` — without it the
+   * trigger job succeeds as soon as the child is created.
+   */
+  waits: boolean;
 }
 
 /** GitLab `when:` — GitHub jobs are all `on_success`. */

@@ -3381,6 +3381,13 @@ export const en = {
   "pipeline.group.hint": "Click a pipeline for its jobs, an event to play it",
   "pipeline.group.failed": "Not read: {path}",
   "pipeline.group.reload": "Read again",
+  "pipeline.group.map": "Map",
+  "pipeline.group.mapHint": "Back to the map of the pipelines",
+  "pipeline.group.wave": "Wave {n}",
+  "pipeline.group.calledFrom": "called from {pipeline} · {job}",
+  "pipeline.group.startedFrom": "started by {pipeline} · {job}, not waited for",
+  "pipeline.group.notStarted": "Not started",
+  "pipeline.group.leftOut": "left out: {n}",
 } as const;
 
 /** The canonical set of message keys (every locale must provide all of them). */

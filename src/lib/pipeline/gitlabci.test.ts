@@ -125,9 +125,13 @@ describe("job parts", () => {
   });
 
   it("tells a child pipeline from another project's", () => {
-    expect(triggerOf("group/app")).toEqual({ file: "group/app", pipeline: null, missing: "external" });
+    expect(triggerOf("group/app")).toEqual({ file: "group/app", pipeline: null, missing: "external", waits: false });
     expect(triggerOf({ project: "g/app", branch: "main" })?.missing).toBe("external");
-    expect(triggerOf({ include: "ci/child.yml" })).toEqual({ file: "ci/child.yml", pipeline: null, missing: null });
+    expect(triggerOf({ include: "ci/child.yml" })).toEqual({ file: "ci/child.yml", pipeline: null, missing: null, waits: false });
+    // The trigger job waits for its child only when the strategy says so.
+    expect(triggerOf({ include: "ci/child.yml", strategy: "depend" })?.waits).toBe(true);
+    expect(triggerOf({ include: "ci/child.yml", strategy: "mirror" })?.waits).toBe(true);
+    expect(triggerOf({ project: "g/app", strategy: "depend" })?.waits).toBe(true);
     expect(triggerOf({ include: [{ local: "ci/c.yml" }] })?.file).toBe("ci/c.yml");
     expect(triggerOf({ include: [{ artifact: "gen.yml", job: "g" }] })?.missing).toBe("external");
     expect(triggerOf({ include: [{ project: "x", file: "y" }] })?.file).toBe("project: x");
