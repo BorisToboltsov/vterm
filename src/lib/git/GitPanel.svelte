@@ -70,6 +70,8 @@
   import { wideWhen } from "../actions/panelwide.svelte";
   import PanelDivider from "../ui/PanelDivider.svelte";
   import { partWidth } from "../stores/panelsplit.svelte";
+  import { isKnown, pickRepo, type Repo } from "../ci/forge";
+  import { ciRuns, readRuns, repoRemotes, runsOfCommit } from "../stores/ci.svelte";
   import { gitCwd } from "../pathsync/followcwd";
   import PollFailStrip from "../ui/PollFailStrip.svelte";
   import { pollFailed, singleFlight, type PollFailure } from "../ui/poll";
@@ -431,9 +433,27 @@
       branches = parseBranches(br.stdout);
       tags = parseTags(tg.stdout);
       stashes = parseStashes(stash.stdout);
+      void loadCi(nextRoot);
     } catch (e) {
       notifyError(String(e), { source: "git", sessionId: sessionId });
     }
+  }
+
+  // ── CI badges (ADR 0069) ─────────────────────────────────────────────────
+  // The runs of the history's commits, from the list the CI store last read —
+  // read again with the history, not on a loop of its own, and not more often
+  // than CI_FRESH_MS. Without gh/glab, or signed out, there are no badges: the
+  // CI panel is where that is said.
+  const CI_FRESH_MS = 60_000;
+  let ciRepo = $state.raw<Repo | null>(null);
+  async function loadCi(root: string) {
+    const found = pickRepo((await repoRemotes(sessionId, root)) ?? [], null);
+    ciRepo = isKnown(found) ? found : null;
+    if (!ciRepo) return;
+    const snap = ciRuns.bySession[sessionId];
+    if (snap && snap.repo === `${ciRepo.host}/${ciRepo.path}` && Date.now() - snap.at < CI_FRESH_MS) return;
+    const answer = await readRuns(sessionId, ciRepo);
+    if (!answer.ok) diag.debug("git", "no CI badges: the runs were not read", { kind: answer.failure.kind }, aboutSession(sessionId));
   }
 
   /** Branches with where each is checked out; a git too old to say is asked without it. */
@@ -788,6 +808,7 @@
             onfilter={(next) => setFilter(next)}
             onloadmore={loadMore}
             onfilehistory={showFileHistory}
+            ciOf={ciRepo ? (hash) => runsOfCommit(sessionId, ciRepo, hash) : undefined}
           />
         </div>
       {/if}

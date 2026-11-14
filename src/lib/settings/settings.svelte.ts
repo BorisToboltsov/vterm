@@ -4,6 +4,7 @@
 // access at import time is fine. UI theme changes are applied to the document
 // automatically whenever the relevant settings change.
 
+import { sanitizeForges, type Forge } from "../ci/forge";
 import { diag, swallowed } from "../api/diag";
 import { DEFAULT_PROD_TINT, sanitizeProdTint, type ProdTint } from "../appearance/prodtint";
 import { DEFAULT_FONT, migrateFont, themeFont, type FontMode } from "../appearance/fonts";
@@ -295,6 +296,9 @@ export interface Settings {
   // Whether the history is the current branch's or every ref's (ADR 0067): the
   // last of the two the user picked, for every repository.
   gitLogScope: LogScope;
+  // The CI panel (ADR 0069): the forge of a host whose name does not say it
+  // (a GitLab on a LAN address), by host, as the user said it once.
+  ciForges: Record<string, Forge>;
   // Docker registry credentials (Phase 36) — non-secret half (url + username);
   // the password lives only in the OS keychain, keyed by url. See docker.ts.
   dockerRegistries: DockerRegistry[];
@@ -471,6 +475,7 @@ const DEFAULTS: Settings = {
   gitShowTags: true,
   gitHighlightCurrent: true,
   gitLogScope: "head",
+  ciForges: {},
   hiddenPanels: [],
   topbar: [...DEFAULT_TOPBAR],
   topbarKnown: [...BUILTIN_ACTIONS],
@@ -611,6 +616,7 @@ function load(): Settings {
       gitShowTags: raw.gitShowTags !== false,
       gitHighlightCurrent: raw.gitHighlightCurrent !== false,
       gitLogScope: raw.gitLogScope === "all" ? "all" : "head",
+      ciForges: sanitizeForges(raw.ciForges),
       hiddenPanels: sanitizeHiddenPanels(raw.hiddenPanels),
       topbar: sanitizeTopbar(raw.topbar, knownBuiltins(raw.topbarKnown)),
       topbarKnown: [...BUILTIN_ACTIONS],

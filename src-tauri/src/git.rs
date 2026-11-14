@@ -103,8 +103,14 @@ pub fn check_args(args: &[String]) -> Result<(), String> {
     if !SUBCOMMANDS.contains(&sub.as_str()) {
         return Err(format!("git: `{sub}` is not a command the Git panel runs"));
     }
-    if sub == "remote" && args.get(1).map(String::as_str) != Some("get-url") {
-        return Err("git: only `remote get-url` is allowed".into());
+    // `remote -v` names every remote and its URL: where the CI panel finds the
+    // repository's forge (ADR 0069). Nothing else of `remote` changes anything
+    // the panel needs.
+    if sub == "remote"
+        && args.get(1).map(String::as_str) != Some("get-url")
+        && args[1..] != ["-v".to_string()]
+    {
+        return Err("git: only `remote get-url` and `remote -v` are allowed".into());
     }
     let mut tokens = args[1..].iter();
     while let Some(token) = tokens.next() {
@@ -259,6 +265,7 @@ mod tests {
             &["revert", "--no-edit", "abc"],
             &["tag", "v1", "abc"],
             &["remote", "get-url", "origin"],
+            &["remote", "-v"],
             &["fetch", "--all", "--prune"],
             &["pull", "--ff-only"],
             &[
@@ -310,6 +317,8 @@ mod tests {
             &["bisect", "run", "id"],
             &["difftool"],
             &["remote", "add", "x", "ext::sh -c id"],
+            &["remote", "-v", "add", "x", "y"],
+            &["remote"],
             &["fetch", "--upload-pack=sh -c id", "origin"],
             &["fetch", "--upload-p=sh -c id", "origin"],
             &["push", "--e=x", "origin"],

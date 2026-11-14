@@ -131,7 +131,7 @@ describe("Dock — chrome", () => {
     const corner = screen.getByTestId("dock-corner-left");
     expect(bottom.firstElementChild).toBe(corner);
     expect(corner).toContainElement(screen.getByTestId("dock-toggle-bottom"));
-    expect(bottom.lastElementChild).toBe(screen.getByTestId("dock-tab-k8s"));
+    expect(bottom.lastElementChild).toBe(screen.getByTestId("dock-tab-ci"));
   });
 
   it("lines the bottom dock's corner up with the left rail: same width, button centred, a border down", () => {
@@ -211,6 +211,7 @@ describe("Dock — hidden panels", () => {
   it("is not drawn at all when every panel in it is hidden", () => {
     setPanelHidden("docker", true);
     setPanelHidden("k8s", true);
+    setPanelHidden("ci", true);
     render(Dock, { props: { side: "bottom", sessionId: "s1", connection: "connected", panel } });
     expect(screen.queryByTestId("dock-bottom")).toBeNull();
   });
@@ -509,7 +510,7 @@ describe("Dock — moving a panel", () => {
     // Only the other two docks are offered.
     expect(screen.queryByRole("menuitem", { name: "Move to the left panel" })).toBeNull();
     await fireEvent.click(screen.getByRole("menuitem", { name: "Move to the bottom panel" }));
-    expect(layout.docks.bottom.panels).toEqual(["docker", "k8s", "servers"]);
+    expect(layout.docks.bottom.panels).toEqual(["docker", "k8s", "ci", "servers"]);
     expect(layout.docks.left.panels).toEqual([]);
   });
 
@@ -539,7 +540,7 @@ describe("Dock — moving a panel", () => {
     dockDrag.over = { side: "right", index: 1 };
     flushSync();
     expect(strip("right")).toEqual(["SFTP", "[Docker]", "Git", "AI"]);
-    expect(strip("bottom")).toEqual(["k8s"]);
+    expect(strip("bottom")).toEqual(["k8s", "CI"]);
     // The pointer moves on: the slot follows it.
     dockDrag.over = { side: "right", index: 3 };
     flushSync();
@@ -599,6 +600,7 @@ describe("Dock — moving a panel", () => {
   it("keeps a dock on screen while its only tab is in the air", () => {
     // Dropping the dock out of the layout mid-drag would resize the terminal.
     movePanel("k8s", "right");
+    movePanel("ci", "right");
     setDockCollapsed("bottom", false);
     render(Dock, { props: { side: "bottom", sessionId: "s1", connection: "connected", panel } });
     dockDrag.panel = "docker";

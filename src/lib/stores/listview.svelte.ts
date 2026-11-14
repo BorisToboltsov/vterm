@@ -33,6 +33,7 @@ export type ListId =
   | "k8s.config"
   | "files"
   | "git.changes"
+  | "ci.runs"
   | "recordings"
   | "mon.processes";
 

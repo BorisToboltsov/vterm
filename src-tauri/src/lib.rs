@@ -2,6 +2,7 @@ mod ai;
 mod aigate;
 mod appwin;
 mod backup;
+mod ci;
 mod commands;
 mod container;
 mod diag;
@@ -478,6 +479,7 @@ pub fn run() {
             commands::drivers::netcheck_run,
             commands::drivers::container_run,
             commands::drivers::kubectl_run,
+            commands::drivers::ci_run,
             commands::drivers::docker_login,
             commands::drivers::set_registry_secret,
             commands::drivers::delete_registry_secret,

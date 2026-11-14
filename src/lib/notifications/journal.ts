@@ -25,6 +25,7 @@ export const JOURNAL_SOURCES = [
   "git",
   "docker",
   "k8s",
+  "ci",
   "recording",
   "ai",
   "netcheck",

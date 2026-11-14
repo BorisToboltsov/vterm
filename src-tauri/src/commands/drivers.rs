@@ -5,8 +5,8 @@
 use crate::error::{AppError, AppResult};
 use crate::locks::Locked;
 use crate::{
-    container, exec, git, kube, netcheck, netprobe, register_cancel, secrets, session_arc, sync,
-    AppState,
+    ci, container, exec, git, kube, netcheck, netprobe, register_cancel, secrets, session_arc,
+    sync, AppState,
 };
 use std::sync::atomic::{AtomicBool, Ordering};
 use tauri::State;
@@ -425,6 +425,46 @@ pub async fn docker_login(
         local_refusal: None,
         // Never mirrored: a registry login, its secret on stdin.
         audit: None,
+    };
+    run_driver(&state, &session_id, call).await
+}
+
+/// One call of the CI panel (ADR 0069): `gh api` or `glab api` to a path of a
+/// repository's runs, or `auth status`, over the session's transport like every
+/// driver — the user's own program, on the host they work on, so the app opens
+/// no socket of its own. `ci::check_args` holds the argv to those paths and to
+/// the four writes the panel makes; `mirror` (the writes) audits it into the
+/// session recording as `[ci] $ …`.
+#[tauri::command]
+pub async fn ci_run(
+    state: State<'_, AppState>,
+    session_id: String,
+    args: Vec<String>,
+    timeout_secs: u64,
+    mirror: bool,
+) -> AppResult<exec::ExecOutput> {
+    exec::policy("ci", &args, ci::check_args(&args))?;
+    // A run started by hand carries what the person typed into its form: not
+    // written to the diagnostics, and only its names to the recording.
+    let label = if ci::has_fields(&args) {
+        "ci dispatch"
+    } else {
+        "ci"
+    };
+    let call = DriverCall {
+        label,
+        remote: ci::ssh_command(&args),
+        local: exec::Local {
+            program: &args[0],
+            args: &args[1..],
+            env: ci::ENV,
+            stdin: None,
+            missing: exec::Missing::Exit127,
+            timeout_hint: ci::TIMEOUT_HINT,
+        },
+        timeout_secs,
+        local_refusal: None,
+        audit: mirror.then(|| ("ci", ci::audit_command(&args))),
     };
     run_driver(&state, &session_id, call).await
 }

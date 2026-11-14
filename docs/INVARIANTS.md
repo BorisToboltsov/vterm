@@ -54,7 +54,8 @@
    через **его** proxy) и названные исключения: opt-in ИИ — к **его** LLM-эндпоинту; «Проверка
    доступа» с локальной вкладки — рукопожатие или **его** `bash`/`nc`/`telnet`/`curl` (ADR 0012,
    0033, 0056); **его** `curl`/`openssl` в TLS-инспекторе и HTTP-клиенте (ADR 0014); проверка и
-   скачивание релиза GitHub по явному действию (ADR 0031). Такой трафик идёт только из Rust:
+   скачивание релиза GitHub по явному действию (ADR 0031); **его** `gh`/`glab` к **его** GitHub/GitLab
+   в панели CI (ADR 0069). Такой трафик идёт только из Rust:
    фронт сетевых вызовов не делает (`vterm/no-network`), CSP строгий; проксировать загрузку
    картинок или данных через Rust — то же обращение в сеть. Шрифты встроены, внешние ссылки —
    только по клику через `tauri-plugin-opener`; диагностика хоста исполняется на хосте сессии.
@@ -405,6 +406,7 @@ Git, Docker, k8s, сетевые пробы и метрики — **один к�
 | **Git** | `git_run` · `[git]` | [git.ts](../src/lib/git/git.ts), [gitview.ts](../src/lib/git/gitview.ts), [gitlanes.ts](../src/lib/git/gitlanes.ts), [gitrefs.ts](../src/lib/git/gitrefs.ts) | Каталог — `gitCwd` (при выключенной синхронизации — каталог терминала). `GIT_TERMINAL_PROMPT=0` обязателен (иначе зависание на промпте кредов). `needsConfirm` на любом сервере, в том числе в `syncRun`; stage/unstage/fetch/ветка — без диалога. Коммит — одним вызовом (`commitDetailArgs`, `--raw --numstat`), у слияния — diff с выбранным родителем, по умолчанию первым (`mergeFilesArgs`); неразобранный ответ — ошибка, ответ на ушедший коммит отбрасывается. Файл рабочего дерева — в `EditorTab` как inline-diff против HEAD (`gitBase`), файл коммита — `GitDiffView`. История — по умолчанию текущая ветка (`git log HEAD`, `settings.gitLogScope`); видимая панель сверяет HEAD (`headArgs`) раз в `HEAD_POLL_MS`, одним чтением, и перечитывает репозиторий при перемене (ADR 0067) |
 | **Docker** | `container_run` · `[docker]` | [docker.ts](../src/lib/docker/docker.ts), [dockernet.ts](../src/lib/docker/dockernet.ts) | `--format` с US-разделителем; `dockerRefreshSec` 1…30; группировка по `com.docker.compose.project`; `needsConfirm` шире `isDestructive` (+ stop/restart/kill). Факты `inspect` (лимиты, перезапуски, адреса, порты остановленного) — одним вызовом на изменившиеся (`staleFacts`). Окружение в подробностях скрыто по имени и значению (`isSensitiveEnv`) и в вопрос ИИ не идёт. `system df` — при открытии вида, по «Обновить» и после удаления, не на опросе. `events` — только снимок с `--until` (политика отказывает без него). Кто использует образ или том — `ps --filter`, не по имени. `compose -f`/`--env-file` — только для `config`; каталог и файлы compose бэкенд сверяет с метками стека (`check_stack`); `up` стека из своих файлов из каталога не предлагается (`usesOwnFiles`). CVE-скана нет — нет офлайн-способа |
 | **k8s** | `kubectl_run` · `[k8s]` | [k8s.ts](../src/lib/k8s/k8s.ts), [k8sroute.ts](../src/lib/k8s/k8sroute.ts) | Свой вид, не список Docker; `-o json`. `context`/`namespace` — в argv (`withScope`, `objectScope`), kubeconfig не мутируем. Группировка — по `ownerReferences`; STATUS/READY/RESTARTS — как у kubectl (`podRow`, сайдкар — контейнер пода). Окружение скрыто `isSensitiveEnv`, значение из Secret не читается (ниже), в вопрос ИИ не идёт. Бинарь — `settings.kubectlPath`. Что k8s спрашивает и когда — ниже |
+| **CI** | `ci_run` · `[ci]` | [forge.ts](../src/lib/ci/forge.ts), [ciapi.ts](../src/lib/ci/ciapi.ts), [ciparse.ts](../src/lib/ci/ciparse.ts), [cirun.ts](../src/lib/ci/cirun.ts) | Форж — по `git remote -v`, хост без имени форжа — вопрос раз (`settings.ciForges`). Ответ не того вида — `null`, а не «прогонов нет»; отказ — по виду (`failureOf`: нет программы, не вошёл, нет доступа, лимит, нет связи). Лог GitHub — после конца задачи; шагов у задачи GitLab нет — так и показано. Окружение без подсказок и пейджера (`ci::ENV`) |
 | **Пробы** | `probe_run` · `[util]` | [probe.ts](../src/lib/utilities/probe.ts), [tls.ts](../src/lib/utilities/tls.ts), [http.ts](../src/lib/utilities/http.ts) | Локально — только `curl`/`openssl` пользователя, без шелла, шагами через stdin (`tlsSteps`, ADR 0014). «Выполнить в терминале» — под запущенную оболочку (`curl.exe` вне POSIX). argv — сырые токены, квотит транспорт |
 | **Метрики** | `fetch_metrics*`, `fetch_pending_updates`, `fetch_extras` | [metrics/mod.rs](../src-tauri/src/metrics/mod.rs), [metrics/local.rs](../src-tauri/src/metrics/local.rs) | Одни DTO на оба транспорта (SSH → `/proc`, локально → `sysinfo`). Гейт UI — `isMonitorable(tab)`, а не `kind==="ssh"` |
 
@@ -491,6 +493,30 @@ Git, Docker, k8s, сетевые пробы и метрики — **один к�
 - **Пароль `docker login`** — только в keychain (`vterm:registry`), не в настройках, бэкапе и
   argv: `docker_login` подаёт его через `--password-stdin` и не мирроится. url + username —
   `settings.dockerRegistries`.
+
+- **CI — `gh api`/`glab api` пользователя, только пути прогонов** (ADR 0069): программы, которыми
+  человек пушит, на хосте сессии, под его входом; сокетов и токенов у приложения нет. Политика
+  `ci::check_args`: прогоны, задачи, лог, workflow, коммит действия и четыре записи — перезапуск
+  упавших и всего, отмена, ручной запуск; запись — только явным `-X POST`, опций, читающих файл,
+  нет. `ciRun` зовёт только стор `stores/ci` (`vterm/owned-imports`); запись — после вопроса и в
+  запись `[ci]`, значения формы — не в диагностику. Гейты `what_the_ci_panel_runs_is_allowed`,
+  `the_ci_panel_reaches_only_the_runs_of_a_repository`, `cipanel.guard`.
+- **CI читает, пока видно; слежка — явная и до конца прогона.** Панель — раз в 10 с, пока что-то
+  идёт, иначе раз в минуту, поллер под `visible`. «Следить» — единственное чтение при скрытой
+  панели: один прогон раз в `WATCH_MS`, итог — в журнал; кончается с прогоном, отказом форжа и
+  вкладкой (`forgetCi` в `closeTabFully`). Значки CI в истории Git — из последнего списка стора: Git
+  перечитывает его со своей историей, не чаще раза в минуту, своего цикла нет. Гейты
+  `dockpanels.guard`, `cipanel.guard`.
+- **Прогон на схеме — файл на коммите прогона, задачи — по имени от форжа** (ADR 0069). Связей задач
+  API не отдаёт: схема — из `git show sha:path` через стор (`fileAtCommit`), коммита нет — текущий
+  файл, и так и сказано. Задача ставится по имени (`placeJobs`: копия матрицы, шаблон `name:`,
+  `вызвавший / задача`, `job 1/3`); неизвестное выражение — шаблон, не догадка; не вставшее —
+  названо. Критический путь — из времён прогона (`timeline`) и только после его конца.
+- **Аудит workflow — предохранитель без сети** (`ciaudit.ts`, принцип 7): проверки по одному файлу,
+  лучше лишнее слово, чем пропуск. «Закрепить по SHA» — только кнопкой: коммит тега спрашивается у
+  github.com через `gh`, правка — одна, одной отменой (`pinText`). Ручной запуск — форма из файла
+  (`workflow_dispatch.inputs`, переменные GitLab с `description:`), после вопроса; `production` —
+  красным.
 
 ### Утилиты
 
@@ -883,7 +909,7 @@ Git, Docker, k8s, сетевые пробы и метрики — **один к�
   предупреждение — только когда пользователю есть на что смотреть (`end_verdict`); синхронизация,
   сохранение, вынос файла, работа под другим пользователем — так же. Отказ политики argv — `warn`
   с argv (`exec::policy`): фронт такого не строит. Запуск драйвера — `debug` (команда, код, время);
-  argv проб и `docker login` не пишется (`writes_argv`). Нераспознанное зондом метрик — `debug`.
+  argv проб, `docker login` и ручного запуска CI не пишется (`writes_argv`). Нераспознанное зондом метрик — `debug`.
   Гейты `a_jobs_end_is_a_warning_only_when_the_user_must_look`,
   `an_argv_a_policy_refuses_is_a_warning_and_a_probes_is_never_written`.
 - **ИИ пишется по форме, а не по содержимому:** запрос — хост эндпоинта (`endpoint_host`: без пути,
@@ -1250,7 +1276,7 @@ Git, Docker, k8s, сетевые пробы и метрики — **один к�
 `overlay-z-index` · `type-scale` · `rem-sizes` · `micro-label` · `motion-duration` · `locale-binding` · `md-links`
 · `backdrop-no-close` · `each-as-t` · `path-sync-mode` · `owned-imports` (вызов, правило которого
 живёт в одном модуле, импортирует только он: `setServerPathSync`, `transferStart`,
-`importBackup`, `transferResume`, `startChat`, `netcheckRun`, `sftpOpenAs`, `fetchMetrics`, `fetchLiveExtras`, `fetchProcessDetail`, команды журнала, `noteJournal`, сырой `closeTab`) · `forbidden-imports` (стор вкладок
+`importBackup`, `transferResume`, `startChat`, `netcheckRun`, `ciRun`, `sftpOpenAs`, `fetchMetrics`, `fetchLiveExtras`, `fetchProcessDetail`, команды журнала, `noteJournal`, сырой `closeTab`) · `forbidden-imports` (стор вкладок
 не знает сторов рабочих пространств и чата, стор пришедшей вкладки знает стор вкладок только
 по типу) · `owned-writes` (`settings.terminalLinks`/`terminalFileLinks` пишут только раздел
 настроек и вопрос, который он отключает) · `theme-colors` · `virtual-scroll` · `paste-caret` ·
@@ -1291,6 +1317,7 @@ Git, Docker, k8s, сетевые пробы и метрики — **один к�
 | `filetoolbar.guard` | Узкий тулбар SFTP оставляет `upload` отдельной кнопкой |
 | `listview.guard` | Списки ADR 0050 рисуют общую строку фильтра и `GroupHeader`, фильтруют через `listview.ts` |
 | `fileuser.guard` | Команды панели идут под её пользователем; отказ sudo ничего не меняет; пароль — только через stdin; панель сама никого не берёт |
+| `cipanel.guard` | К форжу — только через стор CI; каждая запись стора — с аудитом, чтение — без; слежка кончается с прогоном и вкладкой; схема прогона спрашивает git через стор |
 | `editoraccess.guard` | Рядом с «Сохранить» — предупреждение о правах и пути восстановления; локальная копия — `create_new` |
 | `transferjob.guard` | Перенос запускает только `startTransfer`, право заменить — только из согласия; окно сперва слушает `sftp://job`, потом спрашивает список |
 | `filedrag.guard` | Перетаскиванием файла владеет стор, бросок исполняется в одном месте, каждое перетаскивание взводит `cancelOnEscape` |
@@ -1334,6 +1361,7 @@ Git, Docker, k8s, сетевые пробы и метрики — **один к�
 | `a_partial_copy_goes_on_only_from_a_confirmed_point_and_never_outlives_its_tab` (Rust) | Точка частичной копии — после `flush`; временный файл и смещение — из `partial::staging`; удаляет его при ошибке только тот, кого не держат; закрытая вкладка и выход не оставляют держимого |
 | `login_answers_come_only_from_the_plan` · `nothing_after_login_can_fail_the_connection` (Rust) | Ответы `keyboard-interactive` — только из `kbdauth::merge`; после входа нет `?` |
 | `what_the_git_panel_runs_is_allowed` · `what_the_docker_panel_runs_is_allowed` · `what_the_k8s_panel_runs_is_allowed` (Rust) | Политики argv драйверов пускают формы фронта и ничего опасного |
+| `what_the_ci_panel_runs_is_allowed` · `the_ci_panel_reaches_only_the_runs_of_a_repository` (Rust) | Политика CI пускает формы фронта и только пути прогонов: другие команды и эндпоинты, неявная запись, опция, читающая файл, — отказ |
 | `the_cluster_is_changed_only_in_the_shapes_the_panel_offers` · `a_secrets_value_is_never_read_by_any_road` (Rust) | kubectl меняет кластер только откатом Deployment и запуском CronJob; Secret читается только шаблоном ключей, без `describe` и `--raw` |
 | `a_compose_command_reads_only_the_definition_its_stack_was_brought_up_from` · `a_compose_argv_is_held_to_its_stack_before_it_runs` (Rust) | Каталог, файлы и env-файл compose — из меток стека, и сверка идёт до исполнения |
 | `every_process_is_listed_with_its_cpu_now_not_its_lifetime_average` (Rust) | CPU% процесса — из прироста тиков между опросами, переиспользованный pid — без значения |

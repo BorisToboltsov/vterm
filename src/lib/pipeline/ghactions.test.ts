@@ -36,10 +36,29 @@ describe("parseTriggers", () => {
 
 describe("expandMatrix", () => {
   it("makes the product of the axes", () => {
-    expect(expandMatrix({ os: ["ubuntu", "macos"], node: [20, 22] })).toEqual({
+    expect(expandMatrix({ os: ["ubuntu", "macos"], node: [20, 22] })).toMatchObject({
       items: ["ubuntu · 20", "ubuntu · 22", "macos · 20", "macos · 22"],
       axes: "os × node",
     });
+  });
+
+  it("keeps each copy's values in the order written — what GitHub names a copy by", () => {
+    // vterm's own release matrix: include-only, an empty value among them.
+    const m = expandMatrix({
+      include: [
+        { platform: "macos-latest", args: "--target universal-apple-darwin" },
+        { platform: "windows-latest", args: "" },
+        { platform: "ubuntu-22.04" },
+      ],
+    });
+    expect(m?.combos).toEqual([
+      { platform: "macos-latest", args: "--target universal-apple-darwin" },
+      { platform: "windows-latest", args: "" },
+      { platform: "ubuntu-22.04" },
+    ]);
+    // An included entry that fits copies adds its own keys to them.
+    const x = expandMatrix({ os: ["ubuntu", "windows"], include: [{ os: "ubuntu", experimental: true }] });
+    expect(x?.combos).toEqual([{ os: "ubuntu", experimental: "true" }, { os: "windows" }]);
   });
 
   it("drops what `exclude` matches and adds or extends with `include`", () => {

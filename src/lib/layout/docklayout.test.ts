@@ -138,11 +138,11 @@ describe("guards and bounds", () => {
 });
 
 describe("defaultDocks", () => {
-  it("puts the tree left, files/git/AI right and Docker/k8s at the bottom", () => {
+  it("puts the tree left, files/git/AI right and Docker/k8s/CI at the bottom", () => {
     const d = defaultDocks();
     expect(d.left.panels).toEqual(["servers"]);
     expect(d.right.panels).toEqual(["files", "git", "ai"]);
-    expect(d.bottom.panels).toEqual(["docker", "k8s"]);
+    expect(d.bottom.panels).toEqual(["docker", "k8s", "ci"]);
     expect(d.left.collapsed).toBe(false);
     expect(d.right.collapsed).toBe(true);
     expect(d.bottom.collapsed).toBe(true);
@@ -160,7 +160,7 @@ describe("sanitizeDocks", () => {
   it("keeps a valid layout as it is", () => {
     const d = defaultDocks();
     d.left.panels = ["servers", "docker"];
-    d.bottom.panels = ["k8s"];
+    d.bottom.panels = ["k8s", "ci"];
     d.bottom.active = "k8s";
     d.left.active = "docker";
     d.bottom.collapsed = false;
@@ -176,7 +176,8 @@ describe("sanitizeDocks", () => {
     });
     expect(d.left.panels).toEqual(["servers", "git"]);
     expect(d.right.panels).toEqual(["files"]);
-    expect(d.bottom.panels).toEqual(["docker", "k8s", "ai"]);
+    // CI is missing from the stored layout: it comes back into its own dock.
+    expect(d.bottom.panels).toEqual(["docker", "k8s", "ai", "ci"]);
     expectWellFormed(d);
   });
 
@@ -188,7 +189,7 @@ describe("sanitizeDocks", () => {
       bottom: { panels: [] },
     });
     expect(d.right.panels).toEqual(["files", "git", "ai"]);
-    expect(d.bottom.panels).toEqual(["docker", "k8s"]);
+    expect(d.bottom.panels).toEqual(["docker", "k8s", "ci"]);
     expectWellFormed(d);
   });
 
@@ -277,7 +278,7 @@ describe("loadDocks", () => {
     expect(d.right.active).toBe("git");
     // The right dock always started collapsed before 1.1; the new docks do too.
     expect(d.right.collapsed).toBe(true);
-    expect(d.bottom.panels).toEqual(["docker", "k8s"]);
+    expect(d.bottom.panels).toEqual(["docker", "k8s", "ci"]);
     expectWellFormed(d);
   });
 
@@ -323,7 +324,7 @@ describe("movePanel", () => {
     const before = defaultDocks();
     const d = movePanel(before, "docker", "right");
     expect(d.right.panels).toEqual(["files", "git", "ai", "docker"]);
-    expect(d.bottom.panels).toEqual(["k8s"]);
+    expect(d.bottom.panels).toEqual(["k8s", "ci"]);
     expect(d.right.active).toBe("docker");
     expect(d.right.collapsed).toBe(false);
     expectWellFormed(d);
@@ -365,6 +366,7 @@ describe("movePanel", () => {
   it("empties a dock down to a null active tab", () => {
     let d = movePanel(defaultDocks(), "docker", "right");
     d = movePanel(d, "k8s", "right");
+    d = movePanel(d, "ci", "right");
     expect(d.bottom.panels).toEqual([]);
     expect(d.bottom.active).toBeNull();
     expectWellFormed(d);
@@ -483,7 +485,7 @@ describe("insertionIndex", () => {
 
 describe("hidden panels", () => {
   it("lets every panel be hidden except the server tree", () => {
-    expect(HIDEABLE_PANELS).toEqual(["files", "git", "docker", "k8s", "ai"]);
+    expect(HIDEABLE_PANELS).toEqual(["files", "git", "docker", "k8s", "ci", "ai"]);
     expect(canHidePanel("docker")).toBe(true);
     expect(canHidePanel("servers")).toBe(false);
   });
@@ -542,8 +544,8 @@ describe("hidden panels", () => {
 
   it("leaves a dock with nothing to show when all its panels are hidden", () => {
     const d = defaultDocks();
-    expect(availablePanels(d.bottom, true, ["docker", "k8s"])).toEqual([]);
-    expect(shownPanel(d.bottom, true, ["docker", "k8s"])).toBeNull();
+    expect(availablePanels(d.bottom, true, ["docker", "k8s", "ci"])).toEqual([]);
+    expect(shownPanel(d.bottom, true, ["docker", "k8s", "ci"])).toBeNull();
   });
 });
 
@@ -553,7 +555,7 @@ describe("previewPanels", () => {
     expect(previewPanels(d, "docker", null)).toEqual({
       left: ["servers"],
       right: ["files", "git", "ai"],
-      bottom: ["docker", "k8s"],
+      bottom: ["docker", "k8s", "ci"],
     });
   });
 
@@ -562,7 +564,7 @@ describe("previewPanels", () => {
     expect(previewPanels(d, "docker", { side: "right", index: 1 })).toEqual({
       left: ["servers"],
       right: ["files", "docker", "git", "ai"],
-      bottom: ["k8s"],
+      bottom: ["k8s", "ci"],
     });
   });
 

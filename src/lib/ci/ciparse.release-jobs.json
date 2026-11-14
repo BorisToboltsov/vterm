@@ -1,0 +1,1352 @@
+{
+ "total_count": 13,
+ "jobs": [
+  {
+   "id": 129448099178,
+   "name": "Тег = версия",
+   "status": "completed",
+   "conclusion": "success",
+   "created_at": "2026-11-09T21:21:51Z",
+   "started_at": "2026-11-09T21:21:54Z",
+   "completed_at": "2026-11-09T21:21:58Z",
+   "html_url": "https://github.com/BorisToboltsov/vterm/actions/runs/42701787236/job/129448099178",
+   "workflow_name": "Release",
+   "head_sha": "fb8e8d53e5d5e677c008d7e3e38842a74d46b7b4",
+   "run_id": 42701787236,
+   "steps": [
+    {
+     "name": "Set up job",
+     "status": "completed",
+     "conclusion": "success",
+     "number": 1,
+     "started_at": "2026-11-09T21:21:54Z",
+     "completed_at": "2026-11-09T21:21:55Z"
+    },
+    {
+     "name": "Run actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1",
+     "status": "completed",
+     "conclusion": "success",
+     "number": 2,
+     "started_at": "2026-11-09T21:21:55Z",
+     "completed_at": "2026-11-09T21:21:56Z"
+    },
+    {
+     "name": "Тег совпадает с версией в package.json",
+     "status": "completed",
+     "conclusion": "success",
+     "number": 3,
+     "started_at": "2026-11-09T21:21:56Z",
+     "completed_at": "2026-11-09T21:21:56Z"
+    },
+    {
+     "name": "Post Run actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1",
+     "status": "completed",
+     "conclusion": "success",
+     "number": 6,
+     "started_at": "2026-11-09T21:21:56Z",
+     "completed_at": "2026-11-09T21:21:56Z"
+    },
+    {
+     "name": "Complete job",
+     "status": "completed",
+     "conclusion": "success",
+     "number": 7,
+     "started_at": "2026-11-09T21:21:56Z",
+     "completed_at": "2026-11-09T21:21:56Z"
+    }
+   ]
+  },
+  {
+   "id": 129448182014,
+   "name": "Гейты качества / Зависимости (cargo deny, pnpm audit)",
+   "status": "completed",
+   "conclusion": "success",
+   "created_at": "2026-11-09T21:22:02Z",
+   "started_at": "2026-11-09T21:22:05Z",
+   "completed_at": "2026-11-09T21:22:36Z",
+   "html_url": "https://github.com/BorisToboltsov/vterm/actions/runs/42701787236/job/129448182014",
+   "workflow_name": "Release",
+   "head_sha": "fb8e8d53e5d5e677c008d7e3e38842a74d46b7b4",
+   "run_id": 42701787236,
+   "steps": [
+    {
+     "name": "Set up job",
+     "status": "completed",
+     "conclusion": "success",
+     "number": 1,
+     "started_at": "2026-11-09T21:22:06Z",
+     "completed_at": "2026-11-09T21:22:09Z"
+    },
+    {
+     "name": "Run actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1",
+     "status": "completed",
+     "conclusion": "success",
+     "number": 2,
+     "started_at": "2026-11-09T21:22:09Z",
+     "completed_at": "2026-11-09T21:22:10Z"
+    },
+    {
+     "name": "Rust-окружение",
+     "status": "completed",
+     "conclusion": "success",
+     "number": 3,
+     "started_at": "2026-11-09T21:22:10Z",
+     "completed_at": "2026-11-09T21:22:18Z"
+    },
+    {
+     "name": "cargo-deny",
+     "status": "completed",
+     "conclusion": "success",
+     "number": 4,
+     "started_at": "2026-11-09T21:22:18Z",
+     "completed_at": "2026-11-09T21:22:18Z"
+    },
+    {
+     "name": "cargo deny (advisories, licenses, bans, sources)",
+     "status": "completed",
+     "conclusion": "success",
+     "number": 5,
+     "started_at": "2026-11-09T21:22:18Z",
+     "completed_at": "2026-11-09T21:22:23Z"
+    },
+    {
+     "name": "Фронтенд-окружение",
+     "status": "completed",
+     "conclusion": "success",
+     "number": 6,
+     "started_at": "2026-11-09T21:22:23Z",
+     "completed_at": "2026-11-09T21:22:33Z"
+    },
+    {
+     "name": "pnpm audit",
+     "status": "completed",
+     "conclusion": "success",
+     "number": 7,
+     "started_at": "2026-11-09T21:22:33Z",
+     "completed_at": "2026-11-09T21:22:34Z"
+    },
+    {
+     "name": "Post Фронтенд-окружение",
+     "status": "completed",
+     "conclusion": "success",
+     "number": 12,
+     "started_at": "2026-11-09T21:22:34Z",
+     "completed_at": "2026-11-09T21:22:34Z"
+    },
+    {
+     "name": "Post Rust-окружение",
+     "status": "completed",
+     "conclusion": "success",
+     "number": 13,
+     "started_at": "2026-11-09T21:22:34Z",
+     "completed_at": "2026-11-09T21:22:34Z"
+    },
+    {
+     "name": "Post Run actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1",
+     "status": "completed",
+     "conclusion": "success",
+     "number": 14,
+     "started_at": "2026-11-09T21:22:34Z",
+     "completed_at": "2026-11-09T21:22:34Z"
+    },
+    {
+     "name": "Complete job",
+     "status": "completed",
+     "conclusion": "success",
+     "number": 15,
+     "started_at": "2026-11-09T21:22:34Z",
+     "completed_at": "2026-11-09T21:22:34Z"
+    }
+   ]
+  },
+  {
+   "id": 129448182082,
+   "name": "Гейты качества / Rust (Windows)",
+   "status": "completed",
+   "conclusion": "success",
+   "created_at": "2026-11-09T21:22:02Z",
+   "started_at": "2026-11-09T21:22:05Z",
+   "completed_at": "2026-11-09T21:24:59Z",
+   "html_url": "https://github.com/BorisToboltsov/vterm/actions/runs/42701787236/job/129448182082",
+   "workflow_name": "Release",
+   "head_sha": "fb8e8d53e5d5e677c008d7e3e38842a74d46b7b4",
+   "run_id": 42701787236,
+   "steps": [
+    {
+     "name": "Set up job",
+     "status": "completed",
+     "conclusion": "success",
+     "number": 1,
+     "started_at": "2026-11-09T21:22:06Z",
+     "completed_at": "2026-11-09T21:22:09Z"
+    },
+    {
+     "name": "Run actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1",
+     "status": "completed",
+     "conclusion": "success",
+     "number": 2,
+     "started_at": "2026-11-09T21:22:09Z",
+     "completed_at": "2026-11-09T21:22:17Z"
+    },
+    {
+     "name": "Rust-окружение",
+     "status": "completed",
+     "conclusion": "success",
+     "number": 3,
+     "started_at": "2026-11-09T21:22:17Z",
+     "completed_at": "2026-11-09T21:23:33Z"
+    },
+    {
+     "name": "Формат",
+     "status": "completed",
+     "conclusion": "skipped",
+     "number": 4,
+     "started_at": "2026-11-09T21:23:33Z",
+     "completed_at": "2026-11-09T21:23:33Z"
+    },
+    {
+     "name": "Clippy",
+     "status": "completed",
+     "conclusion": "success",
+     "number": 5,
+     "started_at": "2026-11-09T21:23:33Z",
+     "completed_at": "2026-11-09T21:24:06Z"
+    },
+    {
+     "name": "Тесты",
+     "status": "completed",
+     "conclusion": "success",
+     "number": 6,
+     "started_at": "2026-11-09T21:24:06Z",
+     "completed_at": "2026-11-09T21:24:55Z"
+    },
+    {
+     "name": "Post Rust-окружение",
+     "status": "completed",
+     "conclusion": "success",
+     "number": 11,
+     "started_at": "2026-11-09T21:24:55Z",
+     "completed_at": "2026-11-09T21:24:55Z"
+    },
+    {
+     "name": "Post Run actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1",
+     "status": "completed",
+     "conclusion": "success",
+     "number": 12,
+     "started_at": "2026-11-09T21:24:55Z",
+     "completed_at": "2026-11-09T21:24:57Z"
+    },
+    {
+     "name": "Complete job",
+     "status": "completed",
+     "conclusion": "success",
+     "number": 13,
+     "started_at": "2026-11-09T21:24:57Z",
+     "completed_at": "2026-11-09T21:24:57Z"
+    }
+   ]
+  },
+  {
+   "id": 129448182150,
+   "name": "Глубокие проверки / Фаззинг недоверенного входа",
+   "status": "completed",
+   "conclusion": "success",
+   "created_at": "2026-11-09T21:22:02Z",
+   "started_at": "2026-11-09T21:22:06Z",
+   "completed_at": "2026-11-09T21:30:18Z",
+   "html_url": "https://github.com/BorisToboltsov/vterm/actions/runs/42701787236/job/129448182150",
+   "workflow_name": "Release",
+   "head_sha": "fb8e8d53e5d5e677c008d7e3e38842a74d46b7b4",
+   "run_id": 42701787236,
+   "steps": [
+    {
+     "name": "Set up job",
+     "status": "completed",
+     "conclusion": "success",
+     "number": 1,
+     "started_at": "2026-11-09T21:22:07Z",
+     "completed_at": "2026-11-09T21:22:09Z"
+    },
+    {
+     "name": "Run actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1",
+     "status": "completed",
+     "conclusion": "success",
+     "number": 2,
+     "started_at": "2026-11-09T21:22:09Z",
+     "completed_at": "2026-11-09T21:22:11Z"
+    },
+    {
+     "name": "Фронтенд-окружение",
+     "status": "completed",
+     "conclusion": "success",
+     "number": 3,
+     "started_at": "2026-11-09T21:22:11Z",
+     "completed_at": "2026-11-09T21:22:26Z"
+    },
+    {
+     "name": "Синхронизация SvelteKit",
+     "status": "completed",
+     "conclusion": "success",
+     "number": 4,
+     "started_at": "2026-11-09T21:22:26Z",
+     "completed_at": "2026-11-09T21:22:28Z"
+    },
+    {
+     "name": "Свойства фронтенда (fast-check)",
+     "status": "completed",
+     "conclusion": "success",
+     "number": 5,
+     "started_at": "2026-11-09T21:22:28Z",
+     "completed_at": "2026-11-09T21:27:55Z"
+    },
+    {
+     "name": "Rust-окружение",
+     "status": "completed",
+     "conclusion": "success",
+     "number": 6,
+     "started_at": "2026-11-09T21:27:55Z",
+     "completed_at": "2026-11-09T21:29:28Z"
+    },
+    {
+     "name": "Свойства бэкенда (proptest)",
+     "status": "completed",
+     "conclusion": "success",
+     "number": 7,
+     "started_at": "2026-11-09T21:29:28Z",
+     "completed_at": "2026-11-09T21:30:14Z"
+    },
+    {
+     "name": "Post Rust-окружение",
+     "status": "completed",
+     "conclusion": "success",
+     "number": 12,
+     "started_at": "2026-11-09T21:30:14Z",
+     "completed_at": "2026-11-09T21:30:14Z"
+    },
+    {
+     "name": "Post Фронтенд-окружение",
+     "status": "completed",
+     "conclusion": "success",
+     "number": 13,
+     "started_at": "2026-11-09T21:30:14Z",
+     "completed_at": "2026-11-09T21:30:14Z"
+    },
+    {
+     "name": "Post Run actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1",
+     "status": "completed",
+     "conclusion": "success",
+     "number": 14,
+     "started_at": "2026-11-09T21:30:14Z",
+     "completed_at": "2026-11-09T21:30:14Z"
+    },
+    {
+     "name": "Complete job",
+     "status": "completed",
+     "conclusion": "success",
+     "number": 15,
+     "started_at": "2026-11-09T21:30:14Z",
+     "completed_at": "2026-11-09T21:30:14Z"
+    }
+   ]
+  },
+  {
+   "id": 129448182197,
+   "name": "Гейты качества / Фронтенд (типы, тесты, сборка)",
+   "status": "completed",
+   "conclusion": "success",
+   "created_at": "2026-11-09T21:22:02Z",
+   "started_at": "2026-11-09T21:22:05Z",
+   "completed_at": "2026-11-09T21:25:46Z",
+   "html_url": "https://github.com/BorisToboltsov/vterm/actions/runs/42701787236/job/129448182197",
+   "workflow_name": "Release",
+   "head_sha": "fb8e8d53e5d5e677c008d7e3e38842a74d46b7b4",
+   "run_id": 42701787236,
+   "steps": [
+    {
+     "name": "Set up job",
+     "status": "completed",
+     "conclusion": "success",
+     "number": 1,
+     "started_at": "2026-11-09T21:22:06Z",
+     "completed_at": "2026-11-09T21:22:07Z"
+    },
+    {
+     "name": "Run actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1",
+     "status": "completed",
+     "conclusion": "success",
+     "number": 2,
+     "started_at": "2026-11-09T21:22:07Z",
+     "completed_at": "2026-11-09T21:22:08Z"
+    },
+    {
+     "name": "Фронтенд-окружение",
+     "status": "completed",
+     "conclusion": "success",
+     "number": 3,
+     "started_at": "2026-11-09T21:22:08Z",
+     "completed_at": "2026-11-09T21:22:16Z"
+    },
+    {
+     "name": "Версию меняет только выпуск",
+     "status": "completed",
+     "conclusion": "skipped",
+     "number": 4,
+     "started_at": "2026-11-09T21:22:16Z",
+     "completed_at": "2026-11-09T21:22:16Z"
+    },
+    {
+     "name": "Типы (svelte-check)",
+     "status": "completed",
+     "conclusion": "success",
+     "number": 5,
+     "started_at": "2026-11-09T21:22:16Z",
+     "completed_at": "2026-11-09T21:22:31Z"
+    },
+    {
+     "name": "Линтер (ESLint)",
+     "status": "completed",
+     "conclusion": "success",
+     "number": 6,
+     "started_at": "2026-11-09T21:22:31Z",
+     "completed_at": "2026-11-09T21:22:48Z"
+    },
+    {
+     "name": "Тесты и покрытие",
+     "status": "completed",
+     "conclusion": "success",
+     "number": 7,
+     "started_at": "2026-11-09T21:22:48Z",
+     "completed_at": "2026-11-09T21:25:34Z"
+    },
+    {
+     "name": "Production-сборка фронта",
+     "status": "completed",
+     "conclusion": "success",
+     "number": 8,
+     "started_at": "2026-11-09T21:25:34Z",
+     "completed_at": "2026-11-09T21:25:42Z"
+    },
+    {
+     "name": "Отчёт о покрытии",
+     "status": "completed",
+     "conclusion": "success",
+     "number": 9,
+     "started_at": "2026-11-09T21:25:42Z",
+     "completed_at": "2026-11-09T21:25:44Z"
+    },
+    {
+     "name": "Post Фронтенд-окружение",
+     "status": "completed",
+     "conclusion": "success",
+     "number": 17,
+     "started_at": "2026-11-09T21:25:44Z",
+     "completed_at": "2026-11-09T21:25:44Z"
+    },
+    {
+     "name": "Post Run actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1",
+     "status": "completed",
+     "conclusion": "success",
+     "number": 18,
+     "started_at": "2026-11-09T21:25:44Z",
+     "completed_at": "2026-11-09T21:25:44Z"
+    },
+    {
+     "name": "Complete job",
+     "status": "completed",
+     "conclusion": "success",
+     "number": 19,
+     "started_at": "2026-11-09T21:25:44Z",
+     "completed_at": "2026-11-09T21:25:44Z"
+    }
+   ]
+  },
+  {
+   "id": 129448182335,
+   "name": "Гейты качества / Rust (Linux)",
+   "status": "completed",
+   "conclusion": "success",
+   "created_at": "2026-11-09T21:22:02Z",
+   "started_at": "2026-11-09T21:22:05Z",
+   "completed_at": "2026-11-09T21:23:52Z",
+   "html_url": "https://github.com/BorisToboltsov/vterm/actions/runs/42701787236/job/129448182335",
+   "workflow_name": "Release",
+   "head_sha": "fb8e8d53e5d5e677c008d7e3e38842a74d46b7b4",
+   "run_id": 42701787236,
+   "steps": [
+    {
+     "name": "Set up job",
+     "status": "completed",
+     "conclusion": "success",
+     "number": 1,
+     "started_at": "2026-11-09T21:22:05Z",
+     "completed_at": "2026-11-09T21:22:07Z"
+    },
+    {
+     "name": "Run actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1",
+     "status": "completed",
+     "conclusion": "success",
+     "number": 2,
+     "started_at": "2026-11-09T21:22:07Z",
+     "completed_at": "2026-11-09T21:22:09Z"
+    },
+    {
+     "name": "Rust-окружение",
+     "status": "completed",
+     "conclusion": "success",
+     "number": 3,
+     "started_at": "2026-11-09T21:22:09Z",
+     "completed_at": "2026-11-09T21:23:22Z"
+    },
+    {
+     "name": "Формат",
+     "status": "completed",
+     "conclusion": "success",
+     "number": 4,
+     "started_at": "2026-11-09T21:23:22Z",
+     "completed_at": "2026-11-09T21:23:22Z"
+    },
+    {
+     "name": "Clippy",
+     "status": "completed",
+     "conclusion": "success",
+     "number": 5,
+     "started_at": "2026-11-09T21:23:22Z",
+     "completed_at": "2026-11-09T21:23:29Z"
+    },
+    {
+     "name": "Тесты",
+     "status": "completed",
+     "conclusion": "success",
+     "number": 6,
+     "started_at": "2026-11-09T21:23:29Z",
+     "completed_at": "2026-11-09T21:23:50Z"
+    },
+    {
+     "name": "Post Rust-окружение",
+     "status": "completed",
+     "conclusion": "success",
+     "number": 11,
+     "started_at": "2026-11-09T21:23:50Z",
+     "completed_at": "2026-11-09T21:23:50Z"
+    },
+    {
+     "name": "Post Run actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1",
+     "status": "completed",
+     "conclusion": "success",
+     "number": 12,
+     "started_at": "2026-11-09T21:23:50Z",
+     "completed_at": "2026-11-09T21:23:50Z"
+    },
+    {
+     "name": "Complete job",
+     "status": "completed",
+     "conclusion": "success",
+     "number": 13,
+     "started_at": "2026-11-09T21:23:50Z",
+     "completed_at": "2026-11-09T21:23:50Z"
+    }
+   ]
+  },
+  {
+   "id": 129448182350,
+   "name": "Глубокие проверки / Живые SFTP-тесты",
+   "status": "completed",
+   "conclusion": "success",
+   "created_at": "2026-11-09T21:22:02Z",
+   "started_at": "2026-11-09T21:22:05Z",
+   "completed_at": "2026-11-09T21:24:13Z",
+   "html_url": "https://github.com/BorisToboltsov/vterm/actions/runs/42701787236/job/129448182350",
+   "workflow_name": "Release",
+   "head_sha": "fb8e8d53e5d5e677c008d7e3e38842a74d46b7b4",
+   "run_id": 42701787236,
+   "steps": [
+    {
+     "name": "Set up job",
+     "status": "completed",
+     "conclusion": "success",
+     "number": 1,
+     "started_at": "2026-11-09T21:22:06Z",
+     "completed_at": "2026-11-09T21:22:08Z"
+    },
+    {
+     "name": "Run actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1",
+     "status": "completed",
+     "conclusion": "success",
+     "number": 2,
+     "started_at": "2026-11-09T21:22:08Z",
+     "completed_at": "2026-11-09T21:22:10Z"
+    },
+    {
+     "name": "Rust-окружение",
+     "status": "completed",
+     "conclusion": "success",
+     "number": 3,
+     "started_at": "2026-11-09T21:22:10Z",
+     "completed_at": "2026-11-09T21:22:59Z"
+    },
+    {
+     "name": "Тестовый sshd",
+     "status": "completed",
+     "conclusion": "success",
+     "number": 4,
+     "started_at": "2026-11-09T21:22:59Z",
+     "completed_at": "2026-11-09T21:23:06Z"
+    },
+    {
+     "name": "Прогон",
+     "status": "completed",
+     "conclusion": "success",
+     "number": 5,
+     "started_at": "2026-11-09T21:23:06Z",
+     "completed_at": "2026-11-09T21:23:30Z"
+    },
+    {
+     "name": "Тестовый sshd (keyboard-interactive)",
+     "status": "completed",
+     "conclusion": "success",
+     "number": 6,
+     "started_at": "2026-11-09T21:23:30Z",
+     "completed_at": "2026-11-09T21:23:45Z"
+    },
+    {
+     "name": "Прогон (keyboard-interactive)",
+     "status": "completed",
+     "conclusion": "success",
+     "number": 7,
+     "started_at": "2026-11-09T21:23:45Z",
+     "completed_at": "2026-11-09T21:23:48Z"
+    },
+    {
+     "name": "Тестовый sshd (su и sudo)",
+     "status": "completed",
+     "conclusion": "success",
+     "number": 8,
+     "started_at": "2026-11-09T21:23:48Z",
+     "completed_at": "2026-11-09T21:24:04Z"
+    },
+    {
+     "name": "Прогон (su и sudo)",
+     "status": "completed",
+     "conclusion": "success",
+     "number": 9,
+     "started_at": "2026-11-09T21:24:04Z",
+     "completed_at": "2026-11-09T21:24:07Z"
+    },
+    {
+     "name": "Погасить sshd",
+     "status": "completed",
+     "conclusion": "success",
+     "number": 10,
+     "started_at": "2026-11-09T21:24:07Z",
+     "completed_at": "2026-11-09T21:24:11Z"
+    },
+    {
+     "name": "Post Rust-окружение",
+     "status": "completed",
+     "conclusion": "success",
+     "number": 19,
+     "started_at": "2026-11-09T21:24:11Z",
+     "completed_at": "2026-11-09T21:24:11Z"
+    },
+    {
+     "name": "Post Run actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1",
+     "status": "completed",
+     "conclusion": "success",
+     "number": 20,
+     "started_at": "2026-11-09T21:24:11Z",
+     "completed_at": "2026-11-09T21:24:11Z"
+    },
+    {
+     "name": "Complete job",
+     "status": "completed",
+     "conclusion": "success",
+     "number": 21,
+     "started_at": "2026-11-09T21:24:11Z",
+     "completed_at": "2026-11-09T21:24:11Z"
+    }
+   ]
+  },
+  {
+   "id": 129448182413,
+   "name": "Гейты качества / Rust (macOS)",
+   "status": "completed",
+   "conclusion": "success",
+   "created_at": "2026-11-09T21:22:02Z",
+   "started_at": "2026-11-09T21:22:06Z",
+   "completed_at": "2026-11-09T21:24:04Z",
+   "html_url": "https://github.com/BorisToboltsov/vterm/actions/runs/42701787236/job/129448182413",
+   "workflow_name": "Release",
+   "head_sha": "fb8e8d53e5d5e677c008d7e3e38842a74d46b7b4",
+   "run_id": 42701787236,
+   "steps": [
+    {
+     "name": "Set up job",
+     "status": "completed",
+     "conclusion": "success",
+     "number": 1,
+     "started_at": "2026-11-09T21:22:06Z",
+     "completed_at": "2026-11-09T21:22:10Z"
+    },
+    {
+     "name": "Run actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1",
+     "status": "completed",
+     "conclusion": "success",
+     "number": 2,
+     "started_at": "2026-11-09T21:22:10Z",
+     "completed_at": "2026-11-09T21:22:13Z"
+    },
+    {
+     "name": "Rust-окружение",
+     "status": "completed",
+     "conclusion": "success",
+     "number": 3,
+     "started_at": "2026-11-09T21:22:13Z",
+     "completed_at": "2026-11-09T21:22:44Z"
+    },
+    {
+     "name": "Формат",
+     "status": "completed",
+     "conclusion": "skipped",
+     "number": 4,
+     "started_at": "2026-11-09T21:22:44Z",
+     "completed_at": "2026-11-09T21:22:44Z"
+    },
+    {
+     "name": "Clippy",
+     "status": "completed",
+     "conclusion": "success",
+     "number": 5,
+     "started_at": "2026-11-09T21:22:44Z",
+     "completed_at": "2026-11-09T21:23:10Z"
+    },
+    {
+     "name": "Тесты",
+     "status": "completed",
+     "conclusion": "success",
+     "number": 6,
+     "started_at": "2026-11-09T21:23:10Z",
+     "completed_at": "2026-11-09T21:23:59Z"
+    },
+    {
+     "name": "Post Rust-окружение",
+     "status": "completed",
+     "conclusion": "success",
+     "number": 11,
+     "started_at": "2026-11-09T21:23:59Z",
+     "completed_at": "2026-11-09T21:23:59Z"
+    },
+    {
+     "name": "Post Run actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1",
+     "status": "completed",
+     "conclusion": "success",
+     "number": 12,
+     "started_at": "2026-11-09T21:23:59Z",
+     "completed_at": "2026-11-09T21:24:00Z"
+    },
+    {
+     "name": "Complete job",
+     "status": "completed",
+     "conclusion": "success",
+     "number": 13,
+     "started_at": "2026-11-09T21:24:00Z",
+     "completed_at": "2026-11-09T21:24:01Z"
+    }
+   ]
+  },
+  {
+   "id": 129448262223,
+   "name": "Глубокие проверки / E2E (tauri-driver)",
+   "status": "completed",
+   "conclusion": "success",
+   "created_at": "2026-11-09T21:22:10Z",
+   "started_at": "2026-11-09T21:22:13Z",
+   "completed_at": "2026-11-09T21:26:14Z",
+   "html_url": "https://github.com/BorisToboltsov/vterm/actions/runs/42701787236/job/129448262223",
+   "workflow_name": "Release",
+   "head_sha": "fb8e8d53e5d5e677c008d7e3e38842a74d46b7b4",
+   "run_id": 42701787236,
+   "steps": [
+    {
+     "name": "Set up job",
+     "status": "completed",
+     "conclusion": "success",
+     "number": 1,
+     "started_at": "2026-11-09T21:22:14Z",
+     "completed_at": "2026-11-09T21:22:18Z"
+    },
+    {
+     "name": "Run actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1",
+     "status": "completed",
+     "conclusion": "success",
+     "number": 2,
+     "started_at": "2026-11-09T21:22:18Z",
+     "completed_at": "2026-11-09T21:22:20Z"
+    },
+    {
+     "name": "Rust-окружение и WebDriver",
+     "status": "completed",
+     "conclusion": "success",
+     "number": 3,
+     "started_at": "2026-11-09T21:22:20Z",
+     "completed_at": "2026-11-09T21:23:23Z"
+    },
+    {
+     "name": "Фронтенд-окружение",
+     "status": "completed",
+     "conclusion": "success",
+     "number": 4,
+     "started_at": "2026-11-09T21:23:23Z",
+     "completed_at": "2026-11-09T21:23:44Z"
+    },
+    {
+     "name": "tauri-driver",
+     "status": "completed",
+     "conclusion": "success",
+     "number": 5,
+     "started_at": "2026-11-09T21:23:44Z",
+     "completed_at": "2026-11-09T21:23:48Z"
+    },
+    {
+     "name": "Зависимости E2E",
+     "status": "completed",
+     "conclusion": "success",
+     "number": 6,
+     "started_at": "2026-11-09T21:23:48Z",
+     "completed_at": "2026-11-09T21:23:51Z"
+    },
+    {
+     "name": "Сборка фронта",
+     "status": "completed",
+     "conclusion": "success",
+     "number": 7,
+     "started_at": "2026-11-09T21:23:51Z",
+     "completed_at": "2026-11-09T21:24:04Z"
+    },
+    {
+     "name": "Тестовый sshd",
+     "status": "completed",
+     "conclusion": "success",
+     "number": 8,
+     "started_at": "2026-11-09T21:24:04Z",
+     "completed_at": "2026-11-09T21:24:09Z"
+    },
+    {
+     "name": "Прогон",
+     "status": "completed",
+     "conclusion": "success",
+     "number": 9,
+     "started_at": "2026-11-09T21:24:09Z",
+     "completed_at": "2026-11-09T21:26:08Z"
+    },
+    {
+     "name": "Погасить sshd",
+     "status": "completed",
+     "conclusion": "success",
+     "number": 10,
+     "started_at": "2026-11-09T21:26:08Z",
+     "completed_at": "2026-11-09T21:26:11Z"
+    },
+    {
+     "name": "Post Фронтенд-окружение",
+     "status": "completed",
+     "conclusion": "success",
+     "number": 18,
+     "started_at": "2026-11-09T21:26:11Z",
+     "completed_at": "2026-11-09T21:26:11Z"
+    },
+    {
+     "name": "Post Rust-окружение и WebDriver",
+     "status": "completed",
+     "conclusion": "success",
+     "number": 19,
+     "started_at": "2026-11-09T21:26:11Z",
+     "completed_at": "2026-11-09T21:26:11Z"
+    },
+    {
+     "name": "Post Run actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1",
+     "status": "completed",
+     "conclusion": "success",
+     "number": 20,
+     "started_at": "2026-11-09T21:26:11Z",
+     "completed_at": "2026-11-09T21:26:12Z"
+    },
+    {
+     "name": "Complete job",
+     "status": "completed",
+     "conclusion": "success",
+     "number": 21,
+     "started_at": "2026-11-09T21:26:12Z",
+     "completed_at": "2026-11-09T21:26:12Z"
+    }
+   ]
+  },
+  {
+   "id": 129452760825,
+   "name": "release (windows-latest)",
+   "status": "completed",
+   "conclusion": "success",
+   "created_at": "2026-11-09T21:30:18Z",
+   "started_at": "2026-11-09T21:30:21Z",
+   "completed_at": "2026-11-09T21:42:29Z",
+   "html_url": "https://github.com/BorisToboltsov/vterm/actions/runs/42701787236/job/129452760825",
+   "workflow_name": "Release",
+   "head_sha": "fb8e8d53e5d5e677c008d7e3e38842a74d46b7b4",
+   "run_id": 42701787236,
+   "steps": [
+    {
+     "name": "Set up job",
+     "status": "completed",
+     "conclusion": "success",
+     "number": 1,
+     "started_at": "2026-11-09T21:30:22Z",
+     "completed_at": "2026-11-09T21:30:25Z"
+    },
+    {
+     "name": "Run actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1",
+     "status": "completed",
+     "conclusion": "success",
+     "number": 2,
+     "started_at": "2026-11-09T21:30:25Z",
+     "completed_at": "2026-11-09T21:30:36Z"
+    },
+    {
+     "name": "Rust-окружение",
+     "status": "completed",
+     "conclusion": "success",
+     "number": 3,
+     "started_at": "2026-11-09T21:30:36Z",
+     "completed_at": "2026-11-09T21:30:49Z"
+    },
+    {
+     "name": "Фронтенд-окружение",
+     "status": "completed",
+     "conclusion": "success",
+     "number": 4,
+     "started_at": "2026-11-09T21:30:49Z",
+     "completed_at": "2026-11-09T21:32:03Z"
+    },
+    {
+     "name": "Сборка и публикация релиза",
+     "status": "completed",
+     "conclusion": "success",
+     "number": 5,
+     "started_at": "2026-11-09T21:32:03Z",
+     "completed_at": "2026-11-09T21:41:57Z"
+    },
+    {
+     "name": "Архив приложения для собственного updater (macOS)",
+     "status": "completed",
+     "conclusion": "skipped",
+     "number": 6,
+     "started_at": "2026-11-09T21:41:57Z",
+     "completed_at": "2026-11-09T21:41:57Z"
+    },
+    {
+     "name": "Хелпер open-on-mac.sh в ассеты релиза (macOS)",
+     "status": "completed",
+     "conclusion": "skipped",
+     "number": 7,
+     "started_at": "2026-11-09T21:41:57Z",
+     "completed_at": "2026-11-09T21:41:57Z"
+    },
+    {
+     "name": "Portable .exe в ассеты релиза (Windows)",
+     "status": "completed",
+     "conclusion": "success",
+     "number": 8,
+     "started_at": "2026-11-09T21:41:57Z",
+     "completed_at": "2026-11-09T21:42:05Z"
+    },
+    {
+     "name": "Portable .exe с вшитым WebView2 (Windows)",
+     "status": "completed",
+     "conclusion": "success",
+     "number": 9,
+     "started_at": "2026-11-09T21:42:05Z",
+     "completed_at": "2026-11-09T21:42:25Z"
+    },
+    {
+     "name": "Post Фронтенд-окружение",
+     "status": "completed",
+     "conclusion": "success",
+     "number": 16,
+     "started_at": "2026-11-09T21:42:25Z",
+     "completed_at": "2026-11-09T21:42:25Z"
+    },
+    {
+     "name": "Post Rust-окружение",
+     "status": "completed",
+     "conclusion": "success",
+     "number": 17,
+     "started_at": "2026-11-09T21:42:25Z",
+     "completed_at": "2026-11-09T21:42:25Z"
+    },
+    {
+     "name": "Post Run actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1",
+     "status": "completed",
+     "conclusion": "success",
+     "number": 18,
+     "started_at": "2026-11-09T21:42:25Z",
+     "completed_at": "2026-11-09T21:42:27Z"
+    },
+    {
+     "name": "Complete job",
+     "status": "completed",
+     "conclusion": "success",
+     "number": 19,
+     "started_at": "2026-11-09T21:42:27Z",
+     "completed_at": "2026-11-09T21:42:27Z"
+    }
+   ]
+  },
+  {
+   "id": 129452760871,
+   "name": "release (macos-latest, --target universal-apple-darwin)",
+   "status": "completed",
+   "conclusion": "success",
+   "created_at": "2026-11-09T21:30:18Z",
+   "started_at": "2026-11-09T21:30:22Z",
+   "completed_at": "2026-11-09T21:43:41Z",
+   "html_url": "https://github.com/BorisToboltsov/vterm/actions/runs/42701787236/job/129452760871",
+   "workflow_name": "Release",
+   "head_sha": "fb8e8d53e5d5e677c008d7e3e38842a74d46b7b4",
+   "run_id": 42701787236,
+   "steps": [
+    {
+     "name": "Set up job",
+     "status": "completed",
+     "conclusion": "success",
+     "number": 1,
+     "started_at": "2026-11-09T21:30:23Z",
+     "completed_at": "2026-11-09T21:30:27Z"
+    },
+    {
+     "name": "Run actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1",
+     "status": "completed",
+     "conclusion": "success",
+     "number": 2,
+     "started_at": "2026-11-09T21:30:27Z",
+     "completed_at": "2026-11-09T21:30:30Z"
+    },
+    {
+     "name": "Rust-окружение",
+     "status": "completed",
+     "conclusion": "success",
+     "number": 3,
+     "started_at": "2026-11-09T21:30:30Z",
+     "completed_at": "2026-11-09T21:30:41Z"
+    },
+    {
+     "name": "Фронтенд-окружение",
+     "status": "completed",
+     "conclusion": "success",
+     "number": 4,
+     "started_at": "2026-11-09T21:30:41Z",
+     "completed_at": "2026-11-09T21:30:57Z"
+    },
+    {
+     "name": "Сборка и публикация релиза",
+     "status": "completed",
+     "conclusion": "success",
+     "number": 5,
+     "started_at": "2026-11-09T21:30:57Z",
+     "completed_at": "2026-11-09T21:43:29Z"
+    },
+    {
+     "name": "Архив приложения для собственного updater (macOS)",
+     "status": "completed",
+     "conclusion": "success",
+     "number": 6,
+     "started_at": "2026-11-09T21:43:29Z",
+     "completed_at": "2026-11-09T21:43:34Z"
+    },
+    {
+     "name": "Хелпер open-on-mac.sh в ассеты релиза (macOS)",
+     "status": "completed",
+     "conclusion": "success",
+     "number": 7,
+     "started_at": "2026-11-09T21:43:34Z",
+     "completed_at": "2026-11-09T21:43:36Z"
+    },
+    {
+     "name": "Portable .exe в ассеты релиза (Windows)",
+     "status": "completed",
+     "conclusion": "skipped",
+     "number": 8,
+     "started_at": "2026-11-09T21:43:36Z",
+     "completed_at": "2026-11-09T21:43:36Z"
+    },
+    {
+     "name": "Portable .exe с вшитым WebView2 (Windows)",
+     "status": "completed",
+     "conclusion": "skipped",
+     "number": 9,
+     "started_at": "2026-11-09T21:43:36Z",
+     "completed_at": "2026-11-09T21:43:36Z"
+    },
+    {
+     "name": "Post Фронтенд-окружение",
+     "status": "completed",
+     "conclusion": "success",
+     "number": 16,
+     "started_at": "2026-11-09T21:43:36Z",
+     "completed_at": "2026-11-09T21:43:36Z"
+    },
+    {
+     "name": "Post Rust-окружение",
+     "status": "completed",
+     "conclusion": "success",
+     "number": 17,
+     "started_at": "2026-11-09T21:43:36Z",
+     "completed_at": "2026-11-09T21:43:36Z"
+    },
+    {
+     "name": "Post Run actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1",
+     "status": "completed",
+     "conclusion": "success",
+     "number": 18,
+     "started_at": "2026-11-09T21:43:36Z",
+     "completed_at": "2026-11-09T21:43:37Z"
+    },
+    {
+     "name": "Complete job",
+     "status": "completed",
+     "conclusion": "success",
+     "number": 19,
+     "started_at": "2026-11-09T21:43:37Z",
+     "completed_at": "2026-11-09T21:43:39Z"
+    }
+   ]
+  },
+  {
+   "id": 129452761870,
+   "name": "release (ubuntu-22.04)",
+   "status": "completed",
+   "conclusion": "success",
+   "created_at": "2026-11-09T21:30:18Z",
+   "started_at": "2026-11-09T21:30:21Z",
+   "completed_at": "2026-11-09T21:38:46Z",
+   "html_url": "https://github.com/BorisToboltsov/vterm/actions/runs/42701787236/job/129452761870",
+   "workflow_name": "Release",
+   "head_sha": "fb8e8d53e5d5e677c008d7e3e38842a74d46b7b4",
+   "run_id": 42701787236,
+   "steps": [
+    {
+     "name": "Set up job",
+     "status": "completed",
+     "conclusion": "success",
+     "number": 1,
+     "started_at": "2026-11-09T21:30:22Z",
+     "completed_at": "2026-11-09T21:30:25Z"
+    },
+    {
+     "name": "Run actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1",
+     "status": "completed",
+     "conclusion": "success",
+     "number": 2,
+     "started_at": "2026-11-09T21:30:25Z",
+     "completed_at": "2026-11-09T21:30:27Z"
+    },
+    {
+     "name": "Rust-окружение",
+     "status": "completed",
+     "conclusion": "success",
+     "number": 3,
+     "started_at": "2026-11-09T21:30:27Z",
+     "completed_at": "2026-11-09T21:31:03Z"
+    },
+    {
+     "name": "Фронтенд-окружение",
+     "status": "completed",
+     "conclusion": "success",
+     "number": 4,
+     "started_at": "2026-11-09T21:31:03Z",
+     "completed_at": "2026-11-09T21:31:15Z"
+    },
+    {
+     "name": "Сборка и публикация релиза",
+     "status": "completed",
+     "conclusion": "success",
+     "number": 5,
+     "started_at": "2026-11-09T21:31:15Z",
+     "completed_at": "2026-11-09T21:38:43Z"
+    },
+    {
+     "name": "Архив приложения для собственного updater (macOS)",
+     "status": "completed",
+     "conclusion": "skipped",
+     "number": 6,
+     "started_at": "2026-11-09T21:38:43Z",
+     "completed_at": "2026-11-09T21:38:43Z"
+    },
+    {
+     "name": "Хелпер open-on-mac.sh в ассеты релиза (macOS)",
+     "status": "completed",
+     "conclusion": "skipped",
+     "number": 7,
+     "started_at": "2026-11-09T21:38:43Z",
+     "completed_at": "2026-11-09T21:38:43Z"
+    },
+    {
+     "name": "Portable .exe в ассеты релиза (Windows)",
+     "status": "completed",
+     "conclusion": "skipped",
+     "number": 8,
+     "started_at": "2026-11-09T21:38:43Z",
+     "completed_at": "2026-11-09T21:38:43Z"
+    },
+    {
+     "name": "Portable .exe с вшитым WebView2 (Windows)",
+     "status": "completed",
+     "conclusion": "skipped",
+     "number": 9,
+     "started_at": "2026-11-09T21:38:43Z",
+     "completed_at": "2026-11-09T21:38:43Z"
+    },
+    {
+     "name": "Post Фронтенд-окружение",
+     "status": "completed",
+     "conclusion": "success",
+     "number": 16,
+     "started_at": "2026-11-09T21:38:43Z",
+     "completed_at": "2026-11-09T21:38:44Z"
+    },
+    {
+     "name": "Post Rust-окружение",
+     "status": "completed",
+     "conclusion": "success",
+     "number": 17,
+     "started_at": "2026-11-09T21:38:44Z",
+     "completed_at": "2026-11-09T21:38:44Z"
+    },
+    {
+     "name": "Post Run actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1",
+     "status": "completed",
+     "conclusion": "success",
+     "number": 18,
+     "started_at": "2026-11-09T21:38:44Z",
+     "completed_at": "2026-11-09T21:38:44Z"
+    },
+    {
+     "name": "Complete job",
+     "status": "completed",
+     "conclusion": "success",
+     "number": 19,
+     "started_at": "2026-11-09T21:38:44Z",
+     "completed_at": "2026-11-09T21:38:44Z"
+    }
+   ]
+  },
+  {
+   "id": 129460124837,
+   "name": "Целостность (суммы, provenance, SBOM)",
+   "status": "completed",
+   "conclusion": "success",
+   "created_at": "2026-11-09T21:43:42Z",
+   "started_at": "2026-11-09T21:43:45Z",
+   "completed_at": "2026-11-09T21:44:18Z",
+   "html_url": "https://github.com/BorisToboltsov/vterm/actions/runs/42701787236/job/129460124837",
+   "workflow_name": "Release",
+   "head_sha": "fb8e8d53e5d5e677c008d7e3e38842a74d46b7b4",
+   "run_id": 42701787236,
+   "steps": [
+    {
+     "name": "Set up job",
+     "status": "completed",
+     "conclusion": "success",
+     "number": 1,
+     "started_at": "2026-11-09T21:43:46Z",
+     "completed_at": "2026-11-09T21:43:49Z"
+    },
+    {
+     "name": "Run actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1",
+     "status": "completed",
+     "conclusion": "success",
+     "number": 2,
+     "started_at": "2026-11-09T21:43:49Z",
+     "completed_at": "2026-11-09T21:43:51Z"
+    },
+    {
+     "name": "Описание релиза из CHANGELOG",
+     "status": "completed",
+     "conclusion": "success",
+     "number": 3,
+     "started_at": "2026-11-09T21:43:51Z",
+     "completed_at": "2026-11-09T21:43:53Z"
+    },
+    {
+     "name": "Забрать ассеты релиза",
+     "status": "completed",
+     "conclusion": "success",
+     "number": 4,
+     "started_at": "2026-11-09T21:43:53Z",
+     "completed_at": "2026-11-09T21:44:03Z"
+    },
+    {
+     "name": "Подписанное описание всех форматов обновления",
+     "status": "completed",
+     "conclusion": "success",
+     "number": 5,
+     "started_at": "2026-11-09T21:44:03Z",
+     "completed_at": "2026-11-09T21:44:05Z"
+    },
+    {
+     "name": "SHA256SUMS",
+     "status": "completed",
+     "conclusion": "success",
+     "number": 6,
+     "started_at": "2026-11-09T21:44:05Z",
+     "completed_at": "2026-11-09T21:44:07Z"
+    },
+    {
+     "name": "SLSA-provenance на бандлы",
+     "status": "completed",
+     "conclusion": "success",
+     "number": 7,
+     "started_at": "2026-11-09T21:44:07Z",
+     "completed_at": "2026-11-09T21:44:11Z"
+    },
+    {
+     "name": "SBOM (CycloneDX)",
+     "status": "completed",
+     "conclusion": "success",
+     "number": 8,
+     "started_at": "2026-11-09T21:44:11Z",
+     "completed_at": "2026-11-09T21:44:14Z"
+    },
+    {
+     "name": "SBOM в ассеты релиза",
+     "status": "completed",
+     "conclusion": "success",
+     "number": 9,
+     "started_at": "2026-11-09T21:44:14Z",
+     "completed_at": "2026-11-09T21:44:16Z"
+    },
+    {
+     "name": "VirusTotal (детектор ложных срабатываний)",
+     "status": "completed",
+     "conclusion": "skipped",
+     "number": 10,
+     "started_at": "2026-11-09T21:44:16Z",
+     "completed_at": "2026-11-09T21:44:16Z"
+    },
+    {
+     "name": "Post Run actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1",
+     "status": "completed",
+     "conclusion": "success",
+     "number": 20,
+     "started_at": "2026-11-09T21:44:16Z",
+     "completed_at": "2026-11-09T21:44:16Z"
+    },
+    {
+     "name": "Complete job",
+     "status": "completed",
+     "conclusion": "success",
+     "number": 21,
+     "started_at": "2026-11-09T21:44:16Z",
+     "completed_at": "2026-11-09T21:44:16Z"
+    }
+   ]
+  }
+ ]
+}

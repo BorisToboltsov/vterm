@@ -148,6 +148,10 @@ export default defineConfig(
             owners: ["src/lib/page/filedragflow.svelte.ts"],
             why: "files leave the app only through handToSystem, after dragOutBlocker said they can (ADR 0027)",
           },
+          ciRun: {
+            owners: ["src/lib/stores/ci.svelte.ts"],
+            why: "every call to a forge goes through the CI store: its watches, its cache for the Git badges and its cleanup on close are one place (ADR 0069)",
+          },
           fetchMetrics: {
             owners: ["src/lib/stores/metricsfeed.svelte.ts"],
             why: "one poll per session: the backend takes CPU% and rates from the previous call, so a second poller reads them over a fraction of a second",

@@ -27,6 +27,12 @@ export interface JobMatrix {
   items: string[] | null;
   /** The axes as the file names them: "os × node", "parallel: 3". */
   axes: string;
+  /**
+   * GitHub: each copy's values, key by key in the order written — what the
+   * forge names a copy by (`build (ubuntu, 20)`), so a run's jobs are matched
+   * to the file's (ADR 0069). Absent elsewhere.
+   */
+  combos?: Record<string, string>[];
 }
 
 export interface JobCall {
@@ -70,6 +76,8 @@ export interface PipeJob {
   id: string;
   /** What to show: GitHub's `name:` when given, else the key. */
   name: string;
+  /** GitHub's `name:` as written, expressions and all; null — none written. */
+  title?: string | null;
   /** GitLab stage; null on GitHub. */
   stage: string | null;
   /** Explicit `needs`; null — none written (GitLab: the earlier stages). */

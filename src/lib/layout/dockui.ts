@@ -21,6 +21,8 @@ export function panelLabel(id: PanelId): string {
       return t("docker.panelTitle");
     case "k8s":
       return "k8s";
+    case "ci":
+      return "CI";
     case "ai":
       return t("ai.panelTitle");
   }

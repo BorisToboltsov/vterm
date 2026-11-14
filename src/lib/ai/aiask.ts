@@ -18,7 +18,7 @@
 import type { MessageKey } from "../i18n/messages";
 
 /** What a raised question is about. */
-export type AskSource = "selection" | "container" | "pod" | "metrics";
+export type AskSource = "selection" | "container" | "pod" | "metrics" | "ci";
 
 export interface AskPreset {
   /** Canonical English `###` header of the context block — data for the model,
@@ -35,6 +35,7 @@ export const ASK_PRESETS: Record<AskSource, AskPreset> = {
   container: { header: "Docker container", label: "ai.attach.container", question: "ai.ask.container" },
   pod: { header: "Kubernetes pod", label: "ai.attach.pod", question: "ai.ask.pod" },
   metrics: { header: "Host metrics", label: "ai.attach.metrics", question: "ai.ask.metrics" },
+  ci: { header: "CI job", label: "ai.attach.ci", question: "ai.ask.ci" },
 };
 
 /** The slice of a session chat that decides whether it is mid-turn. */

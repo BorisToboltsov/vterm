@@ -11,6 +11,8 @@
   // always shown; otherwise in a strip under it. Never between the rows — they stay
   // uniform, so the SVG stays aligned. The list measures itself (v1.27): how tall a
   // row is depends on its width, so the rows and the SVG read the same number.
+  import type { CiRun } from "../ci/ciparse";
+  import { STATE_ICON, STATE_TONE, stateText, runName } from "../ci/citext";
   import { swallowed } from "../api/diag";
   import Modal from "../ui/Modal.svelte";
   import ContextMenu from "../ui/ContextMenu.svelte";
@@ -61,6 +63,7 @@
   import { refLabels } from "./gitrefs";
   import type { GitOutput } from "../api";
   import { tooltip } from "../actions/tooltip";
+  import Icon from "../ui/Icon.svelte";
   import { commitTreeDirs, gitAge, isLogWide } from "./gitview";
   import { rowTooltip, whenLabel } from "./gitui";
   import { fitsBeside } from "../layout/panelsplit";
@@ -89,6 +92,7 @@
     onfilter,
     onloadmore,
     onfilehistory,
+    ciOf,
   }: {
     panelItems?: () => MenuItem[];
     rows: GraphRow[];
@@ -111,6 +115,8 @@
     onloadmore?: () => void;
     /** Show the history of one file (repo-relative path). */
     onfilehistory?: (path: string) => void;
+    /** The CI runs of a commit (ADR 0069); absent — the repository's forge is not known here. */
+    ciOf?: (hash: string) => CiRun[];
   } = $props();
 
   const RESET_MODES: ResetMode[] = ["soft", "mixed", "hard"];
@@ -426,6 +432,15 @@
     notifySuccess(t("git.copied"), { source: "git" });
   }
   const copySha = (c: GitCommit) => copyText(c.hash);
+
+  /** A commit's CI as one state — the worst of its runs — and each run in the tooltip. */
+  const CI_ORDER = ["failed", "running", "queued", "waiting", "manual", "cancelled", "ok", "skipped", "neutral"] as const;
+  function ciBadge(hash: string): { state: CiRun["state"]; text: string } | null {
+    const runs = ciOf?.(hash) ?? [];
+    if (!runs.length) return null;
+    const state = CI_ORDER.find((s) => runs.some((r) => r.state === s)) ?? "neutral";
+    return { state, text: runs.map((r) => `${runName(r)} — ${stateText(r.state)}`).join("\n") };
+  }
   async function copyMsg(c: GitCommit) {
     await writeClipboard(c.subject);
     notifySuccess(t("git.copied"), { source: "git" });
@@ -464,6 +479,15 @@
   }
 
 </script>
+
+{#snippet ciMark(hash: string)}
+  {@const ci = ciBadge(hash)}
+  {#if ci}
+    <span class="flex w-3.5 shrink-0 justify-center" use:tooltip={ci.text} data-testid="git-row-ci" data-ci={ci.state}>
+      <Icon name={STATE_ICON[ci.state]} size={12} class="{STATE_TONE[ci.state]} {ci.state === 'running' ? 'animate-spin' : ''}" />
+    </span>
+  {/if}
+{/snippet}
 
 {#if rows.length === 0 && !filtered && !searchError}
   <div role="presentation" class="h-full" oncontextmenu={(e) => openListMenu(e)} data-testid="git-graph-empty"><p class="px-3 py-6 text-center text-xs text-muted">{t("git.noCommits")}</p></div>
@@ -567,11 +591,13 @@
                   </span>
                   <span class="w-32 shrink-0 truncate text-meta text-muted" data-testid="git-row-author">{c.author}{differentCommitter(c) ? "*" : ""}</span>
                   <span class="w-28 shrink-0 text-right text-caption tabular-nums text-muted" data-testid="git-row-moment">{whenLabel(c.timestamp)}</span>
+                  {@render ciMark(c.hash)}
                 {:else}
                   <span class="flex min-w-0 flex-1 flex-col gap-0.5">
                     <span class="flex min-w-0 items-center gap-1.5">
                       <span class="min-w-0 flex-1 truncate {subjectTone(c)}">{c.subject}</span>
                       <span class="shrink-0 text-caption text-muted" data-testid="git-row-age">{gitAge(c.timestamp)}</span>
+                      {@render ciMark(c.hash)}
                     </span>
                     <span class="flex h-4 min-w-0 items-center gap-1.5">
                       {#if labels.length}

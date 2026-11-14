@@ -285,6 +285,21 @@
   }
 
   /** "Open in code" from the schema: this file beside the schema, another file in its own editor. */
+  /**
+   * The schema's fix (pin by SHA, ADR 0069): one change of the buffer — only the
+   * part that differs — so one undo takes it back.
+   */
+  function editFromSchema(next: string) {
+    if (doc.readOnly || !view) return;
+    const cur = view.state.doc.toString();
+    if (cur === next) return;
+    let from = 0;
+    while (from < cur.length && from < next.length && cur[from] === next[from]) from++;
+    let tail = 0;
+    while (tail < cur.length - from && tail < next.length - from && cur[cur.length - 1 - tail] === next[next.length - 1 - tail]) tail++;
+    view.dispatch({ changes: { from, to: cur.length - tail, insert: next.slice(from, next.length - tail) } });
+  }
+
   function jumpFromSchema(file: string, line: number) {
     if (file !== doc.path) {
       onOpenFileAt?.(file, line);
@@ -698,6 +713,7 @@
           cursorLine={pipeView === "split" ? cursorLine : null}
           onjump={jumpFromSchema}
           onselectjob={lightJob}
+          onedit={doc.readOnly ? undefined : editFromSchema}
         />
       </div>
     {/if}
