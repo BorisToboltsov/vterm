@@ -32,6 +32,8 @@
     "ansible-lint": "servertools.purposeAnsible",
     actionlint: "servertools.purposeActions",
     kubeconform: "servertools.purposeK8s",
+    gh: "servertools.purposeGh",
+    glab: "servertools.purposeGlab",
     sensors: "servertools.purposeTemp",
     smartmontools: "servertools.purposeSmart",
     sysstat: "servertools.purposeIo",

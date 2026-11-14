@@ -303,6 +303,7 @@ export function addScratchEditor(
   lang: EditorLang,
   content: string,
   source: "sftp" | "local" = "sftp",
+  opts: { readOnly?: boolean } = {},
 ): string {
   const id = crypto.randomUUID();
   const doc: EditorDoc = {
@@ -312,12 +313,13 @@ export function addScratchEditor(
     name,
     lang,
     content,
-    baseContent: "",
+    // Something only to read (a CI job's log, ADR 0069) is not a draft: nothing to save.
+    baseContent: opts.readOnly ? content : "",
     baseSha256: "",
     eol: "lf",
     encoding: "utf-8",
     mode: null,
-    readOnly: false,
+    readOnly: opts.readOnly ?? false,
     writeAccess: "unknown",
     saveIssue: "none",
     loading: false,

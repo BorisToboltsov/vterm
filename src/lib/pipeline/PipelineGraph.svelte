@@ -26,6 +26,8 @@
     open,
     states,
     plan,
+    live = false,
+    notes = {},
     selected,
     stepMs,
     events = [],
@@ -41,6 +43,10 @@
     open: ReadonlySet<string>;
     states: Record<string, RunState>;
     plan: Plan | null;
+    /** A real run, not the simulation (ADR 0069): the forge opens its gates, not a click here. */
+    live?: boolean;
+    /** A short note on a job's card — a real run's duration. */
+    notes?: Record<string, string>;
     selected: string | null;
     /** How long a running job's bar takes to fill. */
     stepMs: number;
@@ -64,6 +70,7 @@
     skip: "circleOff",
     unknown: "help",
     error: "octagon",
+    fail: "circleX",
   };
   const TONE: Record<RunState, string> = {
     idle: "text-muted",
@@ -75,6 +82,7 @@
     skip: "text-muted",
     unknown: "text-warn",
     error: "text-bad",
+    fail: "text-bad",
   };
   const FRAME: Record<RunState, string> = {
     idle: "border-edge bg-panel",
@@ -86,6 +94,7 @@
     skip: "border-dashed border-edge bg-transparent opacity-40",
     unknown: "border-dashed border-warn/50 bg-transparent",
     error: "border-bad bg-panel",
+    fail: "border-bad bg-bad/10",
   };
   /** How long jobs take to reach their new places. */
   const MOVE_MS = 320;
@@ -122,7 +131,7 @@
     return () => clearTimeout(id);
   });
 
-  const done = (s: RunState | undefined) => s === "ok" || s === "warn";
+  const done = (s: RunState | undefined) => s === "ok" || s === "warn" || s === "fail";
   const started = (s: RunState | undefined) => s === "run" || s === "gate" || done(s);
   const left = (s: RunState | undefined) => s === "skip" || s === "error" || s === "unknown";
   const lit = (from: string, to: string) =>
@@ -240,6 +249,9 @@
             {#if job.matrix}
               <span>×{job.matrix.items?.length ?? "?"}</span>
             {/if}
+            {#if notes[job.id]}
+              <span class="tabular-nums" data-testid="pipe-note">{notes[job.id]}</span>
+            {/if}
             {#if v?.delayed}
               <span use:tooltip={t("pipeline.delayed", { time: v.delayed })}><Icon name="clock" size={12} /></span>
             {/if}
@@ -262,7 +274,7 @@
               <Icon name={open.has(job.id) ? "chevronUp" : "chevronDown"} size={12} />
             </button>
           {/if}
-          {#if s === "gate"}
+          {#if s === "gate" && !live}
             <button
               type="button"
               class="flex shrink-0 animate-pulse items-center rounded-full bg-warn/15 px-1.5 py-0.5 text-warn hover:bg-warn/25"
@@ -273,7 +285,7 @@
               <Icon name={v?.gate === "approval" ? "check" : "play"} size={11} />
             </button>
           {/if}
-          {#if s === "run"}
+          {#if s === "run" && !live}
             <span class="pipe-progress absolute bottom-0 left-0 h-0.5 w-full bg-accent" style="animation-duration: {stepMs}ms"></span>
           {/if}
         </div>

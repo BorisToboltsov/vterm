@@ -86,6 +86,17 @@ pub const TOOLS: &[Tool] = &[
         name: "kubeconform",
         bin: "kubeconform",
     },
+    // The CI panel's way to the forges (ADR 0069): the user's own CLIs.
+    Tool {
+        id: "gh",
+        name: "gh",
+        bin: "gh",
+    },
+    Tool {
+        id: "glab",
+        name: "glab",
+        bin: "glab",
+    },
 ];
 
 /// One tool's status on the active server, sent to the frontend.
@@ -209,6 +220,9 @@ pub fn install_command(tool: &str, mgr: &str) -> Option<String> {
             _ => sys("netcat-openbsd"),
         },
         "curl" => sys("curl"),
+        // GitHub's and GitLab's CLIs are packaged as `gh` and `glab` where they are packaged.
+        "gh" => sys("gh"),
+        "glab" => sys("glab"),
         // ansible-lint is a Python package everywhere except brew.
         "ansible-lint" => {
             if mgr == "brew" {
@@ -296,6 +310,14 @@ mod tests {
         assert_eq!(
             install_command("shellcheck", "apt").as_deref(),
             Some("sudo apt-get install -y shellcheck")
+        );
+        assert_eq!(
+            install_command("gh", "brew").as_deref(),
+            Some("brew install gh")
+        );
+        assert_eq!(
+            install_command("glab", "dnf").as_deref(),
+            Some("sudo dnf install -y glab")
         );
         assert_eq!(
             install_command("yamllint", "dnf").as_deref(),

@@ -142,6 +142,7 @@ describe("dock panel guard", () => {
       "GitPanel",
       "DockerPanel",
       "K8sPanel",
+      "CiPanel",
     ]) {
       expect(instance(host, component), `${component} gets a visible prop`).toMatch(
         /(?:^|\s)(?:\{visible\}|visible=\{visible\})/m,
@@ -149,8 +150,8 @@ describe("dock panel guard", () => {
     }
   });
 
-  it("stops the Docker, k8s and git pollers while the panel is hidden", () => {
-    for (const file of ["docker/DockerPanel.svelte", "k8s/K8sPanel.svelte", "git/GitPanel.svelte"]) {
+  it("stops the Docker, k8s, git and CI pollers while the panel is hidden", () => {
+    for (const file of ["docker/DockerPanel.svelte", "k8s/K8sPanel.svelte", "git/GitPanel.svelte", "ci/CiPanel.svelte"]) {
       expect(pollEffect(code(file)), `${file} gates its interval on visibility`).toMatch(
         /\bvisible\b/,
       );
@@ -174,7 +175,7 @@ describe("dock panel guard", () => {
     // found no session, and the panel said "Docker unavailable" until Retry —
     // on Windows, where ConPTY spawns slowly, every time. Local tabs have a real
     // connecting → connected status; every kind waits for it.
-    for (const component of ["GitPanel", "DockerPanel", "K8sPanel"]) {
+    for (const component of ["GitPanel", "DockerPanel", "K8sPanel", "CiPanel"]) {
       const tag = instance(host, component);
       expect(tag, `${component} gets the dock's sessionReady`).toMatch(
         /(?:^|\s)(?:\{sessionReady\}|sessionReady=\{sessionReady\})/m,

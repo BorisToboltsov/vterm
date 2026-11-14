@@ -164,15 +164,17 @@ pub fn source_of(label: &str) -> &'static str {
     match label {
         "git" => "git",
         "kubectl" => "k8s",
+        "ci" | "ci dispatch" => "ci",
         "probe" | "netcheck" => "netcheck",
         _ => "docker",
     }
 }
 
 /// Whether a driver's argv may be written: a probe's carries header values and
-/// request bodies, a registry login its user — neither is written (ADR 0063).
+/// request bodies, a registry login its user, a CI run started by hand what the
+/// person typed into its form — none is written (ADR 0063).
 pub fn writes_argv(label: &str) -> bool {
-    !matches!(label, "probe" | "docker login")
+    !matches!(label, "probe" | "docker login" | "ci dispatch")
 }
 
 /// An argv the driver's policy refused (ADR 0036): a warning — the frontend
@@ -206,6 +208,8 @@ mod tests {
         let (ok, events) = crate::diag::capture(|| super::policy("kubectl", &args, Ok(())));
         assert!(ok.is_ok() && events.is_empty());
         assert!(!super::writes_argv("probe") && !super::writes_argv("docker login"));
+        assert!(!super::writes_argv("ci dispatch") && super::writes_argv("ci"));
+        assert_eq!(super::source_of("ci dispatch"), "ci");
         assert!(super::writes_argv("git") && super::writes_argv("kubectl"));
         assert_eq!(super::source_of("kubectl"), "k8s");
     }

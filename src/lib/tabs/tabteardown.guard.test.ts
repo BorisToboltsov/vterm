@@ -98,6 +98,8 @@ describe("tab teardown guard", () => {
       "clearAuthPrompt",
       // The session's metrics feed: its poll loop and history (v1.34).
       "forgetMetrics",
+      // Its watched CI runs, the list its Git badges read, a run asked of a schema (ADR 0069).
+      "forgetCi",
     ]) {
       expect(fn).toContain(cleanup);
     }

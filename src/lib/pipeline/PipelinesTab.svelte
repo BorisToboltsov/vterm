@@ -258,6 +258,7 @@
     skip: ["circleOff", "text-muted"],
     unknown: ["help", "text-warn"],
     error: ["octagon", "text-bad"],
+    fail: ["circleX", "text-bad"],
   };
   const JOB_FRAME: Record<RunState, string> = {
     idle: "border-edge bg-panel",
@@ -269,6 +270,7 @@
     skip: "border-dashed border-edge bg-panel opacity-40",
     unknown: "border-dashed border-warn/50 bg-panel",
     error: "border-bad bg-panel",
+    fail: "border-bad bg-bad/10",
   };
   /** A card's job list on the map, as the plan has it. */
   function jobState(cardId: string, jobId: string): RunState {

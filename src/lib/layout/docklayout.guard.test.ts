@@ -105,8 +105,8 @@ describe("dock layout guard", () => {
   });
 
   describe("two classes of tabs", () => {
-    it("the tool panels are the six the model names — no terminal, no editor", () => {
-      expect([...PANEL_IDS].sort()).toEqual(["ai", "docker", "files", "git", "k8s", "servers"]);
+    it("the tool panels are the seven the model names — no terminal, no editor", () => {
+      expect([...PANEL_IDS].sort()).toEqual(["ai", "ci", "docker", "files", "git", "k8s", "servers"]);
     });
 
     it("a session panel is rendered by DockPanel and nowhere else", () => {

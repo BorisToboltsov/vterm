@@ -40,6 +40,7 @@ const FILTER_ROWS: Record<string, "ListHeader" | "FilterField"> = {
   "src/lib/git/GitChanges.svelte": "ListHeader",
   "src/lib/monitoring/MonProcesses.svelte": "ListHeader",
   "src/lib/notifications/JournalList.svelte": "ListHeader",
+  "src/lib/ci/CiPanel.svelte": "ListHeader",
   "src/lib/git/GitBranches.svelte": "FilterField",
   "src/lib/git/GitLogFilter.svelte": "FilterField",
   "src/lib/servers/ServerTree.svelte": "FilterField",
@@ -60,6 +61,7 @@ const GROUPED = [
   "src/lib/recording/RecordingsPanel.svelte",
   "src/lib/git/GitChanges.svelte",
   "src/lib/notifications/JournalList.svelte",
+  "src/lib/ci/CiPanel.svelte",
 ];
 
 /** The row is drawn, and is the common one. */

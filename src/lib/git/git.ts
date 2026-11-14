@@ -850,13 +850,8 @@ export function parseCommitFiles(raw: string): CommitFile[] {
   return out;
 }
 
-/**
- * Build a web URL to view a commit on the hosting service, from a git remote
- * URL. Handles `git@host:owner/repo(.git)` and `https://host/owner/repo(.git)`
- * (and `ssh://git@host[:port]/owner/repo`). Returns null when the remote isn't a
- * recognizable http(s)/ssh host. Pure — no network; the caller opens the URL.
- */
-function remoteHostPath(remote: string): { host: string; path: string } | null {
+/** The host and repository path of a git remote URL (scp-like, http(s) or ssh); null — not one. */
+export function remoteHostPath(remote: string): { host: string; path: string } | null {
   const r = remote.trim().replace(/\.git$/, "");
   if (!r) return null;
   let host: string;
@@ -875,6 +870,12 @@ function remoteHostPath(remote: string): { host: string; path: string } | null {
   return host && path ? { host, path } : null;
 }
 
+/**
+ * Build a web URL to view a commit on the hosting service, from a git remote
+ * URL. Handles `git@host:owner/repo(.git)` and `https://host/owner/repo(.git)`
+ * (and `ssh://git@host[:port]/owner/repo`). Returns null when the remote isn't a
+ * recognizable http(s)/ssh host. Pure — no network; the caller opens the URL.
+ */
 export function commitWebUrl(remote: string, hash: string): string | null {
   const hp = remoteHostPath(remote);
   if (!hp) return null;

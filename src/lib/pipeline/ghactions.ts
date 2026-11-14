@@ -89,12 +89,19 @@ export function expandMatrix(v: unknown): JobMatrix | null {
   if (!exclude || !include) return { items: null, axes: shown };
   combos = combos.filter((c) => !exclude.some((x) => Object.entries(x).every(([k, val]) => c[k] === label(val))));
   const labels = combos.map((c) => axes.map((k) => c[k]).join(" · "));
+  // What GitHub names each copy by: an included entry's own keys join the copies
+  // it fits; one that fits none is a copy of its own.
+  const named = combos.map((c) => ({ ...c }));
   for (const inc of include) {
     const own = Object.entries(inc).filter(([k]) => axes.includes(k));
-    const fits = combos.some((c) => own.every(([k, val]) => c[k] === label(val)));
-    if (!fits) labels.push(Object.values(inc).map(label).join(" · "));
+    const fits = combos.map((c, i) => (own.every(([k, val]) => c[k] === label(val)) ? i : -1)).filter((i) => i >= 0);
+    const extra = Object.fromEntries(Object.entries(inc).filter(([k]) => !axes.includes(k)).map(([k, val]) => [k, label(val)]));
+    if (!fits.length) {
+      labels.push(Object.values(inc).map(label).join(" · "));
+      named.push(Object.fromEntries(Object.entries(inc).map(([k, val]) => [k, label(val)])));
+    } else for (const i of fits) Object.assign(named[i], extra);
   }
-  return { items: labels, axes: include.length ? `${shown} + include` : shown };
+  return { items: labels, axes: include.length ? `${shown} + include` : shown, combos: named };
 }
 
 /** A step as one line: its name, else what it runs or uses. */
@@ -176,6 +183,7 @@ export function parseWorkflow(file: string, doc: YamlFile): Pipeline {
     const job: PipeJob = {
       id,
       name: shownName && !shownName.includes("${{") ? shownName : id,
+      title: shownName,
       stage: null,
       needs: needs ? needs.map((n): JobNeed => ({ job: n, optional: false })) : null,
       matrix,

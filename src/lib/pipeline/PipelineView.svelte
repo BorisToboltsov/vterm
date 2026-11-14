@@ -4,12 +4,19 @@
   // from the text the editor holds — live as it is edited — and the files it
   // names through the reader of the same connection. Played, it starts jobs wave
   // by wave: order, not time.
+  //
+  // "Run" (ADR 0069) lays a real run of the file over it, read through the
+  // user's own gh/glab: the schema from the file at the run's commit, the jobs'
+  // states from the forge, and in time — real lengths, the wait for a runner,
+  // the path that decided how long it took. Below the problems: what in a
+  // GitHub workflow lets someone else's code run with its token, from the file
+  // alone; and on `workflow_dispatch`, the form to start it by hand.
   import { onDestroy, untrack } from "svelte";
   import { tooltip } from "../actions/tooltip";
   import { diag, swallow } from "../api/diag";
   import { writeClipboard } from "../app/clipboard";
   import { t } from "../i18n";
-  import { notifySuccess } from "../stores/toasts.svelte";
+  import { notifyError, notifySuccess } from "../stores/toasts.svelte";
   import Icon from "../ui/Icon.svelte";
   import { reducedMotion } from "../ui/motion";
   import PipelineGraph from "./PipelineGraph.svelte";
@@ -20,7 +27,19 @@
   import { toMermaid } from "./pipemermaid";
   import { finishJobs, nextWave, openGate, planStates, playbackPhase, startPlayback, type Playback, type RunState } from "./pipeplay";
   import { eventPresets, planFor, type PipeEvent } from "./pipesim";
-  import { loadYaml, type Yaml } from "./yamldoc";
+  import { loadYaml, parseYaml, type Yaml, type YamlFile } from "./yamldoc";
+  import PipelineTimeline from "./PipelineTimeline.svelte";
+  import ConfirmDialog from "../ui/ConfirmDialog.svelte";
+  import { baseName } from "../files/fspath";
+  import { auditWorkflow, pinText, type Finding } from "../ci/ciaudit";
+  import { dispatchFields, formProblems, formValues, pipelineFields, prodFields, type FormField } from "../ci/cidispatch";
+  import { isActive, type CiFailure, type CiJob, type CiRun } from "../ci/ciparse";
+  import { clock, runOnSchema, timeline } from "../ci/cirun";
+  import { durationText, problemTitle, runName, STATE_ICON, STATE_TONE, stateText } from "../ci/citext";
+  import { CLI, type Repo } from "../ci/forge";
+  import { fileAtCommit, pinCommit, readJobs, readRuns, repoOfFile, schemaAskOf, startRun } from "../stores/ci.svelte";
+  import { clickLink } from "../stores/linkopen.svelte";
+  import { compactAge } from "../ui/age";
 
   let {
     path,
@@ -33,6 +52,7 @@
     readyPipeline = null,
     onjump,
     onselectjob,
+    onedit,
   }: {
     /** The file the pipeline starts in. */
     path: string;
@@ -51,6 +71,8 @@
     onjump?: (file: string, line: number) => void;
     /** The job picked, for the editor to light its lines. */
     onselectjob?: (span: SourceSpan | null) => void;
+    /** Change the editor's text (pin by SHA); absent — the file is read-only here. */
+    onedit?: (next: string) => void;
   } = $props();
 
   /** One wave of the playback. */
@@ -61,6 +83,8 @@
   const files = $derived(cachedReader(reader));
   let Y = $state.raw<Yaml | null>(null);
   let pipeline = $state.raw<Pipeline | null>(null);
+  /** The main file as YAML: what the security checks and the start form read. */
+  let doc = $state.raw<YamlFile | null>(null);
   let failed = $state<string | null>(null);
   let seq = 0;
   loadYaml()
@@ -90,6 +114,7 @@
         void loadPipeline(y, via, file, src, kind).then((next) => {
           if (mine !== seq) return;
           pipeline = next;
+          doc = parseYaml(y, src);
           for (const f of next.files.filter((x) => x.state === "failed")) {
             diag.warn("editor", "a file of the pipeline could not be read: the schema is drawn without it", { path: f.path });
           }
@@ -180,7 +205,194 @@
   });
   onDestroy(stop);
 
-  const states = $derived<Record<string, RunState>>(pb ? pb.states : plan ? planStates(plan) : {});
+  // ── A real run (ADR 0069) ─────────────────────────────────────────────────
+  let source = $state<"sim" | "run">("sim");
+  let runView = $state<"time" | "order">("time");
+  let repo = $state.raw<Repo | null>(null);
+  let repoRoot: string | null = null;
+  let runs = $state.raw<CiRun[] | null>(null);
+  let runsFailure = $state<CiFailure | null>(null);
+  let runId = $state<string | null>(null);
+  const theRun = $derived(runs?.find((r) => r.id === runId) ?? null);
+  let runJobs = $state.raw<CiJob[] | null>(null);
+  /** The file as it was at the run's commit; null — not read (yet, or not here). */
+  let runPipeline = $state.raw<Pipeline | null>(null);
+  let fromCommit = $state<boolean | null>(null);
+  let replay = $state(0);
+  let now = $state(Date.now());
+  let host = $state<HTMLElement | null>(null);
+
+  /** The repository of the file and its forge, found once. */
+  async function findRepo(): Promise<Repo | null> {
+    if (repo && repoRoot) return repo;
+    if (!sessionId) return null;
+    const found = await repoOfFile(sessionId, path);
+    repoRoot = found?.root ?? null;
+    repo = repo ?? found?.repo ?? null;
+    return repo;
+  }
+
+  async function enterRun(pick: string | null = null) {
+    stop();
+    source = "run";
+    runsFailure = null;
+    const sid = sessionId;
+    const r = await findRepo();
+    if (!sid || !r) {
+      runsFailure = { kind: "failed", text: t("pipeline.run.noForge") };
+      return;
+    }
+    const answer = await readRuns(sid, r, { workflow: r.forge === "github" ? baseName(path) : null });
+    now = Date.now();
+    if (!answer.ok) {
+      runsFailure = answer.failure;
+      return;
+    }
+    runs = answer.value;
+    const next = pick ?? runId ?? answer.value[0]?.id ?? null;
+    if (next !== runId || !runJobs) {
+      runId = next;
+      await loadRun();
+    }
+  }
+
+  async function loadRun() {
+    const run = theRun;
+    const r = repo;
+    const sid = sessionId;
+    if (!run || !r || !sid) return;
+    runJobs = null;
+    runPipeline = null;
+    fromCommit = null;
+    const [jobs, atCommit] = await Promise.all([
+      readJobs(sid, r, run.id),
+      repoRoot ? fileAtCommit(sid, repoRoot, run.sha, path) : Promise.resolve(null),
+    ]);
+    // The file at the commit is read before anything is drawn: the jobs are
+    // placed on it, not on the current file first and then on another.
+    const atFile = atCommit !== null && Y ? await loadPipeline(Y, files, path, atCommit, kind) : null;
+    if (runId !== run.id) return;
+    if (!atFile) diag.debug("editor", "the workflow at the run's commit is not here: the schema is the current file", { sha: run.sha.slice(0, 12) });
+    runPipeline = atFile;
+    fromCommit = atFile !== null;
+    runJobs = jobs.ok ? jobs.value : [];
+    if (!jobs.ok) runsFailure = jobs.failure;
+  }
+
+  /** A run still going is read again while the schema is on screen. */
+  async function refreshRun() {
+    const r = repo;
+    const sid = sessionId;
+    const run = theRun;
+    if (!r || !sid || !run) return;
+    const answer = await readRuns(sid, r, { workflow: r.forge === "github" ? baseName(path) : null });
+    if (answer.ok) runs = answer.value;
+    const jobs = await readJobs(sid, r, run.id);
+    if (jobs.ok && runId === run.id) runJobs = jobs.value;
+    now = Date.now();
+  }
+
+  $effect(() => {
+    if (source !== "run" || !theRun || !isActive(theRun.state)) return;
+    const id = setInterval(() => {
+      now = Date.now();
+      // Only while it is seen: a schema in a zone behind another, or a window away, is not.
+      if (document.hidden || !host || host.getClientRects().length === 0) return;
+      void refreshRun();
+    }, 10_000);
+    return () => clearInterval(id);
+  });
+
+  // The CI panel's "On the schema": this file, that run.
+  let askedSeq = 0;
+  $effect(() => {
+    const asked = schemaAskOf(sessionId, path);
+    if (!asked || asked.seq === askedSeq) return;
+    askedSeq = asked.seq;
+    untrack(() => {
+      repo = asked.repo;
+      void enterRun(asked.runId);
+    });
+  });
+
+  const shownPipeline = $derived(source === "run" ? (runPipeline ?? pipeline) : pipeline);
+  const onSchema = $derived(source === "run" && shownPipeline && runJobs ? runOnSchema(shownPipeline, runJobs) : null);
+  const tl = $derived(source === "run" && theRun && runJobs ? timeline(theRun, runJobs, shownPipeline, now) : null);
+  /** A job's real length on its card: the longest of its copies and called jobs. */
+  const notes = $derived.by((): Record<string, string> => {
+    if (!onSchema) return {};
+    const out: Record<string, string> = {};
+    for (const [id, list] of Object.entries(onSchema.jobsOf)) {
+      const spans = list.filter((j) => j.started !== null).map((j) => (j.finished ?? now) - (j.started ?? 0));
+      if (spans.length) out[id] = clock(Math.max(...spans));
+    }
+    return out;
+  });
+
+  // ── What in the file lets someone else's code run (GitHub) ────────────────
+  const findings = $derived<Finding[]>(doc && pipeline?.kind === "github" ? auditWorkflow(doc, text) : []);
+  let openFinding = $state<string | null>(null);
+  let pinning = $state(false);
+  async function pinAll(f: Finding) {
+    const sid = sessionId;
+    if (!sid || !onedit || pinning) return;
+    pinning = true;
+    try {
+      const shas = new Map<string, string>();
+      for (const p of f.pins) {
+        const key = `${p.repo}@${p.ref}`;
+        if (shas.has(key)) continue;
+        const answer = await pinCommit(sid, p.repo, p.ref);
+        if (!answer.ok) {
+          notifyError(t("pipeline.audit.pinFailed", { action: key, why: problemTitle(answer.failure, "gh", "github.com") }), { source: "editor", sessionId: sid });
+          return;
+        }
+        shas.set(key, answer.value);
+      }
+      onedit(pinText(text, f.pins.map((p) => ({ ...p, sha: shas.get(`${p.repo}@${p.ref}`) ?? "" }))));
+      notifySuccess(t("pipeline.audit.pinned", { n: shas.size }), { source: "editor", sessionId: sid });
+    } finally {
+      pinning = false;
+    }
+  }
+
+  // ── Starting it by hand ───────────────────────────────────────────────────
+  const fields = $derived<FormField[] | null>(
+    !doc || !pipeline ? null : pipeline.kind === "github" ? dispatchFields(doc) : pipelineFields(doc),
+  );
+  let values = $state<Record<string, string>>({});
+  let formTried = $state(false);
+  const problemsOfForm = $derived(fields ? formProblems(fields, values) : []);
+  let startAsk = $state<{ repo: Repo; ref: string; values: Record<string, string>; prod: string[] } | null>(null);
+  async function askStart() {
+    formTried = true;
+    if (!fields || problemsOfForm.length || !event) return;
+    const r = await findRepo();
+    if (!r) {
+      notifyError(t("pipeline.run.noForge"), { source: "editor", sessionId });
+      return;
+    }
+    startAsk = { repo: r, ref: event.ref, values: formValues(fields, values), prod: prodFields(fields, values) };
+  }
+  async function confirmStart() {
+    const a = startAsk;
+    startAsk = null;
+    if (!a || !sessionId) return;
+    const failed = await startRun(sessionId, a.repo, a.repo.forge === "github" ? baseName(path) : null, a.ref, a.values);
+    if (!failed) {
+      formTried = false;
+      // The new run, on the schema, as soon as the forge lists it.
+      after(() => {
+        runId = null;
+        runJobs = null;
+        void enterRun(null);
+      }, 3000);
+    }
+  }
+
+  const states = $derived<Record<string, RunState>>(
+    onSchema ? onSchema.states : pb ? pb.states : plan ? planStates(plan) : {},
+  );
   const phase = $derived(pb ? playbackPhase(pb) : null);
   const willStart = $derived(plan ? [...plan.jobs.values()].filter((v) => v.run === true).length : 0);
 
@@ -201,7 +413,7 @@
     untrack(() => onselectjob?.(job ? job.span : null));
   });
   const job = $derived(pipeline && selected ? (jobOf(pipeline, selected) ?? null) : null);
-  const verdict = $derived(plan && job ? (plan.jobs.get(job.id) ?? null) : null);
+  const verdict = $derived(source === "sim" && plan && job ? (plan.jobs.get(job.id) ?? null) : null);
 
   function toggle(id: string) {
     const next = new Set(open);
@@ -228,9 +440,18 @@
     { state: "unknown", icon: "help", tone: "text-warn", key: "pipeline.legend.unknown" },
     { state: "skip", icon: "circleOff", tone: "text-muted", key: "pipeline.legend.skip" },
   ];
+  /** What the states of a real run look like on the schema. */
+  const RUN_LEGEND = [
+    { icon: "circleCheck", tone: "text-ok", key: "pipeline.run.legend.ok" },
+    { icon: "circleX", tone: "text-bad", key: "pipeline.run.legend.fail" },
+    { icon: "loader", tone: "text-accent", key: "pipeline.run.legend.run" },
+    { icon: "circleDashed", tone: "text-muted", key: "pipeline.run.legend.wait" },
+    { icon: "play", tone: "text-warn", key: "pipeline.run.legend.gate" },
+    { icon: "circleOff", tone: "text-muted", key: "pipeline.run.legend.skip" },
+  ] as const;
 </script>
 
-<div class="flex h-full min-h-0 flex-col @container" data-testid="pipeline-view">
+<div class="flex h-full min-h-0 flex-col @container" data-testid="pipeline-view" bind:this={host}>
   {#if !pipeline}
     <div class="flex flex-1 items-center justify-center p-4 text-xs text-muted">
       {failed ?? t("pipeline.loading")}
@@ -238,6 +459,83 @@
   {:else}
     <!-- The event bar: what happens, on which branch; the columns; playback. -->
     <div class="flex shrink-0 flex-wrap items-center gap-1.5 border-b border-edge bg-panel-alt px-2 py-1 text-meta">
+      {#if sessionId}
+        <!-- What the schema shows: what an event would do, or what a real run did (ADR 0069). -->
+        <div class="flex overflow-hidden rounded border border-edge" role="radiogroup" aria-label={t("pipeline.run.source")}>
+          <button
+            type="button"
+            role="radio"
+            aria-checked={source === "sim"}
+            class="px-2 py-0.5 {source === 'sim' ? 'bg-accent/15 text-accent' : 'text-muted hover:bg-edge hover:text-text'}"
+            onclick={() => (source = "sim")}
+          >
+            {t("pipeline.run.sim")}
+          </button>
+          <button
+            type="button"
+            role="radio"
+            aria-checked={source === "run"}
+            class="border-l border-edge px-2 py-0.5 {source === 'run' ? 'bg-accent/15 text-accent' : 'text-muted hover:bg-edge hover:text-text'}"
+            data-testid="pipeline-source-run"
+            onclick={() => void enterRun()}
+          >
+            {t("pipeline.run.run")}
+          </button>
+        </div>
+      {/if}
+      {#if source === "run"}
+        {#if runs?.length}
+          <select
+            class="min-w-0 max-w-[50%] truncate rounded border border-edge bg-panel px-1.5 py-0.5 text-meta text-text"
+            aria-label={t("pipeline.run.pick")}
+            value={runId ?? ""}
+            onchange={(e) => {
+              runId = (e.currentTarget as HTMLSelectElement).value;
+              void loadRun();
+            }}
+          >
+            {#each runs as r (r.id)}
+              <option value={r.id}>{runName(r)} · {r.branch ?? r.sha.slice(0, 7)} · {stateText(r.state)} · {compactAge(r.created, now)}</option>
+            {/each}
+          </select>
+        {/if}
+        <div class="flex overflow-hidden rounded border border-edge" role="radiogroup" aria-label={t("pipeline.run.view")}>
+          {#each [{ v: "order", k: "pipeline.run.order" }, { v: "time", k: "pipeline.run.time" }] as const as m, i (m.v)}
+            <button
+              type="button"
+              role="radio"
+              aria-checked={runView === m.v}
+              class="px-2 py-0.5 {i ? 'border-l border-edge' : ''} {runView === m.v ? 'bg-accent/15 text-accent' : 'text-muted hover:bg-edge hover:text-text'}"
+              onclick={() => (runView = m.v)}
+            >
+              {t(m.k)}
+            </button>
+          {/each}
+        </div>
+        <span class="ml-auto flex items-center gap-1 whitespace-nowrap text-muted" data-testid="pipeline-run-status">
+          {#if theRun}
+            <Icon name={STATE_ICON[theRun.state]} size={12} class="{STATE_TONE[theRun.state]} {theRun.state === 'running' ? 'animate-spin' : ''}" />
+            {stateText(theRun.state)}{#if theRun.started !== null} · {durationText((theRun.finished ?? now) - theRun.started)}{/if}
+          {/if}
+        </span>
+        {#if runView === "time" && tl}
+          <button
+            type="button"
+            class="flex items-center gap-1 rounded bg-edge px-2 py-0.5 text-text hover:bg-accent hover:text-panel-alt"
+            use:tooltip={t("pipeline.run.replayHint")}
+            data-testid="pipeline-replay"
+            onclick={() => replay++}
+          >
+            <Icon name="play" size={12} />{t("pipeline.play")}
+          </button>
+        {/if}
+        {#if theRun?.url}
+          {@const url = theRun.url}
+          <button type="button" class="rounded p-1 text-muted hover:bg-edge hover:text-text" aria-label={t("pipeline.run.web")} use:tooltip={t("pipeline.run.web")} onclick={() => clickLink(url)}>
+            <Icon name="globe" size={13} />
+          </button>
+        {/if}
+      {:else}
       {#if event && event.kind !== "call"}
         <span class="text-muted">{t("pipeline.ref")}</span>
         <input
@@ -312,20 +610,121 @@
       >
         <Icon name="copy" size={13} />
       </button>
+      {/if}
     </div>
 
+    {#if source === "run"}
+      <!-- Where the schema comes from, and what of the run it does not explain. -->
+      <div class="flex shrink-0 flex-wrap items-center gap-x-2 gap-y-0.5 border-b border-edge px-2.5 py-1 text-meta text-muted" data-testid="pipeline-run-note">
+        {#if runsFailure}
+          <span class="text-warn"><Icon name="alert" size={12} /> {repo ? problemTitle(runsFailure, CLI[repo.forge], repo.host) : runsFailure.text}</span>
+        {:else if !runs}
+          <span>{t("pipeline.run.reading")}</span>
+        {:else if !runs.length}
+          <span>{t("pipeline.run.none")}</span>
+        {:else if theRun && fromCommit !== null}
+          <span class="flex items-center gap-1">
+            <Icon name="gitCommit" size={12} />
+            {fromCommit ? t("pipeline.run.atCommit", { sha: theRun.sha.slice(0, 7) }) : t("pipeline.run.currentFile", { sha: theRun.sha.slice(0, 7) })}
+          </span>
+          {#if onSchema && runJobs}
+            <span>· {t("pipeline.run.matched", { n: runJobs.length - onSchema.unmatched.length, total: runJobs.length })}</span>
+            {#if onSchema.unmatched.length}
+              <span class="min-w-0 truncate text-warn" use:tooltip={onSchema.unmatched.map((j) => j.name).join("\n")}>
+                · {t("pipeline.run.unmatched", { names: onSchema.unmatched.map((j) => j.name).join(", ") })}
+              </span>
+            {/if}
+          {/if}
+        {/if}
+      </div>
+    {/if}
+
+    {#if source === "sim" && event?.kind === "manual" && fields && sessionId}
+      <!-- Start it by hand: the form the file describes (ADR 0069). -->
+      <div class="shrink-0 border-b border-edge bg-panel px-2.5 py-2 text-xs" data-testid="pipeline-start-form">
+        <div class="mb-1.5 text-caption uppercase tracking-wider text-muted">
+          {t(pipeline.kind === "github" ? "pipeline.start.titleGithub" : "pipeline.start.titleGitlab", { ref: event.ref })}
+        </div>
+        {#if fields.length}
+          <div class="grid grid-cols-[minmax(0,9rem)_minmax(0,1fr)] items-center gap-x-2.5 gap-y-1.5">
+            {#each fields as f (f.name)}
+              {@const bad = formTried ? problemsOfForm.find((p) => p.name === f.name) : undefined}
+              <label class="truncate text-muted" for={`pf-${f.name}`} use:tooltip={f.description ?? f.name}>{f.name}{f.required ? " *" : ""}</label>
+              <div class="min-w-0">
+                {#if f.kind === "boolean"}
+                  <input
+                    id={`pf-${f.name}`}
+                    type="checkbox"
+                    checked={(values[f.name] ?? f.value) === "true"}
+                    onchange={(e) => (values = { ...values, [f.name]: (e.currentTarget as HTMLInputElement).checked ? "true" : "false" })}
+                  />
+                {:else if f.kind === "choice" && f.options.length}
+                  <select
+                    id={`pf-${f.name}`}
+                    class="w-full rounded border border-edge bg-panel-alt px-1.5 py-0.5 text-meta text-text"
+                    value={values[f.name] ?? f.value}
+                    onchange={(e) => (values = { ...values, [f.name]: (e.currentTarget as HTMLSelectElement).value })}
+                  >
+                    {#each f.options as o (o)}<option value={o}>{o}</option>{/each}
+                  </select>
+                {:else}
+                  <input
+                    id={`pf-${f.name}`}
+                    class="w-full rounded border bg-panel-alt px-1.5 py-0.5 text-meta text-text {bad ? 'border-bad' : 'border-edge'}"
+                    inputmode={f.kind === "number" ? "decimal" : undefined}
+                    placeholder={f.description ?? ""}
+                    value={values[f.name] ?? f.value}
+                    oninput={(e) => (values = { ...values, [f.name]: (e.currentTarget as HTMLInputElement).value })}
+                  />
+                {/if}
+                {#if bad}<p class="mt-0.5 text-meta text-bad">{t(`pipeline.start.bad.${bad.kind}` as const)}</p>{/if}
+              </div>
+            {/each}
+          </div>
+        {:else}
+          <p class="text-muted">{t("pipeline.start.noInputs")}</p>
+        {/if}
+        <div class="mt-2 flex flex-wrap items-center gap-1.5">
+          <button type="button" class="flex items-center gap-1 rounded border border-edge px-2 py-0.5 text-meta text-text hover:border-accent" onclick={() => play()}>
+            <Icon name="play" size={12} />{t("pipeline.start.playHere")}
+          </button>
+          <button type="button" class="flex items-center gap-1 rounded border border-edge px-2 py-0.5 text-meta text-text hover:border-accent" data-testid="pipeline-start" onclick={() => void askStart()}>
+            <Icon name="rocket" size={12} />{t(pipeline.kind === "github" ? "pipeline.start.onGithub" : "pipeline.start.onGitlab")}
+          </button>
+          {#if prodFields(fields, values).length}
+            <span class="text-meta text-bad">{t("pipeline.start.prodNote", { names: prodFields(fields, values).join(", ") })}</span>
+          {/if}
+        </div>
+      </div>
+    {/if}
+
     <div class="min-h-0 flex-1 overflow-y-auto">
-      {#if pipeline.jobs.length}
+      {#if source === "run" && runView === "time" && tl}
+        <div class="bg-panel-alt/40">
+          <PipelineTimeline
+            {tl}
+            {now}
+            {replay}
+            selected={selected ? (tl.rows.find((r) => r.key === `call:${selected}` || (r.job && onSchema?.jobsOf[selected ?? ""]?.includes(r.job)))?.key ?? null) : null}
+            onpick={(row) => {
+              const id = row.key.startsWith("call:") ? row.key.slice(5) : Object.entries(onSchema?.jobsOf ?? {}).find(([, list]) => row.job && list.includes(row.job))?.[0];
+              if (id) selected = id;
+            }}
+          />
+        </div>
+      {:else if shownPipeline && shownPipeline.jobs.length}
         <div class="bg-panel-alt/40">
           <PipelineGraph
-            {pipeline}
+            pipeline={shownPipeline}
             {mode}
             {open}
             {states}
-            {plan}
+            plan={source === "sim" ? plan : null}
             {selected}
+            live={source === "run"}
+            notes={source === "run" ? notes : {}}
             stepMs={stepMs()}
-            events={presets.map((e, i) => ({ id: String(i), label: pipelineEventText(pipeline!.kind, e) }))}
+            events={source === "sim" ? presets.map((e, i) => ({ id: String(i), label: pipelineEventText(pipeline!.kind, e) })) : []}
             event={String(Math.min(eventAt, Math.max(0, presets.length - 1)))}
             onevent={(id) => pickEvent(Number(id))}
             onselect={(id) => (selected = selected === id ? null : id)}
@@ -334,9 +733,15 @@
           />
         </div>
         <div class="flex flex-wrap gap-x-3 gap-y-0.5 border-y border-edge px-2.5 py-1 text-meta text-muted">
-          {#each LEGEND as l (l.key)}
-            <span class="flex items-center gap-1"><Icon name={l.icon} size={11} class={l.tone} />{t(l.key)}</span>
-          {/each}
+          {#if source === "run"}
+            {#each RUN_LEGEND as l (l.key)}
+              <span class="flex items-center gap-1"><Icon name={l.icon} size={11} class={l.tone} />{t(l.key)}</span>
+            {/each}
+          {:else}
+            {#each LEGEND as l (l.key)}
+              <span class="flex items-center gap-1"><Icon name={l.icon} size={11} class={l.tone} />{t(l.key)}</span>
+            {/each}
+          {/if}
         </div>
       {:else}
         <div class="p-4 text-xs text-muted">{t("pipeline.empty")}</div>
@@ -345,7 +750,7 @@
       <div class="grid grid-cols-1 bg-panel text-xs {compact ? '' : '@wide:grid-cols-2'}">
         <!-- What the event does, and what the file gets wrong. -->
         <div class="min-w-0 space-y-1 p-2.5">
-          {#if event && plan}
+          {#if source === "sim" && event && plan}
             <div class="text-caption uppercase tracking-wider text-muted">{t("pipeline.whatHappens", { event: pipelineEventText(pipeline.kind, event) })}</div>
             {#if plan.invalid}
               <div class="rounded bg-bad/10 px-2 py-1 text-bad"><Icon name="octagon" size={12} /> {t("pipeline.invalid")}</div>
@@ -395,6 +800,45 @@
                   {#if p.file && p.line}<span class="text-muted"> · {fileName(p.file)}:{p.line}</span>{/if}
                 </span>
               </button>
+            {/each}
+          {/if}
+          {#if findings.length}
+            <!-- What lets someone else's code run with the workflow's token (ADR 0069). -->
+            <div class="pt-1.5 text-caption uppercase tracking-wider text-muted" data-testid="pipeline-security">{t("pipeline.audit.title")}</div>
+            {#each findings as f (f.code)}
+              {@const tone = f.level === "error" ? "text-bad" : f.level === "warn" ? "text-warn" : "text-muted"}
+              <div class="rounded px-1 py-0.5 {openFinding === f.code ? 'bg-edge/50' : 'hover:bg-edge'}" data-testid="pipeline-finding">
+                <button type="button" class="flex w-full items-start gap-1.5 text-left" aria-expanded={openFinding === f.code} onclick={() => (openFinding = openFinding === f.code ? null : f.code)}>
+                  <Icon name={f.level === "error" ? "octagon" : f.level === "warn" ? "alert" : "info"} size={12} class="mt-0.5 {tone}" />
+                  <span class="min-w-0 break-words {f.level === 'info' ? 'text-text/80' : tone}">
+                    {t(`pipeline.audit.${f.code}` as const, { detail: f.detail })}
+                    <span class="text-muted"> · {t("pipeline.audit.lines", { lines: f.lines.join(", ") })}</span>
+                  </span>
+                </button>
+                {#if openFinding === f.code}
+                  <p class="ml-5 mt-0.5 text-muted">{t(`pipeline.audit.${f.code}Fix` as const)}</p>
+                  <div class="ml-5 mt-1 flex flex-wrap gap-1.5">
+                    {#if onjump && f.lines[0]}
+                      {@const line = f.lines[0]}
+                      <button type="button" class="flex items-center gap-1 text-meta text-accent hover:text-accent-hover" onclick={() => onjump?.(path, line)}>
+                        <Icon name="arrowRight" size={11} />{t("pipeline.openInCode")}
+                      </button>
+                    {/if}
+                    {#if f.pins.length && onedit && sessionId}
+                      <button
+                        type="button"
+                        class="flex items-center gap-1 rounded border border-edge px-1.5 py-0.5 text-meta text-text hover:border-accent disabled:opacity-40"
+                        disabled={pinning}
+                        use:tooltip={t("pipeline.audit.pinHint")}
+                        data-testid="pipeline-pin"
+                        onclick={() => void pinAll(f)}
+                      >
+                        <Icon name={pinning ? "loader" : "pin"} size={11} class={pinning ? "animate-spin" : ""} />{t("pipeline.audit.pin")}
+                      </button>
+                    {/if}
+                  </div>
+                {/if}
+              </div>
             {/each}
           {/if}
           <button
@@ -476,6 +920,23 @@
                 <div class="text-muted"><Icon name="clock" size={12} /> {t("pipeline.delayed", { time: verdict.delayed })}</div>
               {/if}
             {/if}
+            {#if source === "run" && onSchema}
+              {@const ran = onSchema.jobsOf[job.id] ?? []}
+              <div class="pt-1 text-caption uppercase tracking-wider text-muted">{t("pipeline.run.inRun")}</div>
+              {#if !ran.length}
+                <p class="text-muted">{t("pipeline.run.notInRun")}</p>
+              {/if}
+              {#each ran as j (j.id)}
+                <div class="flex items-center gap-1.5">
+                  <Icon name={STATE_ICON[j.state]} size={12} class="{STATE_TONE[j.state]} {j.state === 'running' ? 'animate-spin' : ''}" />
+                  <span class="min-w-0 flex-1 truncate" use:tooltip={j.name}>{j.name}</span>
+                  {#if j.started !== null}<span class="tabular-nums text-meta text-muted">{clock((j.finished ?? now) - j.started)}</span>{/if}
+                </div>
+                {#each j.steps.filter((st) => st.state === "failed") as st (st.number)}
+                  <div class="ml-4 flex items-center gap-1 text-meta text-bad"><Icon name="circleX" size={11} />{st.name}</div>
+                {/each}
+              {/each}
+            {/if}
             {#if job.steps.length}
               <div class="pt-1 text-caption uppercase tracking-wider text-muted">{t("pipeline.steps")}</div>
               <pre class="max-h-40 overflow-auto whitespace-pre-wrap break-words rounded border border-edge bg-panel-alt px-1.5 py-1 font-mono text-meta text-muted">{job.steps.join("\n")}</pre>
@@ -496,3 +957,22 @@
     </div>
   {/if}
 </div>
+
+<ConfirmDialog
+  open={startAsk !== null}
+  title={startAsk ? t("pipeline.start.confirm", { file: baseName(path), ref: startAsk.ref }) : ""}
+  confirmLabel={t("pipeline.start.go")}
+  danger={(startAsk?.prod.length ?? 0) > 0}
+  onconfirm={() => void confirmStart()}
+  oncancel={() => (startAsk = null)}
+>
+  {#if startAsk}
+    <span class="block">{t("pipeline.start.confirmBody", { cli: CLI[startAsk.repo.forge], host: startAsk.repo.host })}</span>
+    {#if Object.keys(startAsk.values).length}
+      <code class="mt-1 block break-all rounded bg-panel px-1 py-0.5 text-text/80">{Object.entries(startAsk.values).map(([k, v]) => `${k}=${v}`).join("  ")}</code>
+    {/if}
+    {#if startAsk.prod.length}
+      <span class="mt-1 block text-meta text-danger">{t("pipeline.start.prod", { names: startAsk.prod.join(", ") })}</span>
+    {/if}
+  {/if}
+</ConfirmDialog>

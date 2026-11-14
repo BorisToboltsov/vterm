@@ -15,8 +15,8 @@ export type DockSide = "left" | "right" | "bottom";
 export const DOCK_SIDES: readonly DockSide[] = ["left", "right", "bottom"];
 
 /** Every tool panel. `servers` is the saved-server tree; the rest need a session. */
-export type PanelId = "servers" | "files" | "git" | "docker" | "k8s" | "ai";
-export const PANEL_IDS: readonly PanelId[] = ["servers", "files", "git", "docker", "k8s", "ai"];
+export type PanelId = "servers" | "files" | "git" | "docker" | "k8s" | "ci" | "ai";
+export const PANEL_IDS: readonly PanelId[] = ["servers", "files", "git", "docker", "k8s", "ci", "ai"];
 
 export const isPanelId = (v: unknown): v is PanelId =>
   typeof v === "string" && (PANEL_IDS as readonly string[]).includes(v);
@@ -72,7 +72,7 @@ export const BOTTOM_MAX_SHARE = 0.6;
 const DEFAULT_PANELS: Record<DockSide, PanelId[]> = {
   left: ["servers"],
   right: ["files", "git", "ai"],
-  bottom: ["docker", "k8s"],
+  bottom: ["docker", "k8s", "ci"],
 };
 
 const DEFAULT_COLLAPSED: Record<DockSide, boolean> = {

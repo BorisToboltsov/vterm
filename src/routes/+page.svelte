@@ -173,6 +173,7 @@
   import { TERMINAL_VIEW, focusedFile, terminalFocused, terminalShown } from "#lib/layout/sessionviews.ts";
   import { beginViewDrag, consumeViewDragClick, viewDrag } from "#lib/stores/viewdrag.svelte.ts";
   import { removeChat, getChat, askAbout } from "#lib/stores/aichat.svelte.ts";
+  import { forgetCi } from "#lib/stores/ci.svelte.ts";
   import { removeDockState, setDockCwd } from "#lib/stores/dockstate.svelte.ts";
   import { baseName, pathHints } from "#lib/files/fspath.ts";
   import { fileLinksAllowed } from "#lib/terminal/termfiles.ts";
@@ -958,7 +959,7 @@
    * fetched its state and logs, so the question carries them; consent still runs
    * in the chat, exactly as for a hand-attached context.
    */
-  function askAiAboutResource(id: string, context: string, kind: "container" | "pod") {
+  function askAiAboutResource(id: string, context: string, kind: "container" | "pod" | "ci") {
     askAbout(id, { source: kind, context });
     revealPanel("ai");
   }
@@ -971,7 +972,15 @@
    */
   function runFromMonitoring(argv: string[]) {
     const id = tabsState.activeId;
-    if (!id) return;
+    if (id) typeInTerminal(id, argv);
+  }
+
+  /**
+   * Type a command into a tab's terminal and run it there, quoted for the shell
+   * that tab runs — the user sees it and answers it (the CI panel's sign-in,
+   * ADR 0069; the monitoring page's read-only commands).
+   */
+  function typeInTerminal(id: string, argv: string[]) {
     const shell = findTab(id)?.kind === "local" ? (localShellKind[id] ?? "posix") : "posix";
     const cmd = renderArgv(argv, shell);
     if (!cmd) {
@@ -2065,6 +2074,8 @@
     clearAuthPrompt(sessionId);
     // Its metrics feed: the loop stops, the history goes (stores/metricsfeed).
     forgetMetrics(sessionId);
+    // Its watched CI runs and the list its Git badges read (stores/ci, ADR 0069).
+    forgetCi(sessionId);
     closeTabStore(sessionId);
   }
 
@@ -2710,6 +2721,10 @@
         onAskAi={aiOn
           ? (context, kind) => askAiAboutResource(tab.sessionId, context, kind)
           : undefined}
+        onOpenAt={(path, line) => editors.openAt(tab.sessionId, path, line)}
+        onOpenRunSchema={(path, repo, run) => editors.openRunSchema(tab.sessionId, path, repo, run.id)}
+        onOpenLog={(name, text) => editors.openLog(tab.sessionId, name, text)}
+        onTypeInTerminal={(argv) => typeInTerminal(tab.sessionId, argv)}
       />
     {/if}
   {/if}

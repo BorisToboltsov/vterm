@@ -22,7 +22,7 @@ beforeEach(() => {
 describe("PanelsSettings", () => {
   it("lists every panel that can be hidden — and not the server tree", () => {
     render(PanelsSettings);
-    for (const id of ["files", "git", "docker", "k8s", "ai"]) expect(box(id).checked).toBe(true);
+    for (const id of ["files", "git", "docker", "k8s", "ci", "ai"]) expect(box(id).checked).toBe(true);
     expect(screen.queryByTestId("panel-visible-servers")).toBeNull();
     // Named as on their tabs, so the list reads like the docks do.
     expect(screen.getByLabelText("SFTP")).toBe(box("files"));

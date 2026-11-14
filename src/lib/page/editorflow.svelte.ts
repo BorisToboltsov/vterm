@@ -26,6 +26,8 @@ import {
 import { couldBeNginxInclude, editorLangOrPlain, editorLangWithDialect, editorLangWithIncludes } from "../editor/editorlang";
 import { baseName, parentOf } from "../files/fspath";
 import { pipelineKindOf } from "../pipeline/pipefiles";
+import type { Repo } from "../ci/forge";
+import { askRunOnSchema } from "../stores/ci.svelte";
 import { t } from "../i18n";
 import { settings } from "../settings/settings.svelte";
 import { isRecording } from "../stores/recordings.svelte";
@@ -34,6 +36,7 @@ import { notifyError, notifyInfo, notifySuccess } from "../stores/toasts.svelte"
 import {
   addEditor,
   addPipelinesView,
+  addScratchEditor,
   closeEditor,
   fillEditor,
   findEditorByPath,
@@ -303,6 +306,25 @@ export function createEditorFlow(deps: EditorDeps) {
     openFile,
     openLocal,
     openPipelines,
+
+    /** A file of the session's repository, at a line (the CI panel's "go to the line"). */
+    openAt(sid: string, absPath: string, line: number) {
+      if (deps.findTab(sid)?.kind === "ssh") void openFile(sid, absPath, baseName(absPath), { gotoLine: line });
+      else void openLocal(sid, absPath, { gotoLine: line });
+    },
+
+    /** A workflow file on its schema, showing a run of it (ADR 0069). */
+    openRunSchema(sid: string, absPath: string, repo: Repo, runId: string) {
+      askRunOnSchema(sid, absPath, repo, runId);
+      if (deps.findTab(sid)?.kind === "ssh") void openFile(sid, absPath, baseName(absPath), { view: "schema" });
+      else void openLocal(sid, absPath, { view: "schema" });
+    },
+
+    /** A CI job's whole log, as a document to read — never saved, never reopened. */
+    openLog(sid: string, name: string, text: string) {
+      const source = deps.findTab(sid)?.kind === "ssh" ? "sftp" : "local";
+      addScratchEditor(sid, name, { kind: "plain", label: "Log" }, text, source, { readOnly: true });
+    },
 
     /** Open a git-changed file as an editable inline diff (from the git panel). */
     openGitDiff(sid: string, absPath: string, gitBase: string) {

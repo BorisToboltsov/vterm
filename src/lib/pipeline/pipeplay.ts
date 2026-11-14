@@ -8,7 +8,8 @@ import type { Pipeline } from "./pipeline";
 import { runDeps, type Plan } from "./pipesim";
 
 /** A job's place in the playback. */
-export type RunState = "idle" | "wait" | "run" | "ok" | "warn" | "gate" | "skip" | "unknown" | "error";
+/** `fail` — a job of a real run that failed (ADR 0069); `error` — the file is wrong about it. */
+export type RunState = "idle" | "wait" | "run" | "ok" | "warn" | "gate" | "skip" | "unknown" | "error" | "fail";
 
 export interface Playback {
   states: Record<string, RunState>;

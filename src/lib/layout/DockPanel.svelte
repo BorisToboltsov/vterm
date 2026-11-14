@@ -15,6 +15,9 @@
   import GitPanel from "../git/GitPanel.svelte";
   import DockerPanel from "../docker/DockerPanel.svelte";
   import K8sPanel from "../k8s/K8sPanel.svelte";
+  import CiPanel from "../ci/CiPanel.svelte";
+  import type { Repo } from "../ci/forge";
+  import type { CiRun } from "../ci/ciparse";
   import type { RawContext } from "../ai/aicontext";
   import type { PromptVars } from "../ai/aicore";
   import type { AiExecMode } from "../ai/ai";
@@ -42,6 +45,10 @@
     onSftpNavigate,
     onOpenContainerShell,
     onAskAi,
+    onOpenAt,
+    onOpenRunSchema,
+    onOpenLog,
+    onTypeInTerminal,
     getAiContext,
     aiSelectionLines = 0,
     aiRecording = false,
@@ -83,8 +90,16 @@
     onSftpNavigate?: (path: string) => void;
     /** Docker panel → open a real terminal tab running an `exec` shell command. */
     onOpenContainerShell?: (argv: string[], target?: AttachTarget) => void;
-    /** Hand a container/pod's state + logs to the AI assistant (Phase 41). */
-    onAskAi?: (context: string, kind: "container" | "pod") => void;
+    /** Hand a container/pod's state + logs, or a failed CI job, to the AI assistant (Phase 41, ADR 0069). */
+    onAskAi?: (context: string, kind: "container" | "pod" | "ci") => void;
+    /** CI: a file of the repository at a line. */
+    onOpenAt?: (path: string, line: number) => void;
+    /** CI: a workflow file on its schema, showing a run. */
+    onOpenRunSchema?: (path: string, repo: Repo, run: CiRun) => void;
+    /** CI: a job's whole log as a document to read. */
+    onOpenLog?: (name: string, text: string) => void;
+    /** CI: the CLI's sign-in, typed into this tab's terminal. */
+    onTypeInTerminal?: (argv: string[]) => void;
     /** Reads live session context for the AI tab (selection/buffer/recording/metadata). */
     getAiContext?: () => Promise<RawContext> | RawContext;
     /** Lines selected in this session's terminal (0 = none) — for the AI caption. */
@@ -163,6 +178,20 @@
     {sessionReady}
     onOpenShell={onOpenContainerShell}
     onAsk={onAskAi ? (ctx) => onAskAi(ctx, "pod") : undefined}
+  />
+{:else if id === "ci"}
+  <CiPanel
+    {sessionId}
+    {visible}
+    {sessionReady}
+    prod={aiProd}
+    {terminalCwd}
+    {followTerminal}
+    onAsk={onAskAi ? (ctx) => onAskAi(ctx, "ci") : undefined}
+    onOpenFile={onOpenAt}
+    onOpenSchema={onOpenRunSchema}
+    {onOpenLog}
+    {onTypeInTerminal}
   />
 {:else if id === "ai"}
   <AiChat
