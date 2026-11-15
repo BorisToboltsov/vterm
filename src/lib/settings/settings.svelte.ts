@@ -299,6 +299,9 @@ export interface Settings {
   // The CI panel (ADR 0069): the forge of a host whose name does not say it
   // (a GitLab on a LAN address), by host, as the user said it once.
   ciForges: Record<string, Forge>;
+  // The CI panel's tab the user picked last (ADR 0070): the repository's
+  // pipelines or their runs. Where the runs cannot be read, the pipelines show.
+  ciTab: "pipelines" | "runs";
   // Docker registry credentials (Phase 36) — non-secret half (url + username);
   // the password lives only in the OS keychain, keyed by url. See docker.ts.
   dockerRegistries: DockerRegistry[];
@@ -476,6 +479,7 @@ const DEFAULTS: Settings = {
   gitHighlightCurrent: true,
   gitLogScope: "head",
   ciForges: {},
+  ciTab: "pipelines",
   hiddenPanels: [],
   topbar: [...DEFAULT_TOPBAR],
   topbarKnown: [...BUILTIN_ACTIONS],
@@ -617,6 +621,7 @@ function load(): Settings {
       gitHighlightCurrent: raw.gitHighlightCurrent !== false,
       gitLogScope: raw.gitLogScope === "all" ? "all" : "head",
       ciForges: sanitizeForges(raw.ciForges),
+      ciTab: raw.ciTab === "runs" ? "runs" : "pipelines",
       hiddenPanels: sanitizeHiddenPanels(raw.hiddenPanels),
       topbar: sanitizeTopbar(raw.topbar, knownBuiltins(raw.topbarKnown)),
       topbarKnown: [...BUILTIN_ACTIONS],

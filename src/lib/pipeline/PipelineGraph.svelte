@@ -16,7 +16,7 @@
   import type { IconName } from "../ui/icons";
   import { motionMs, reducedMotion } from "../ui/motion";
   import { downstreamOf, upstreamOf, type Pipeline } from "./pipeline";
-  import { layoutPipeline, METRICS, subLines, type GraphMode, type LayoutMetrics } from "./pipelayout";
+  import { compactMetrics, layoutPipeline, METRICS, subLines, type GraphMode, type LayoutMetrics } from "./pipelayout";
   import type { RunState } from "./pipeplay";
   import type { Plan } from "./pipesim";
 
@@ -32,6 +32,7 @@
     stepMs,
     events = [],
     event = null,
+    compact = false,
     onselect,
     ontoggle,
     ongate,
@@ -54,6 +55,8 @@
     events?: { id: string; label: string }[];
     /** The event played. */
     event?: string | null;
+    /** A preview in a panel (ADR 0070): the same graph with smaller cards. */
+    compact?: boolean;
     onevent?: (id: string) => void;
     onselect: (id: string) => void;
     ontoggle: (id: string) => void;
@@ -102,10 +105,11 @@
   let width = $state(0);
   const metrics = $derived.by((): LayoutMetrics => {
     const k = uiPx(1);
-    return Object.fromEntries(Object.entries(METRICS).map(([key, v]) => [key, v * k])) as unknown as LayoutMetrics;
+    const base = compact ? compactMetrics(pipeline) : METRICS;
+    return Object.fromEntries(Object.entries(base).map(([key, v]) => [key, v * k])) as unknown as LayoutMetrics;
   });
   const layout = $derived(
-    layoutPipeline(pipeline, { mode, width: Math.max(1, width), open, metrics, events: events.map((e) => e.id) }),
+    layoutPipeline(pipeline, { mode, width: Math.max(1, width), open, metrics, events: events.map((e) => e.id), foldCalls: compact }),
   );
   const up = $derived(selected ? upstreamOf(pipeline, selected) : new Set<string>());
   const down = $derived(selected ? downstreamOf(pipeline, selected) : new Set<string>());
@@ -206,7 +210,7 @@
       {@const box = layout.nodes.get(job.id)!}
       {@const s = states[job.id] ?? "idle"}
       {@const v = plan?.jobs.get(job.id)}
-      {@const lines = subLines(job, open.has(job.id))}
+      {@const lines = subLines(job, open.has(job.id), compact)}
       <div
         class="absolute left-0 top-0 overflow-hidden rounded-md border {FRAME[s]} {selected === job.id
           ? 'outline outline-1 outline-offset-1 outline-accent'
@@ -233,7 +237,7 @@
             {/if}
           </button>
           <span class="flex shrink-0 items-center gap-1 text-meta text-muted">
-            {#if job.matrix?.items && !open.has(job.id) && job.matrix.items.length <= 8 && box.w >= metrics.minColumn * 1.3}
+            {#if !compact && job.matrix?.items && !open.has(job.id) && job.matrix.items.length <= 8 && box.w >= metrics.minColumn * 1.3}
               <span class="flex gap-0.5" aria-hidden="true">
                 {#each job.matrix.items as _, i (i)}
                   <span
@@ -262,7 +266,7 @@
               <span use:tooltip={t("pipeline.legend.warn")}><Icon name="alert" size={12} /></span>
             {/if}
           </span>
-          {#if job.matrix?.items}
+          {#if job.matrix?.items || (compact && job.call?.pipeline)}
             <button
               type="button"
               class="shrink-0 rounded p-0.5 text-muted hover:text-accent"

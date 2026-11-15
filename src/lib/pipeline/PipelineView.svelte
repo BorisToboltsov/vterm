@@ -34,7 +34,7 @@
   import { auditWorkflow, pinText, type Finding } from "../ci/ciaudit";
   import { dispatchFields, formProblems, formValues, pipelineFields, prodFields, type FormField } from "../ci/cidispatch";
   import { isActive, type CiFailure, type CiJob, type CiRun } from "../ci/ciparse";
-  import { clock, runOnSchema, timeline } from "../ci/cirun";
+  import { clock, jobNotes, runOnSchema, timeline } from "../ci/cirun";
   import { durationText, problemTitle, runName, STATE_ICON, STATE_TONE, stateText } from "../ci/citext";
   import { CLI, type Repo } from "../ci/forge";
   import { fileAtCommit, pinCommit, readJobs, readRuns, repoOfFile, schemaAskOf, startRun } from "../stores/ci.svelte";
@@ -303,31 +303,55 @@
     return () => clearInterval(id);
   });
 
-  // The CI panel's "On the schema": this file, that run.
+  // The CI panel's asks: "On the schema" — this file, that run (ADR 0069);
+  // "Simulation" — the event that starts it, played; "Start" — the form to
+  // start it by hand (ADR 0070). The last two wait for the pipeline to be read.
   let askedSeq = 0;
+  let pending = $state<"play" | "start" | null>(null);
   $effect(() => {
     const asked = schemaAskOf(sessionId, path);
     if (!asked || asked.seq === askedSeq) return;
     askedSeq = asked.seq;
     untrack(() => {
-      repo = asked.repo;
-      void enterRun(asked.runId);
+      if (asked.kind === "run") {
+        pending = null;
+        repo = asked.repo;
+        void enterRun(asked.runId);
+      } else pending = asked.kind;
     });
   });
+  $effect(() => {
+    const want = pending;
+    const list = presets;
+    if (!want || !pipeline || !list.length) return;
+    untrack(() => {
+      pending = null;
+      source = "sim";
+      if (want === "play") {
+        pickEvent(Math.max(0, list.findIndex((e) => e.kind !== "call")));
+        return;
+      }
+      const manual = list.findIndex((e) => e.kind === "manual");
+      if (manual < 0) return;
+      stop();
+      eventAt = manual;
+      refText = null;
+      after(showStartForm, 60);
+    });
+  });
+  /** The start form in view, its first field in focus. */
+  function showStartForm() {
+    const form = host?.querySelector<HTMLElement>('[data-testid="pipeline-start-form"]');
+    if (!form) return;
+    form.scrollIntoView({ block: "nearest" });
+    form.querySelector<HTMLElement>("input, select")?.focus();
+  }
 
   const shownPipeline = $derived(source === "run" ? (runPipeline ?? pipeline) : pipeline);
   const onSchema = $derived(source === "run" && shownPipeline && runJobs ? runOnSchema(shownPipeline, runJobs) : null);
   const tl = $derived(source === "run" && theRun && runJobs ? timeline(theRun, runJobs, shownPipeline, now) : null);
   /** A job's real length on its card: the longest of its copies and called jobs. */
-  const notes = $derived.by((): Record<string, string> => {
-    if (!onSchema) return {};
-    const out: Record<string, string> = {};
-    for (const [id, list] of Object.entries(onSchema.jobsOf)) {
-      const spans = list.filter((j) => j.started !== null).map((j) => (j.finished ?? now) - (j.started ?? 0));
-      if (spans.length) out[id] = clock(Math.max(...spans));
-    }
-    return out;
-  });
+  const notes = $derived(onSchema ? jobNotes(onSchema, now) : {});
 
   // ── What in the file lets someone else's code run (GitHub) ────────────────
   const findings = $derived<Finding[]>(doc && pipeline?.kind === "github" ? auditWorkflow(doc, text) : []);

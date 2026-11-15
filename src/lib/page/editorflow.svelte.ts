@@ -10,6 +10,7 @@
 
 import {
   annotateRecording,
+  gitRun,
   isBackupFailedError,
   isFileChangedError,
   isPermissionError,
@@ -27,7 +28,8 @@ import { couldBeNginxInclude, editorLangOrPlain, editorLangWithDialect, editorLa
 import { baseName, parentOf } from "../files/fspath";
 import { pipelineKindOf } from "../pipeline/pipefiles";
 import type { Repo } from "../ci/forge";
-import { askRunOnSchema } from "../stores/ci.svelte";
+import { repoRootArgs } from "../git/git";
+import { askOnSchema, askRunOnSchema } from "../stores/ci.svelte";
 import { t } from "../i18n";
 import { settings } from "../settings/settings.svelte";
 import { isRecording } from "../stores/recordings.svelte";
@@ -318,6 +320,29 @@ export function createEditorFlow(deps: EditorDeps) {
       askRunOnSchema(sid, absPath, repo, runId);
       if (deps.findTab(sid)?.kind === "ssh") void openFile(sid, absPath, baseName(absPath), { view: "schema" });
       else void openLocal(sid, absPath, { view: "schema" });
+    },
+
+    /**
+     * A pipeline file on its schema from the CI panel (ADR 0070): as it is, with
+     * the event that starts it played, or on the form to start it by hand.
+     */
+    openPipelineSchema(sid: string, absPath: string, ask: "play" | "start" | null = null) {
+      if (ask) askOnSchema(sid, absPath, { kind: ask });
+      if (deps.findTab(sid)?.kind === "ssh") void openFile(sid, absPath, baseName(absPath), { view: "schema" });
+      else void openLocal(sid, absPath, { view: "schema" });
+    },
+
+    /**
+     * ⌘K "Pipelines of the repository" (ADR 0070): the map of the repository the
+     * terminal stands in. Not in one — said, nothing opened.
+     */
+    async openRepoPipelines(sid: string, cwd: string | null) {
+      const top = cwd ? await gitRun(sid, cwd, repoRootArgs()) : null;
+      if (!top || top.exitCode !== 0) {
+        notifyInfo(t("ci.pipes.noRepo"), { source: "editor", sessionId: sid });
+        return;
+      }
+      openPipelines(sid, deps.findTab(sid)?.kind === "ssh" ? "sftp" : "local", [{ path: top.stdout.trim(), isDir: true }]);
     },
 
     /** A CI job's whole log, as a document to read — never saved, never reopened. */

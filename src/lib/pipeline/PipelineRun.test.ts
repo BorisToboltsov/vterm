@@ -37,6 +37,7 @@ vi.mock("../api", async (importOriginal) => ({
 
 import PipelineView from "./PipelineView.svelte";
 import { settings } from "../settings/settings.svelte";
+import { askOnSchema } from "../stores/ci.svelte";
 
 /** The repository's files, as the connection would read them. */
 const reader: PipeReader = {
@@ -141,5 +142,34 @@ jobs:
       "gh", "api", "--hostname", "github.com", "-X", "POST", "repos/BorisToboltsov/vterm/actions/workflows/deploy.yml/dispatches",
       "-f", "ref=main", "-f", "inputs[environment]=production", "-f", "inputs[version]=1.35.0",
     ]));
+  });
+});
+
+describe("asked by the CI panel (ADR 0070)", () => {
+  const SHIP = `on:
+  push: { branches: [main] }
+  workflow_dispatch:
+    inputs:
+      version: { required: true }
+jobs:
+  build: { steps: [{ run: make }] }
+  ship: { needs: build, steps: [{ run: ./ship.sh }] }
+`;
+  const path = "/repo/.github/workflows/ship.yml";
+
+  it("«Start» opens on the form to start it by hand, its first field in focus", async () => {
+    render(PipelineView, { props: { path, text: SHIP, reader, sessionId: "s2" } });
+    await screen.findAllByTestId("pipeline-event");
+    // A push is what the schema shows first: no form.
+    expect(screen.queryByTestId("pipeline-start-form")).toBeNull();
+    askOnSchema("s2", path, { kind: "start" });
+    const form = await screen.findByTestId("pipeline-start-form");
+    await waitFor(() => expect(document.activeElement).toBe(within(form).getByLabelText("version *")));
+  });
+
+  it("«Simulation» plays the event that starts it", async () => {
+    render(PipelineView, { props: { path, text: SHIP, reader, sessionId: "s3" } });
+    askOnSchema("s3", path, { kind: "play" });
+    await waitFor(() => expect(screen.getByTestId("pipeline-status")).toHaveTextContent(/wave|done/i), { timeout: 3000 });
   });
 });

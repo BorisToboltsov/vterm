@@ -174,10 +174,10 @@
   import { beginViewDrag, consumeViewDragClick, viewDrag } from "#lib/stores/viewdrag.svelte.ts";
   import { removeChat, getChat, askAbout } from "#lib/stores/aichat.svelte.ts";
   import { forgetCi } from "#lib/stores/ci.svelte.ts";
-  import { removeDockState, setDockCwd } from "#lib/stores/dockstate.svelte.ts";
+  import { dockCwd, removeDockState, setDockCwd } from "#lib/stores/dockstate.svelte.ts";
   import { baseName, pathHints } from "#lib/files/fspath.ts";
   import { fileLinksAllowed } from "#lib/terminal/termfiles.ts";
-  import { followUpdates, pollsLocalCwd } from "#lib/pathsync/followcwd.ts";
+  import { followUpdates, gitCwd, pollsLocalCwd } from "#lib/pathsync/followcwd.ts";
   import { aiReady } from "#lib/ai/ai.ts";
   import SettingsPanel from "#lib/settings/SettingsPanel.svelte";
   import UtilitiesPanel from "#lib/utilities/UtilitiesPanel.svelte";
@@ -1337,6 +1337,16 @@
     // Panes of the centre — the twins of dragging a tab to a pane's edge and of
     // the tab's right-click menu. Offered only while they would do something.
     ...paneCommands,
+    // The map of the repository the terminal stands in (ADR 0070).
+    ...(activeTab
+      ? [{ id: "act:pipelines", title: t("palette.pipelines"), icon: "hierarchy",
+          group: t("palette.groupActions"),
+          keywords: "pipelines ci workflows github actions gitlab schema map пайплайны схема карта ci",
+          run: () => {
+            const sid = activeTab.sessionId;
+            void editors.openRepoPipelines(sid, gitCwd(pathSync.following[sid] ?? false, dockCwd(sid), terminalCwd[sid] ?? null));
+          } } satisfies CommandItem]
+      : []),
     { id: "act:open-local-file", title: t("palette.openLocalFile"), icon: "pencil",
       group: t("palette.groupActions"), keywords: "open local file edit editor открыть локальный файл редактор",
       run: () => openLocalFileFromDialog() },
@@ -2723,6 +2733,7 @@
           : undefined}
         onOpenAt={(path, line) => editors.openAt(tab.sessionId, path, line)}
         onOpenRunSchema={(path, repo, run) => editors.openRunSchema(tab.sessionId, path, repo, run.id)}
+        onOpenPipeline={(path, ask) => editors.openPipelineSchema(tab.sessionId, path, ask)}
         onOpenLog={(name, text) => editors.openLog(tab.sessionId, name, text)}
         onTypeInTerminal={(argv) => typeInTerminal(tab.sessionId, argv)}
       />
