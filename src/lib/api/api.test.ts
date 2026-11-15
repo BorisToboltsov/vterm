@@ -347,6 +347,7 @@ describe("remaining invoke wrappers", () => {
     invoke.mockResolvedValue(undefined);
     const cases: [Promise<unknown>, string, Record<string, unknown>][] = [
       [api.forgetSecrets("id1"), "forget_secrets", { id: "id1" }],
+      [api.forgetLoginSecret("id1"), "forget_login_secret", { id: "id1" }],
       [api.listFolders(), "list_folders", undefined as never],
       [api.readClipboardText(), "read_clipboard_text", undefined as never],
       [

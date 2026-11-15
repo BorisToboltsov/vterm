@@ -10,7 +10,7 @@
     connectPlan,
     deleteServer,
     deleteFolderWithServers,
-    forgetSecrets,
+    forgetLoginSecret,
     listFolders,
     listServers,
     moveFolder,
@@ -2192,7 +2192,8 @@
     const server = servers.find((s) => s.id === tab.serverId);
     const usedSaved = tab.secret === null;
     if (usedSaved) {
-      await forgetSecrets(tab.serverId);
+      // Only the login secret that was turned down — the sudo password stays.
+      await forgetLoginSecret(tab.serverId);
       servers = servers.map((s) =>
         s.id === tab.serverId ? { ...s, hasSavedPassword: false } : s,
       );

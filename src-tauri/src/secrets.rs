@@ -172,6 +172,14 @@ pub fn delete_registry_password(url: &str) -> AppResult<()> {
     delete(REGISTRY_SERVICE, registry_key(url))
 }
 
+/// Remove the server's login secret — its password and key passphrase — and
+/// nothing else: the server turned the login down, which says nothing of its
+/// sudo password or its jump host's (ADR 0073).
+pub fn delete_login(id: &str) -> AppResult<()> {
+    delete_password(id)?;
+    delete_passphrase(id)
+}
+
 /// Remove all secrets for a server — its own (sudo's too) and its proxy's (used when the
 /// profile is deleted or the user forgets its saved secrets).
 pub fn delete_all(id: &str) -> AppResult<()> {

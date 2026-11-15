@@ -37,9 +37,14 @@ export function setServerPathSync(id: string, mode: string | null): Promise<Serv
   return call<ServerProfile>("set_server_path_sync", { id, mode });
 }
 
-/** Forget any stored password/passphrase for a server (including its proxy's). */
+/** Forget any stored password/passphrase for a server (its sudo password and its proxy's too). */
 export function forgetSecrets(id: string): Promise<void> {
   return call<void>("forget_secrets", { id });
+}
+
+/** Forget only the login secret a server turned down — not its sudo password, not its proxy's. */
+export function forgetLoginSecret(id: string): Promise<void> {
+  return call<void>("forget_login_secret", { id });
 }
 
 /** Store a server's own secret (password or key passphrase) in the OS keychain;

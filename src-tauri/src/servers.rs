@@ -63,6 +63,37 @@ pub fn add_server(profile: NewServerProfile, state: State<AppState>) -> AppResul
 mod tests {
     use super::*;
 
+    /// The body of `fn name` in `src`, up to its closing brace.
+    fn body<'a>(src: &'a str, name: &str) -> &'a str {
+        let at = src.find(&format!("fn {name}(")).expect(name);
+        let rest = &src[at..];
+        &rest[..rest.find("\n}\n").map_or(rest.len(), |e| e + 2)]
+    }
+
+    /// A refused login forgets the login's secret and nothing else (ADR 0073):
+    /// the sudo password it was never asked about stays, so does the jump host's.
+    #[test]
+    fn a_refused_login_forgets_only_the_login_secret() {
+        let secrets_src = include_str!("secrets.rs");
+        let login = body(secrets_src, "delete_login");
+        assert!(login.contains("delete_password(id)") && login.contains("delete_passphrase(id)"));
+        assert!(
+            !login.contains("sudo") && !login.contains("proxy"),
+            "{login}"
+        );
+        let all = body(secrets_src, "delete_all");
+        assert!(
+            all.contains("delete_sudo_password(id)"),
+            "the form's «Forget» takes sudo's too"
+        );
+        let cmd = body(include_str!("servers.rs"), "forget_login_secret");
+        assert!(
+            cmd.contains("secrets::delete_login(") && !cmd.contains("delete_all"),
+            "{cmd}"
+        );
+        assert!(!cmd.contains("has_saved_sudo"), "{cmd}");
+    }
+
     fn sample(id: &str) -> ServerProfile {
         serde_json::from_value(serde_json::json!({
             "id": id, "alias": id, "host": "example.com", "port": 22, "username": "root"
@@ -234,7 +265,25 @@ pub async fn delete_server(id: String, state: State<'_, AppState>) -> AppResult<
     Ok(())
 }
 
-/// Forget any stored password/passphrase for a server — including its proxy's.
+/// Forget the login secret the server just turned down — its password or key
+/// passphrase only. The sudo password and the jump host's stay: a refused login
+/// says nothing of them (ADR 0073); "Forget saved password" in the form
+/// (`forget_secrets`) takes everything.
+#[tauri::command]
+pub fn forget_login_secret(id: String, state: State<AppState>) -> AppResult<()> {
+    secrets::delete_login(&id)?;
+    let snapshot = {
+        let mut servers = state.servers.locked();
+        if let Some(p) = servers.iter_mut().find(|p| p.id == id) {
+            p.has_saved_password = false;
+        }
+        servers.clone()
+    };
+    store::save_servers(&snapshot)
+}
+
+/// Forget any stored password/passphrase for a server — its sudo password and
+/// its proxy's too.
 #[tauri::command]
 pub fn forget_secrets(id: String, state: State<AppState>) -> AppResult<()> {
     secrets::delete_all(&id)?;

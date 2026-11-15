@@ -365,6 +365,7 @@ pub fn run() {
             servers::set_server_path_sync,
             servers::delete_server,
             servers::forget_secrets,
+            servers::forget_login_secret,
             servers::save_server_secret,
             servers::save_proxy_secret,
             folders::list_folders,
