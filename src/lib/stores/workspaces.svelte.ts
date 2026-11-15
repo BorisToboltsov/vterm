@@ -103,6 +103,20 @@ export interface EditorDoc {
    * launch — it is read anew from its files.
    */
   pipelines?: { targets: PipelineTarget[] };
+  /**
+   * Not a file but an Ansible or Terraform project in this folder (ADR 0071):
+   * its overview, the playbook run being watched, the plan. No text, never
+   * saved, not reopened at launch. `ask` — what to open on (a run dialog, a
+   * check, a plan), bumped with `askSeq` when asked again on an open view.
+   */
+  project?: { kind: "ansible" | "terraform"; root: string; ask?: ProjectAsk; askSeq?: number };
+}
+
+/** What a project view is opened for, beyond its overview. */
+export interface ProjectAsk {
+  action: "run" | "check" | "plan";
+  /** The playbook to start from (a file opened in the editor). */
+  playbook?: string;
 }
 
 /** A file or folder a pipelines view was opened on. */
@@ -249,7 +263,7 @@ function patch(sessionId: string, next: Partial<Workspace>): void {
 
 /** Find an already-open editor for a path (so a second open just refocuses). */
 export function findEditorByPath(sessionId: string, path: string): EditorDoc | null {
-  return ensure(sessionId).editors.find((e) => e.path === path && !e.pipelines) ?? null;
+  return ensure(sessionId).editors.find((e) => e.path === path && !e.pipelines && !e.project) ?? null;
 }
 
 /** Add a placeholder (loading) editor — shown, in the connection's file zone — and return its id. */
@@ -432,6 +446,54 @@ export function addPipelinesView(
     pipelines: { targets: targets.map((t) => ({ ...t })) },
   };
   patch(sessionId, { editors: [...ws.editors, doc], layout: openView(ws.layout, id) });
+  return id;
+}
+
+/**
+ * Show a project's overview (ADR 0071) in the connection's file zone: a
+ * document with no text, standing where files stand. The same folder asked for
+ * again is shown — with what it was asked for this time.
+ */
+export function addProjectView(
+  sessionId: string,
+  source: "sftp" | "local",
+  kind: "ansible" | "terraform",
+  root: string,
+  name: string,
+  ask?: ProjectAsk,
+  beside = false,
+): string {
+  const ws = ensure(sessionId);
+  const known = ws.editors.find((e) => e.project && e.project.root === root);
+  if (known) {
+    if (ask) updateDoc(sessionId, known.id, { project: { kind, root, ask, askSeq: (known.project?.askSeq ?? 0) + 1 } });
+    patch(sessionId, { layout: showView(ensure(sessionId).layout, known.id) });
+    return known.id;
+  }
+  const id = crypto.randomUUID();
+  const doc: EditorDoc = {
+    id,
+    source,
+    path: root,
+    name,
+    lang: { kind: "plain", label: kind === "ansible" ? "Ansible" : "Terraform" },
+    content: "",
+    baseContent: "",
+    baseSha256: "",
+    eol: "lf",
+    encoding: "utf-8",
+    mode: null,
+    readOnly: true,
+    writeAccess: "unknown",
+    saveIssue: "none",
+    loading: false,
+    loadError: null,
+    sudo: false,
+    sudoPassword: "",
+    gotoLine: null,
+    project: { kind, root, ask, askSeq: ask ? 1 : 0 },
+  };
+  patch(sessionId, { editors: [...ws.editors, doc], layout: openView(ws.layout, id, beside) });
   return id;
 }
 

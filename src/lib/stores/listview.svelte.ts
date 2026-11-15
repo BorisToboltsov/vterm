@@ -34,6 +34,7 @@ export type ListId =
   | "files"
   | "git.changes"
   | "ci.runs"
+  | "ci.pipes"
   | "recordings"
   | "mon.processes";
 

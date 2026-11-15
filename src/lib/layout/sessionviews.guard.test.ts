@@ -127,7 +127,7 @@ function modelImports(store: string): string[] {
 }
 
 /** The steps that add a document — each with its view. */
-const OPENERS = ["addEditor", "addScratchEditor", "addPipelinesView"];
+const OPENERS = ["addEditor", "addScratchEditor", "addPipelinesView", "addProjectView"];
 
 export function storeViolations(store: string): string[] {
   const c = code(store);
@@ -161,10 +161,10 @@ export function storeViolations(store: string): string[] {
     out.push("the store builds or edits a layout tree by hand");
   }
   // A document and its view, in one step — a file, a generated script, the
-  // map of a group of pipelines (ADR 0068).
+  // map of a group of pipelines (ADR 0068), a project's overview (ADR 0071).
   for (const name of OPENERS) {
     // `beside` (v1.35) is the opener's own option: still the model's one step.
-    if (!/patch\(sessionId, \{ editors: \[\.\.\.ws\.editors, doc\], layout: openView\(ws\.layout, id(?:, opts\.beside \?\? false)?\) \}\);/.test(fn(c, name))) {
+    if (!/patch\(sessionId, \{ editors: \[\.\.\.ws\.editors, doc\], layout: openView\(ws\.layout, id(?:, opts\.beside \?\? false|, beside)?\) \}\);/.test(fn(c, name))) {
       out.push(`${name} adds a document without opening its view`);
     }
   }

@@ -1,0 +1,85 @@
+{
+  "format_version": "1.2",
+  "terraform_version": "1.9.8",
+  "resource_changes": [
+    {
+      "address": "hcloud_server.web[2]",
+      "mode": "managed",
+      "type": "hcloud_server",
+      "name": "web",
+      "index": 2,
+      "change": {
+        "actions": ["create"],
+        "before": null,
+        "after": { "name": "web-3", "server_type": "cx22", "location": "fsn1" },
+        "after_unknown": { "id": true, "ipv4_address": true },
+        "before_sensitive": false,
+        "after_sensitive": { "ssh_keys": true }
+      }
+    },
+    {
+      "address": "module.network.hcloud_server_network.web[2]",
+      "module_address": "module.network",
+      "mode": "managed",
+      "type": "hcloud_server_network",
+      "name": "web",
+      "change": { "actions": ["create"], "before": null, "after": {}, "after_unknown": {}, "before_sensitive": false, "after_sensitive": {} }
+    },
+    {
+      "address": "hcloud_firewall.base",
+      "mode": "managed",
+      "type": "hcloud_firewall",
+      "name": "base",
+      "change": {
+        "actions": ["update"],
+        "before": { "name": "base", "rule": [{ "port": "22" }], "labels": { "env": "prod" }, "token": "old-secret" },
+        "after": { "name": "base", "rule": [{ "port": "2222" }], "labels": { "env": "prod" }, "token": "new-secret" },
+        "after_unknown": { "rule": [{}] },
+        "before_sensitive": { "token": true },
+        "after_sensitive": { "token": true }
+      }
+    },
+    {
+      "address": "hcloud_server.db",
+      "mode": "managed",
+      "type": "hcloud_server",
+      "name": "db",
+      "change": {
+        "actions": ["delete", "create"],
+        "before": { "server_type": "cx32", "image": "debian-11" },
+        "after": { "server_type": "cx32", "image": "debian-12" },
+        "after_unknown": { "id": true },
+        "before_sensitive": {},
+        "after_sensitive": {},
+        "replace_paths": [["image"]]
+      }
+    },
+    {
+      "address": "hcloud_volume.old",
+      "mode": "managed",
+      "type": "hcloud_volume",
+      "name": "old",
+      "change": { "actions": ["delete"], "before": { "size": 10 }, "after": null, "after_unknown": {}, "before_sensitive": {}, "after_sensitive": false }
+    },
+    {
+      "address": "data.hcloud_image.debian",
+      "mode": "data",
+      "type": "hcloud_image",
+      "name": "debian",
+      "change": { "actions": ["read"], "before": null, "after": {}, "after_unknown": {} }
+    },
+    {
+      "address": "hcloud_network.main",
+      "mode": "managed",
+      "type": "hcloud_network",
+      "name": "main",
+      "change": { "actions": ["no-op"], "before": {}, "after": {} }
+    }
+  ],
+  "output_changes": {
+    "web_ips": { "actions": ["update"], "before": ["1.2.3.4"], "after_unknown": true, "after_sensitive": false },
+    "db_password": { "actions": ["create"], "before": null, "after": "x", "after_sensitive": true },
+    "same": { "actions": ["no-op"] }
+  },
+  "errored": false
+}

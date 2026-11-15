@@ -76,7 +76,7 @@ export function frontendViolations(dialog: string, settingsSection: string, rema
   }
   if (!/catalog:\s*plan\?\.catalog\s*\?\?\s*null/.test(d)) out.push("the dialog hands on a catalog it did not plan");
   const s = strip(settingsSection);
-  if (!/importBackup\(path,\s*choice\.catalog,\s*choice\.recordings\)/.test(s)) {
+  if (!/importBackup\(path,\s*choice\.catalog,\s*choice\.recordings,\s*choice\.scripts\)/.test(s)) {
     out.push("the import is not given the chosen catalog");
   }
   const r = strip(body(strip(remap), /export function remapServers\(/));

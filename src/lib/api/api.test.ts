@@ -434,6 +434,7 @@ describe("backup wrappers", () => {
       path: "/tmp/b.zip",
       catalog,
       recordings: true,
+      scripts: false,
     });
     expect(res.servers).toBe(2);
 

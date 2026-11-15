@@ -13,7 +13,7 @@ const KINDS: EditorLangKind[] = [
   "java", "dockerfile", "go", "rust", "ruby", "c", "cpp", "csharp", "sql", "powershell",
   "lua", "perl", "html", "css", "scss", "less", "xml", "nginx", "sshdconfig", "sudoers",
   "haproxy", "bind", "systemd", "compose", "ghactions", "prometheus", "ansible", "k8s",
-  "cmake", "diff", "http", "protobuf", "puppet", "groovy", "scala", "kotlin", "dart", "swift",
+  "hcl", "cmake", "diff", "http", "protobuf", "puppet", "groovy", "scala", "kotlin", "dart", "swift",
   "clojure", "haskell", "erlang", "elm", "crystal", "r", "julia", "coffeescript", "vb",
   "scheme", "commonlisp", "ocaml", "fsharp", "tcl", "d", "verilog", "vhdl", "pascal",
   "fortran", "cobol",

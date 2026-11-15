@@ -72,6 +72,8 @@ export async function loadLanguage(kind: EditorLangKind): Promise<Extension> {
     case "nginx":
     case "bind":
       return legacy((await import("./nginxmode")).nginx);
+    case "hcl":
+      return legacy((await import("./hclmode")).hcl);
     case "dockerfile":
       return legacy((await import("@codemirror/legacy-modes/mode/dockerfile")).dockerFile);
     case "ruby":

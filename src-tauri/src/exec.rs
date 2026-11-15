@@ -166,6 +166,7 @@ pub fn source_of(label: &str) -> &'static str {
         "kubectl" => "k8s",
         "ci" | "ci dispatch" => "ci",
         "probe" | "netcheck" => "netcheck",
+        "iac" | "recipe" => "scenarios",
         _ => "docker",
     }
 }

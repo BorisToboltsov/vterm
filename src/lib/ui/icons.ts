@@ -237,6 +237,14 @@ export const ICONS = {
   // A wrench (Feather "tool") — the "Utilities" settings group and panel.
   wrench:
     '<path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/>',
+  // Scenarios (ADR 0071): a checklist — the panel; a script page — a recipe;
+  // a gear with a play mark — an Ansible project; a cube — a Terraform one.
+  listCheck: '<path d="M3.5 5.5l1.5 1.5 2.5-2.5M3.5 11.5l1.5 1.5 2.5-2.5M3.5 17.5l1.5 1.5 2.5-2.5"/><path d="M11 6h9M11 12h9M11 18h9"/>',
+  script:
+    '<path d="M14 3v4a1 1 0 0 0 1 1h4"/><path d="M5 3h9l5 5v11a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1z"/><path d="M8 12l2 2-2 2M12 16h4"/>',
+  gearPlay:
+    '<path d="M12 3l1.4 2.3 2.6-.6.6 2.6L19 8.7l-1.3 2.3L19 13.3l-2.4 1.4-.6 2.6-2.6-.6L12 19l-1.4-2.3-2.6.6-.6-2.6L5 13.3 6.3 11 5 8.7l2.4-1.4.6-2.6 2.6.6z"/><path d="M10.5 9.2v3.6l3-1.8z"/>',
+  cube: '<path d="M12 3l8 4.5v9L12 21l-8-4.5v-9z"/><path d="M4 7.5l8 4.5 8-4.5M12 12v9"/>',
 } as const;
 
 export type IconName = keyof typeof ICONS;

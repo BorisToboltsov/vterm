@@ -5,7 +5,7 @@ import { loadPipeline, type PipeReader } from "../pipeline/pipeload";
 import { loadYaml } from "../pipeline/yamldoc";
 import type { CiJob, CiRun } from "./ciparse";
 import { parseGithubJobs, parseGithubRun } from "./ciparse";
-import { clock, placeJobs, runNames, runOnSchema, runStateOf, timeline, worst } from "./cirun";
+import { clock, jobNotes, placeJobs, runNames, runOnSchema, runStateOf, timeline, worst } from "./cirun";
 
 const ROOT = process.cwd();
 const here = (f: string) => readFileSync(join(ROOT, "src", "lib", "ci", f), "utf8");
@@ -50,6 +50,13 @@ describe("placing a run's jobs on the file — vterm's release v1.34.0", () => {
     expect(on.jobsOf.verify).toHaveLength(5);
     expect(on.jobsOf.release).toHaveLength(3);
     expect(on.unmatched).toEqual([]);
+    // On a card: the longest of a job's copies and called jobs — the run's own lengths.
+    expect(jobNotes(on, 0)).toEqual({ tag: "0:04", verify: "3:41", deep: "8:12", release: "13:19", integrity: "0:33" });
+    // A job not started yet has no length; a running one counts to now.
+    const going = jobs.map((j) => (j.name === "Тег = версия" ? { ...j, started: null, finished: null } : j.name.startsWith("Целостность") ? { ...j, finished: null } : j));
+    const notes = jobNotes(runOnSchema(p, going), (jobs.find((j) => j.name.startsWith("Целостность"))?.started ?? 0) + 7_000);
+    expect(notes.tag).toBeUndefined();
+    expect(notes.integrity).toBe("0:07");
   });
 
   it("expands a `name:` template with the copy's matrix values", async () => {

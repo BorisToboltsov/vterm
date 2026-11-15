@@ -100,6 +100,8 @@ describe("tab teardown guard", () => {
       "forgetMetrics",
       // Its watched CI runs, the list its Git badges read, a run asked of a schema (ADR 0069).
       "forgetCi",
+      // Its watched playbook run and its plan, and their folders on the host (ADR 0071).
+      "forgetScenarios",
     ]) {
       expect(fn).toContain(cleanup);
     }

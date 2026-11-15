@@ -163,6 +163,16 @@ export function runOnSchema(pipeline: Pipeline, jobs: readonly CiJob[]): RunOnSc
   return { states, jobsOf, unmatched, absent };
 }
 
+/** A job's real length on its card: the longest of its copies and called jobs; a job not started has none. */
+export function jobNotes(on: RunOnSchema, now: number): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const [id, list] of Object.entries(on.jobsOf)) {
+    const spans = list.filter((j) => j.started !== null).map((j) => (j.finished ?? now) - (j.started ?? 0));
+    if (spans.length) out[id] = clock(Math.max(...spans));
+  }
+  return out;
+}
+
 // ── The time view ────────────────────────────────────────────────────────────
 
 export interface TimeRow {

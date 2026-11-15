@@ -67,6 +67,13 @@ import {
 import { sanitizeStoredOrders, type StoredOrder } from "../ui/listview";
 import { DEFAULT_FAVORITE_BRANCHES, sanitizeFavoriteBranches } from "../git/gitrefs";
 import type { LogScope } from "../git/git";
+import {
+  sanitizeBookmarks,
+  sanitizeScenarioTab,
+  sanitizeSources,
+  type ProjectBookmark,
+  type ScenarioTab,
+} from "../scenarios/bookmarks";
 import { defaultAiSettings, sanitizeAiSettings, type AiSettings } from "../ai/ai";
 import {
   clampIdleTimeout,
@@ -299,6 +306,14 @@ export interface Settings {
   // The CI panel (ADR 0069): the forge of a host whose name does not say it
   // (a GitLab on a LAN address), by host, as the user said it once.
   ciForges: Record<string, Forge>;
+  // The CI panel's tab the user picked last (ADR 0070): the repository's
+  // pipelines or their runs. Where the runs cannot be read, the pipelines show.
+  ciTab: "pipelines" | "runs";
+  // Scenarios (ADR 0071): folders of this computer the recipe library reads,
+  // the projects pinned to its "Projects" group, and the panel's last tab.
+  scenarioSources: string[];
+  scenarioProjects: ProjectBookmark[];
+  scenarioTab: ScenarioTab;
   // Docker registry credentials (Phase 36) — non-secret half (url + username);
   // the password lives only in the OS keychain, keyed by url. See docker.ts.
   dockerRegistries: DockerRegistry[];
@@ -476,6 +491,10 @@ const DEFAULTS: Settings = {
   gitHighlightCurrent: true,
   gitLogScope: "head",
   ciForges: {},
+  ciTab: "pipelines",
+  scenarioSources: [],
+  scenarioProjects: [],
+  scenarioTab: "library",
   hiddenPanels: [],
   topbar: [...DEFAULT_TOPBAR],
   topbarKnown: [...BUILTIN_ACTIONS],
@@ -617,6 +636,10 @@ function load(): Settings {
       gitHighlightCurrent: raw.gitHighlightCurrent !== false,
       gitLogScope: raw.gitLogScope === "all" ? "all" : "head",
       ciForges: sanitizeForges(raw.ciForges),
+      ciTab: raw.ciTab === "runs" ? "runs" : "pipelines",
+      scenarioSources: sanitizeSources(raw.scenarioSources),
+      scenarioProjects: sanitizeBookmarks(raw.scenarioProjects),
+      scenarioTab: sanitizeScenarioTab(raw.scenarioTab),
       hiddenPanels: sanitizeHiddenPanels(raw.hiddenPanels),
       topbar: sanitizeTopbar(raw.topbar, knownBuiltins(raw.topbarKnown)),
       topbarKnown: [...BUILTIN_ACTIONS],
@@ -645,6 +668,8 @@ function load(): Settings {
       ai: defaultAiSettings(),
       dockerRegistries: [],
       gitFavoriteBranches: [...DEFAULT_FAVORITE_BRANCHES],
+      scenarioSources: [],
+      scenarioProjects: [],
       hiddenPanels: [],
       topbar: [...DEFAULT_TOPBAR],
       topbarKnown: [...BUILTIN_ACTIONS],
@@ -702,6 +727,8 @@ export function resetSettings(): void {
     sftp: { ...DEFAULTS.sftp },
     dockerRegistries: [],
     gitFavoriteBranches: [...DEFAULT_FAVORITE_BRANCHES],
+    scenarioSources: [],
+    scenarioProjects: [],
     hiddenPanels: [],
     topbar: [...DEFAULT_TOPBAR],
     topbarKnown: [...BUILTIN_ACTIONS],
@@ -732,6 +759,8 @@ export function applyImportedSettings(raw: unknown): void {
     ai: defaultAiSettings(),
     dockerRegistries: [],
     gitFavoriteBranches: [...DEFAULT_FAVORITE_BRANCHES],
+    scenarioSources: [],
+    scenarioProjects: [],
     hiddenPanels: [],
     topbar: [...DEFAULT_TOPBAR],
     topbarKnown: [...BUILTIN_ACTIONS],
@@ -751,6 +780,8 @@ export function applyImportedSettings(raw: unknown): void {
     "sftp",
     "ai",
     "dockerRegistries",
+    "scenarioSources",
+    "scenarioProjects",
     "hiddenPanels",
     "topbar",
     "topbarCommands",
@@ -782,6 +813,9 @@ export function applyImportedSettings(raw: unknown): void {
   next.dockerRefreshSec = clampDockerRefresh(next.dockerRefreshSec);
   next.dockerRegistries = sanitizeDockerRegistries(r.dockerRegistries);
   next.hiddenPanels = sanitizeHiddenPanels(r.hiddenPanels);
+  next.scenarioSources = sanitizeSources(r.scenarioSources);
+  next.scenarioProjects = sanitizeBookmarks(r.scenarioProjects);
+  next.scenarioTab = sanitizeScenarioTab(next.scenarioTab);
   next.topbar = sanitizeTopbar(r.topbar, knownBuiltins(r.topbarKnown));
   next.topbarKnown = [...BUILTIN_ACTIONS];
   next.journalKeep = next.journalKeep !== false;

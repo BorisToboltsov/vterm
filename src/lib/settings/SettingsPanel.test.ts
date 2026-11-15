@@ -163,7 +163,7 @@ describe("SettingsPanel — backup", () => {
     await userEvent.click(screen.getByTestId("backup-import"));
     await userEvent.click(await screen.findByTestId("backup-import-confirm"));
 
-    await waitFor(() => expect(importBackup).toHaveBeenCalledWith("/in/settings.zip", null, false));
+    await waitFor(() => expect(importBackup).toHaveBeenCalledWith("/in/settings.zip", null, false, false));
     const msg = await screen.findByTestId("backup-msg");
     expect(msg).toHaveTextContent(/Settings applied/);
     expect(msg).not.toHaveTextContent(/server/i);

@@ -43,14 +43,14 @@ describe("layout store", () => {
     expect(s.docks.left.size).toBe(300);
     expect(s.docks.right.collapsed).toBe(false);
     expect(s.docks.bottom.size).toBe(333);
-    expect(s.docks.bottom.panels).toEqual(["docker", "k8s", "ci"]);
+    expect(s.docks.bottom.panels).toEqual(["docker", "k8s", "ci", "scenarios"]);
   });
 
   it("moves a panel between docks and persists the move", () => {
     movePanel("docker", "left");
     flushSync();
     expect(layout.docks.left.panels).toEqual(["servers", "docker"]);
-    expect(layout.docks.bottom.panels).toEqual(["k8s", "ci"]);
+    expect(layout.docks.bottom.panels).toEqual(["k8s", "ci", "scenarios"]);
     expect(stored().docks.left.panels).toEqual(["servers", "docker"]);
   });
 

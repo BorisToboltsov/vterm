@@ -10,6 +10,7 @@ pub mod backup;
 pub mod chrome;
 pub mod drivers;
 pub mod recording;
+pub mod scenarios;
 pub mod session;
 pub mod sftp;
 
@@ -41,6 +42,7 @@ const BRIDGE: &[(&str, &str)] = &[
     ("chrome.rs", include_str!("chrome.rs")),
     ("drivers.rs", include_str!("drivers.rs")),
     ("recording.rs", include_str!("recording.rs")),
+    ("scenarios.rs", include_str!("scenarios.rs")),
     ("session.rs", include_str!("session.rs")),
     ("sftp.rs", include_str!("sftp.rs")),
 ];

@@ -12,6 +12,7 @@
 [Терминал и вкладки](#терминал-и-вкладки) ·
 [Окна](#окна) ·
 [Панели-драйверы](#панели-драйверы) ·
+[Сценарии](#сценарии) ·
 [Логи, поиск, запись](#логи-поиск-запись-сессий) ·
 [Файлы, пути, текст](#файлы-пути-текст) ·
 [Хранение и секреты](#хранение-и-секреты) ·
@@ -55,7 +56,7 @@
    доступа» с локальной вкладки — рукопожатие или **его** `bash`/`nc`/`telnet`/`curl` (ADR 0012,
    0033, 0056); **его** `curl`/`openssl` в TLS-инспекторе и HTTP-клиенте (ADR 0014); проверка и
    скачивание релиза GitHub по явному действию (ADR 0031); **его** `gh`/`glab` к **его** GitHub/GitLab
-   в панели CI (ADR 0069). Такой трафик идёт только из Rust:
+   в панели CI (ADR 0069); **его** `ansible`/`terraform` на хосте проекта (ADR 0071). Такой трафик идёт только из Rust:
    фронт сетевых вызовов не делает (`vterm/no-network`), CSP строгий; проксировать загрузку
    картинок или данных через Rust — то же обращение в сеть. Шрифты встроены, внешние ссылки —
    только по клику через `tauri-plugin-opener`; диагностика хоста исполняется на хосте сессии.
@@ -507,6 +508,13 @@ Git, Docker, k8s, сетевые пробы и метрики — **один к�
   вкладкой (`forgetCi` в `closeTabFully`). Значки CI в истории Git — из последнего списка стора: Git
   перечитывает его со своей историей, не чаще раза в минуту, своего цикла нет. Гейты
   `dockpanels.guard`, `cipanel.guard`.
+- **Пайплайны панели CI — из файлов, тем же загрузчиком, что у схемы** (ADR 0070). Вкладка
+  «Пайплайны» стоит без форжа: файлы читает только `readPipelines` (`loadGroup` над
+  `connectionFiles` сессии) — при нахождении репозитория, по «Обновить», при возврате на экран, не по
+  таймеру. Чей прогон — по файлу от форжа (`ownerOf`), дочерний пайплайн GitLab — ничей, не угадан.
+  Точки строки — задачи последнего прогона: закончившегося один раз, идущего — с каждым чтением, не
+  больше `JOBS_PER_READ`, пока панель видна. Схема рисуется в центре, в панели — превью (`compact`).
+  Гейт `cipanel.guard`.
 - **Прогон на схеме — файл на коммите прогона, задачи — по имени от форжа** (ADR 0069). Связей задач
   API не отдаёт: схема — из `git show sha:path` через стор (`fileAtCommit`), коммита нет — текущий
   файл, и так и сказано. Задача ставится по имени (`placeJobs`: копия матрицы, шаблон `name:`,
@@ -562,6 +570,39 @@ Git, Docker, k8s, сетевые пробы и метрики — **один к�
   Гейт `netcheck.guard`.
 
 ---
+
+## Сценарии
+
+Рецепты, проекты Ansible и Terraform — [ADR 0071](adr/0071-scenarios.md). Панель «Сценарии» —
+глобальная, как дерево серверов (`isSessionPanel`): работает без вкладок.
+
+- **Рецепт доходит до сервера только фиксированной обёрткой** (`scenarios::run_command`): скрипт и
+  пароль sudo — через stdin, никогда в командной строке; скрипт — во временный файл `umask 077`,
+  который обёртка удаляет при любом исходе, и исполняется с закрытым stdin. Пароль — только в памяти
+  прогона, в `Zeroizing`; ни в событие, ни в сообщение, ни в настройки. В запись — имя рецепта и
+  ответ (`[script]`), не скрипт. Сессия — SSH самого vterm. Гейты
+  `a_recipes_script_and_password_never_reach_a_command_line`, `scenarios.guard`.
+- **Проект запускает пользователь, приложение только смотрит.** `ansible-playbook` и `terraform
+  plan/apply` печатаются в терминал соединения, где лежит проект; бэкенд их не исполняет. Проверки
+  проекта — `iac_run` под политикой `check_iac_args`: `--version`, инвентарь, коллекции, `show -json`
+  только плана из папки прогона; state не читается никогда. Гейт
+  `what_the_checks_of_a_project_run_is_allowed`.
+- **Прогон playbook — по событиям сборщика vterm** (`vterm_events.py` в папке прогона, а не разбор
+  вывода): печатается только `playbookLine` и только после `watchAnsibleRun`. Папка прогона —
+  `vterm-iac.*` на хосте проекта; читается и удаляется только она (`is_temp_path`), кончившийся
+  прогон удаляет её сразу, закрытие вкладки — остальное (`forgetScenarios` в `closeTabFully`). Гейт
+  `scenarios.guard`.
+- **Terraform применяет ровно показанный план** (`applyArgv` с путём сохранённого), после вопроса;
+  удаление и замена — красным. Помеченное `sensitive` не покидает `tfplan.ts`. Гейт `scenarios.guard`.
+- **Прод — по сверке инвентаря с каталогом** (`matchInventory`: адрес и порт, иначе имя): применение с
+  продом среди целей — красным и после вопроса, у рецепта и у playbook. Временный инвентарь из
+  каталога без паролей: сервер с паролем спрашивает Ansible (`-k`).
+- **Ничего с сервера не рисуется разметкой** — сообщения задач, diff, вывод и текст рецептов: в
+  `src/lib/scenarios` нет `{@html}`. Гейт `scenarios.guard`.
+- **Встроенные рецепты — в сборке** (`scenarios/builtin/*.sh`, проверка, применение, строка выбора
+  режима — тест `recipelib.test.ts`); их имена и подписи — через `t()`, свои — как написаны. Свои — в
+  папке `scripts` данных (в полном бэкапе) и в источниках-папках (только чтение). Команды сценариев
+  вызывает только стор `stores/scenarios` (`vterm/owned-imports`).
 
 ## Логи, поиск, запись сессий
 
@@ -1276,7 +1317,7 @@ Git, Docker, k8s, сетевые пробы и метрики — **один к�
 `overlay-z-index` · `type-scale` · `rem-sizes` · `micro-label` · `motion-duration` · `locale-binding` · `md-links`
 · `backdrop-no-close` · `each-as-t` · `path-sync-mode` · `owned-imports` (вызов, правило которого
 живёт в одном модуле, импортирует только он: `setServerPathSync`, `transferStart`,
-`importBackup`, `transferResume`, `startChat`, `netcheckRun`, `ciRun`, `sftpOpenAs`, `fetchMetrics`, `fetchLiveExtras`, `fetchProcessDetail`, команды журнала, `noteJournal`, сырой `closeTab`) · `forbidden-imports` (стор вкладок
+`importBackup`, `transferResume`, `startChat`, `netcheckRun`, `ciRun`, команды сценариев, `sftpOpenAs`, `fetchMetrics`, `fetchLiveExtras`, `fetchProcessDetail`, команды журнала, `noteJournal`, сырой `closeTab`) · `forbidden-imports` (стор вкладок
 не знает сторов рабочих пространств и чата, стор пришедшей вкладки знает стор вкладок только
 по типу) · `owned-writes` (`settings.terminalLinks`/`terminalFileLinks` пишут только раздел
 настроек и вопрос, который он отключает) · `theme-colors` · `virtual-scroll` · `paste-caret` ·
@@ -1317,7 +1358,8 @@ Git, Docker, k8s, сетевые пробы и метрики — **один к�
 | `filetoolbar.guard` | Узкий тулбар SFTP оставляет `upload` отдельной кнопкой |
 | `listview.guard` | Списки ADR 0050 рисуют общую строку фильтра и `GroupHeader`, фильтруют через `listview.ts` |
 | `fileuser.guard` | Команды панели идут под её пользователем; отказ sudo ничего не меняет; пароль — только через stdin; панель сама никого не берёт |
-| `cipanel.guard` | К форжу — только через стор CI; каждая запись стора — с аудитом, чтение — без; слежка кончается с прогоном и вкладкой; схема прогона спрашивает git через стор |
+| `scenarios.guard` | Прогон playbook печатается строкой `playbookLine` после `watchAnsibleRun`; Terraform применяет сохранённый план; в подсистеме нет `{@html}`; папка прогона удаляется по его концу и с вкладкой; пароль sudo рецепта доходит только до прогона |
+| `cipanel.guard` | К форжу — только через стор CI; каждая запись стора — с аудитом, чтение — без; слежка кончается с прогоном и вкладкой; схема прогона спрашивает git через стор; пайплайны панели — только через `readPipelines` и не по таймеру, задачи их точек — пока панель видна |
 | `editoraccess.guard` | Рядом с «Сохранить» — предупреждение о правах и пути восстановления; локальная копия — `create_new` |
 | `transferjob.guard` | Перенос запускает только `startTransfer`, право заменить — только из согласия; окно сперва слушает `sftp://job`, потом спрашивает список |
 | `filedrag.guard` | Перетаскиванием файла владеет стор, бросок исполняется в одном месте, каждое перетаскивание взводит `cancelOnEscape` |
@@ -1361,6 +1403,7 @@ Git, Docker, k8s, сетевые пробы и метрики — **один к�
 | `a_partial_copy_goes_on_only_from_a_confirmed_point_and_never_outlives_its_tab` (Rust) | Точка частичной копии — после `flush`; временный файл и смещение — из `partial::staging`; удаляет его при ошибке только тот, кого не держат; закрытая вкладка и выход не оставляют держимого |
 | `login_answers_come_only_from_the_plan` · `nothing_after_login_can_fail_the_connection` (Rust) | Ответы `keyboard-interactive` — только из `kbdauth::merge`; после входа нет `?` |
 | `what_the_git_panel_runs_is_allowed` · `what_the_docker_panel_runs_is_allowed` · `what_the_k8s_panel_runs_is_allowed` (Rust) | Политики argv драйверов пускают формы фронта и ничего опасного |
+| `what_the_checks_of_a_project_run_is_allowed` · `a_recipes_script_and_password_never_reach_a_command_line` (Rust) | Проверки проекта — только чтение того, что он такое, без state; рецепт и пароль sudo — через stdin фиксированной обёртки |
 | `what_the_ci_panel_runs_is_allowed` · `the_ci_panel_reaches_only_the_runs_of_a_repository` (Rust) | Политика CI пускает формы фронта и только пути прогонов: другие команды и эндпоинты, неявная запись, опция, читающая файл, — отказ |
 | `the_cluster_is_changed_only_in_the_shapes_the_panel_offers` · `a_secrets_value_is_never_read_by_any_road` (Rust) | kubectl меняет кластер только откатом Deployment и запуском CronJob; Secret читается только шаблоном ключей, без `describe` и `--raw` |
 | `a_compose_command_reads_only_the_definition_its_stack_was_brought_up_from` · `a_compose_argv_is_held_to_its_stack_before_it_runs` (Rust) | Каталог, файлы и env-файл compose — из меток стека, и сверка идёт до исполнения |

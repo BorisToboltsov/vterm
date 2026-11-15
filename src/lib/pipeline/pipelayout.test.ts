@@ -2,7 +2,7 @@ import { beforeAll, describe, expect, it } from "vitest";
 import { parseWorkflow } from "./ghactions";
 import { buildGitlab } from "./gitlabci";
 import { EVENT, groupRun } from "./pipelanes";
-import { cardLines, columnsOf, layoutLanes, layoutMap, layoutPipeline, METRICS, roundedPath, startJobs, subLines, type Box } from "./pipelayout";
+import { cardLines, columnsOf, COMPACT, compactMetrics, layoutLanes, layoutMap, layoutPipeline, METRICS, roundedPath, startJobs, subLines, type Box } from "./pipelayout";
 import type { Pipeline } from "./pipeline";
 import { buildMap, startedBy } from "./pipemap";
 import { loadYaml, parseYaml, type Obj, type Yaml } from "./yamldoc";
@@ -38,6 +38,34 @@ describe("roundedPath", () => {
     expect(roundedPath([[0, 0], [20, 0], [20, 4], [40, 4]], 8)).toContain("A2 2");
     expect(roundedPath([[0, 0], [0, 0], [5, 0], [10, 0]], 8)).toBe("M0 0 L5 0 L10 0");
     expect(roundedPath([], 8)).toBe("");
+  });
+});
+
+describe("the compact graph of a panel's preview", () => {
+  it("draws the same jobs in less room, with room for titles only where there are stages", () => {
+    const p = gh("on: push\njobs:\n  a: { steps: [] }\n  b: { needs: a, steps: [] }\n  c: { needs: b, steps: [] }\n");
+    const full = layoutPipeline(p, { mode: "links", width: 300, open: new Set() });
+    const small = layoutPipeline(p, { mode: "links", width: 300, open: new Set(), metrics: compactMetrics(p) });
+    expect([...small.nodes.keys()]).toEqual([...full.nodes.keys()]);
+    expect(small.width).toBeLessThan(full.width);
+    expect(small.height).toBeLessThan(full.height);
+    expect(small.nodes.get("a")?.y).toBe(compactMetrics(p).top);
+    expect(compactMetrics({ kind: "gitlab" })).toBe(COMPACT);
+    expect(COMPACT.top).toBeGreaterThan(compactMetrics(p).top);
+    expect(COMPACT.node).toBeLessThan(METRICS.node);
+  });
+
+  it("folds a called pipeline's jobs under its caller until it is opened", () => {
+    const inner = gh("on: workflow_call\njobs:\n  x: { steps: [] }\n  y: { steps: [] }\n");
+    const p = gh("on: push\njobs:\n  call: { uses: ./inner.yml }\n");
+    p.jobs[0].call!.pipeline = inner;
+    expect(subLines(p.jobs[0], false)).toEqual(["x", "y"]);
+    expect(subLines(p.jobs[0], false, true)).toEqual([]);
+    expect(subLines(p.jobs[0], true, true)).toEqual(["x", "y"]);
+    const folded = layoutPipeline(p, { mode: "links", width: 300, open: new Set(), metrics: compactMetrics(p), foldCalls: true });
+    const opened = layoutPipeline(p, { mode: "links", width: 300, open: new Set(["call"]), metrics: compactMetrics(p), foldCalls: true });
+    expect(folded.nodes.get("call")!.h).toBe(COMPACT.node);
+    expect(opened.nodes.get("call")!.h).toBeGreaterThan(COMPACT.node);
   });
 });
 

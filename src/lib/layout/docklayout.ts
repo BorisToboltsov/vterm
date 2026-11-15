@@ -14,9 +14,10 @@
 export type DockSide = "left" | "right" | "bottom";
 export const DOCK_SIDES: readonly DockSide[] = ["left", "right", "bottom"];
 
-/** Every tool panel. `servers` is the saved-server tree; the rest need a session. */
-export type PanelId = "servers" | "files" | "git" | "docker" | "k8s" | "ci" | "ai";
-export const PANEL_IDS: readonly PanelId[] = ["servers", "files", "git", "docker", "k8s", "ci", "ai"];
+/** Every tool panel. `servers` is the saved-server tree and `scenarios` the
+ *  recipe library (ADR 0071); the rest need a session. */
+export type PanelId = "servers" | "files" | "git" | "docker" | "k8s" | "ci" | "scenarios" | "ai";
+export const PANEL_IDS: readonly PanelId[] = ["servers", "files", "git", "docker", "k8s", "ci", "scenarios", "ai"];
 
 export const isPanelId = (v: unknown): v is PanelId =>
   typeof v === "string" && (PANEL_IDS as readonly string[]).includes(v);
@@ -25,11 +26,13 @@ export const isDockSide = (v: unknown): v is DockSide =>
   typeof v === "string" && (DOCK_SIDES as readonly string[]).includes(v);
 
 /**
- * Whether a panel works on a session. The server tree is the only global panel:
- * it exists with no tab open, and it must not be torn down when the active
- * session changes — every other panel is rebuilt for the session in focus.
+ * Whether a panel works on a session. The server tree and the Scenarios panel
+ * (ADR 0071: its recipes run on servers of the catalog, not on the tab in
+ * focus) are global: they exist with no tab open and are not torn down when
+ * the active session changes — every other panel is rebuilt for the session
+ * in focus.
  */
-export const isSessionPanel = (id: PanelId): boolean => id !== "servers";
+export const isSessionPanel = (id: PanelId): boolean => id !== "servers" && id !== "scenarios";
 
 export interface DockState {
   /** Tab order. Across the three docks every panel appears exactly once. */
@@ -72,7 +75,7 @@ export const BOTTOM_MAX_SHARE = 0.6;
 const DEFAULT_PANELS: Record<DockSide, PanelId[]> = {
   left: ["servers"],
   right: ["files", "git", "ai"],
-  bottom: ["docker", "k8s", "ci"],
+  bottom: ["docker", "k8s", "ci", "scenarios"],
 };
 
 const DEFAULT_COLLAPSED: Record<DockSide, boolean> = {

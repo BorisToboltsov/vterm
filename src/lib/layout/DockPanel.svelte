@@ -1,4 +1,5 @@
 <script lang="ts">
+  import type { ProjectKind } from "../scenarios/project";
   // One session tool panel inside a dock (v1.1): files / git / Docker / k8s / AI.
   // The dock (Dock.svelte) owns the chrome and decides which panel is on screen;
   // this component only picks the panel for an id and wires it to the session.
@@ -40,6 +41,9 @@
     onOpenFile,
     onOpenLocalFile,
     onPipelines,
+    onProject,
+    projectPinned,
+    onPinProject,
     onOpenGitDiff,
     onIgnoreGitignore,
     onSftpNavigate,
@@ -47,6 +51,7 @@
     onAskAi,
     onOpenAt,
     onOpenRunSchema,
+    onOpenPipeline,
     onOpenLog,
     onTypeInTerminal,
     getAiContext,
@@ -82,6 +87,10 @@
     onOpenLocalFile?: (path: string) => void;
     /** "Pipeline schema" in the file panel (ADR 0068). */
     onPipelines?: (targets: { path: string; isDir: boolean }[]) => void;
+    /** The folder is an Ansible or Terraform project (ADR 0071). */
+    onProject?: (kind: ProjectKind, root: string, action: "open" | "check" | "run" | "plan") => void;
+    projectPinned?: (kind: ProjectKind, root: string) => boolean;
+    onPinProject?: (kind: ProjectKind, root: string) => void;
     /** Open a git-changed file as an editable inline diff (absolute path + HEAD base). */
     onOpenGitDiff?: (absPath: string, gitBase: string) => void;
     /** Append a pattern to the repo's `.gitignore` (absolute path + pattern). */
@@ -96,6 +105,8 @@
     onOpenAt?: (path: string, line: number) => void;
     /** CI: a workflow file on its schema, showing a run. */
     onOpenRunSchema?: (path: string, repo: Repo, run: CiRun) => void;
+    /** CI: a pipeline file on its schema — as it is, its event played, or on its start form (ADR 0070). */
+    onOpenPipeline?: (path: string, ask: "play" | "start" | null) => void;
     /** CI: a job's whole log as a document to read. */
     onOpenLog?: (name: string, text: string) => void;
     /** CI: the CLI's sign-in, typed into this tab's terminal. */
@@ -133,6 +144,9 @@
       {onToggleFollowTerminal}
       {onOpenFile}
       {onPipelines}
+      {onProject}
+      {projectPinned}
+      {onPinProject}
       onUserNavigate={onSftpNavigate}
     />
   {:else}
@@ -145,6 +159,9 @@
       {onToggleFollowTerminal}
       onOpenFile={onOpenLocalFile}
       {onPipelines}
+      {onProject}
+      {projectPinned}
+      {onPinProject}
       onUserNavigate={onSftpNavigate}
     />
   {/if}
@@ -192,6 +209,9 @@
     onOpenSchema={onOpenRunSchema}
     {onOpenLog}
     {onTypeInTerminal}
+    local={kind === "local"}
+    {onOpenPipeline}
+    {onPipelines}
   />
 {:else if id === "ai"}
   <AiChat

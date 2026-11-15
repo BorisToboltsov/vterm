@@ -1,4 +1,5 @@
 <script lang="ts">
+  import type { ProjectKind } from "../scenarios/project";
   // SFTP file browser — a thin wrapper over the shared <FileBrowser> (Phase 44.8).
   // It supplies the SFTP transport + POSIX navigation as an adapter, the SFTP-only
   // features (upload/download/grep/sync) and the transfers footer; everything else
@@ -58,6 +59,9 @@
     onToggleFollowTerminal,
     onOpenFile,
     onPipelines,
+    onProject,
+    projectPinned,
+    onPinProject,
     onUserNavigate,
   }: {
     sessionId: string;
@@ -82,6 +86,10 @@
     onOpenFile?: (path: string, name: string, gotoLine?: number) => void;
     /** "Pipeline schema" on files and folders (ADR 0068). */
     onPipelines?: (targets: { path: string; isDir: boolean }[]) => void;
+    /** The folder is an Ansible or Terraform project (ADR 0071). */
+    onProject?: (kind: ProjectKind, root: string, action: "open" | "check" | "run" | "plan") => void;
+    projectPinned?: (kind: ProjectKind, root: string) => boolean;
+    onPinProject?: (kind: ProjectKind, root: string) => void;
     onUserNavigate?: (path: string) => void;
   } = $props();
 
@@ -235,6 +243,9 @@
   {onToggleFollowTerminal}
   {onOpenFile}
   {onPipelines}
+  {onProject}
+  {projectPinned}
+  {onPinProject}
   {onUserNavigate}
   requiresConnect
   {sessionReady}

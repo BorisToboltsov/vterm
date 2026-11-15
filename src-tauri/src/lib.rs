@@ -30,6 +30,7 @@ mod partial;
 mod proccwd;
 mod pty;
 mod recording;
+mod scenarios;
 mod secrets;
 mod servers;
 mod servertools;
@@ -480,6 +481,14 @@ pub fn run() {
             commands::drivers::container_run,
             commands::drivers::kubectl_run,
             commands::drivers::ci_run,
+            commands::scenarios::recipe_run,
+            commands::scenarios::iac_run,
+            commands::scenarios::iac_temp,
+            commands::scenarios::iac_read,
+            commands::scenarios::iac_cleanup,
+            scenarios::recipes_scan,
+            scenarios::recipe_save,
+            scenarios::recipe_delete,
             commands::drivers::docker_login,
             commands::drivers::set_registry_secret,
             commands::drivers::delete_registry_secret,

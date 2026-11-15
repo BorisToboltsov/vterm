@@ -6,7 +6,7 @@ import { isAction } from "../ui/ctxmenu";
 describe("panelLabel", () => {
   it("names every tool panel", () => {
     const labels = PANEL_IDS.map(panelLabel);
-    expect(labels).toEqual(["Servers", "SFTP", "Git", "Docker", "k8s", "CI", "AI"]);
+    expect(labels).toEqual(["Servers", "SFTP", "Git", "Docker", "k8s", "CI", "Scenarios", "AI"]);
     // Tabs are told apart by their label alone.
     expect(new Set(labels).size).toBe(PANEL_IDS.length);
   });

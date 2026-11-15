@@ -4,7 +4,7 @@
 use crate::error::{AppError, AppResult};
 use crate::locks::Locked;
 use crate::model::ServerProfile;
-use crate::{backup, now_secs, recording, store, AppState};
+use crate::{backup, now_secs, recording, scenarios, store, AppState};
 use serde::{Deserialize, Serialize};
 use tauri::State;
 
@@ -84,6 +84,19 @@ pub fn export_backup(
         }
     }
 
+    // The recipes of the app's own folder (ADR 0071) under scripts/; a source
+    // folder the user added is theirs, and not copied.
+    if manifest.has(backup::SECTION_SCRIPTS) {
+        if let Some(dir) = scenarios::recipes_dir() {
+            for f in scenarios::scan(&dir, &[]).files {
+                zip.start_file(format!("{}{}", backup::SCRIPTS_PREFIX, f.name), opts)
+                    .map_err(zip_err)?;
+                zip.write_all(f.text.as_bytes())
+                    .map_err(|e| AppError::Message(format!("write recipe: {e}")))?;
+            }
+        }
+    }
+
     zip.finish().map_err(zip_err)?;
     Ok(())
 }
@@ -100,6 +113,8 @@ pub struct ImportResult {
     servers: Option<usize>,
     folders: Option<usize>,
     recordings: Option<usize>,
+    /// Recipes written into the app's folder (`None` when not asked for or absent).
+    scripts: Option<usize>,
     settings: Option<serde_json::Value>,
 }
 
@@ -123,26 +138,32 @@ pub fn import_backup(
     path: String,
     catalog: Option<ImportCatalog>,
     recordings: bool,
+    scripts: Option<bool>,
     state: State<AppState>,
 ) -> AppResult<ImportResult> {
     let bytes = std::fs::read(&path).map_err(|e| AppError::Message(format!("read {path}: {e}")))?;
     if let Some(c) = &catalog {
         backup::check_catalog(&c.servers)?;
     }
-    let (kind, settings, mut archive) = if bytes.starts_with(b"PK") {
+    let (kind, settings, mut archive, take) = if bytes.starts_with(b"PK") {
         let (zip, manifest, doc) = backup::open_archive(bytes)?;
         let settings = if manifest.has(backup::SECTION_SETTINGS) {
             doc.and_then(|d| d.settings)
         } else {
             None
         };
-        let zip = (recordings && manifest.has(backup::SECTION_RECORDINGS)).then_some(zip);
-        (manifest.kind, settings, zip)
+        let take = (
+            recordings && manifest.has(backup::SECTION_RECORDINGS),
+            scripts == Some(true) && manifest.has(backup::SECTION_SCRIPTS),
+        );
+        let zip = (take.0 || take.1).then_some(zip);
+        (manifest.kind, settings, zip, take)
     } else {
         (
             backup::KIND_ALL.to_string(),
             backup::decode(&bytes)?.settings,
             None,
+            (false, false),
         )
     };
 
@@ -151,6 +172,7 @@ pub fn import_backup(
         servers: None,
         folders: None,
         recordings: None,
+        scripts: None,
         settings,
     };
 
@@ -167,9 +189,41 @@ pub fn import_backup(
     // Recordings: each recordings/*.cast goes into the recordings directory
     // under a collision-safe name (never overwrites an existing recording).
     if let Some(zip) = archive.as_mut() {
-        result.recordings = Some(import_recordings(zip)?);
+        if take.0 {
+            result.recordings = Some(import_recordings(zip)?);
+        }
+        if take.1 {
+            result.scripts = Some(import_scripts(zip)?);
+        }
     }
     Ok(result)
+}
+
+/// Write an archive's recipes into the app's recipes folder — a recipe whose
+/// name is taken there stays as it is (the one on this computer wins); the
+/// number written.
+fn import_scripts(zip: &mut backup::Archive) -> AppResult<usize> {
+    use std::io::Read;
+    let Some(dir) = scenarios::recipes_dir() else {
+        return Ok(0);
+    };
+    let mut count = 0usize;
+    for (index, name) in backup::script_entries(zip)? {
+        let mut f = zip
+            .by_index(index)
+            .map_err(|e| AppError::Message(format!("read archive entry: {e}")))?;
+        let mut text = String::new();
+        if f.read_to_string(&mut text).is_err() {
+            tracing::debug!(source = "storage", name = %name, "a recipe of the backup is not text and was skipped");
+            continue;
+        }
+        match scenarios::save_in(&dir, &name, &text, false) {
+            Ok(_) => count += 1,
+            Err(AppError::DestinationExists) => {}
+            Err(e) => return Err(e),
+        }
+    }
+    Ok(count)
 }
 
 /// Extract an archive's recordings; the number extracted.
