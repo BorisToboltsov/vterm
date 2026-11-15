@@ -6,6 +6,7 @@
 // written as a temporary inventory. Pure.
 import type { ServerProfile } from "../types";
 import { isProdServer } from "../ai/aiexec";
+import { defaultLoginId, loginById, serverLogins } from "../servers/logins";
 
 export interface InvHost {
   name: string;
@@ -165,7 +166,9 @@ export function matchServer(host: InvHost, servers: readonly ServerProfile[]): S
   const port = host.port ?? 22;
   const byAddr = servers.filter((s) => s.host.toLowerCase() === addr && s.port === port);
   if (byAddr.length === 1) return byAddr[0];
-  if (byAddr.length > 1) return byAddr.find((s) => host.user !== null && s.username === host.user) ?? byAddr[0];
+  // Any login of the server counts (ADR 0074): the inventory may name any of them.
+  if (byAddr.length > 1)
+    return byAddr.find((s) => host.user !== null && serverLogins(s).some((l) => l.username === host.user)) ?? byAddr[0];
   const byName = servers.filter((s) => s.alias.toLowerCase() === host.name.toLowerCase());
   return byName.length === 1 ? byName[0] : null;
 }
@@ -215,9 +218,11 @@ export function catalogInventory(picked: readonly ServerProfile[], local: boolea
     for (let i = 2; taken.has(name); i++) name = `${inventoryName(s.alias)}-${i}`;
     taken.add(name);
     names[s.id] = name;
-    lines.push(`        ${name}:`, `          ansible_host: ${yq(s.host)}`, `          ansible_port: ${s.port}`, `          ansible_user: ${yq(s.username)}`);
-    if (s.authMethod === "password") asksPassword.push(s.id);
-    if (local && s.authMethod === "key" && s.keyPath) lines.push(`          ansible_ssh_private_key_file: ${yq(s.keyPath)}`);
+    // The default login of each server (ADR 0074): whom a plain connect logs in as.
+    const login = loginById(s, defaultLoginId(s)) ?? serverLogins(s)[0];
+    lines.push(`        ${name}:`, `          ansible_host: ${yq(s.host)}`, `          ansible_port: ${s.port}`, `          ansible_user: ${yq(login.username)}`);
+    if (login.authMethod === "password") asksPassword.push(s.id);
+    if (local && login.authMethod === "key" && login.keyPath) lines.push(`          ansible_ssh_private_key_file: ${yq(login.keyPath)}`);
     if (local && s.proxy?.kind === "jump") {
       const p = s.proxy;
       const jump = `${p.username}@${p.host}:${p.port}`;

@@ -42,16 +42,26 @@ export function forgetSecrets(id: string): Promise<void> {
   return call<void>("forget_secrets", { id });
 }
 
-/** Forget only the login secret a server turned down — not its sudo password, not its proxy's. */
-export function forgetLoginSecret(id: string): Promise<void> {
-  return call<void>("forget_login_secret", { id });
+/** Forget only the login secret a server turned down — of that login (`""` — the
+ *  first; ADR 0074) — not its sudo password, not its proxy's. */
+export function forgetLoginSecret(id: string, login = ""): Promise<void> {
+  return call<void>("forget_login_secret", { id, login });
 }
 
 /** Store a server's own secret (password or key passphrase) in the OS keychain;
  *  the kind follows the server's auth method. Returns the updated profile — the
  *  saved-secret hint it carries is the one the backend just wrote. */
-export function saveServerSecret(serverId: string, secret: string): Promise<ServerProfile> {
-  return call<ServerProfile>("save_server_secret", { serverId, secret });
+export function saveServerSecret(serverId: string, secret: string, login?: string): Promise<ServerProfile> {
+  return call<ServerProfile>("save_server_secret", { serverId, secret, login: login ?? null });
+}
+
+/**
+ * Keep a user typed for one connection as a login of the server ("Add to the
+ * profile", ADR 0074): it logs in with a password. Returns the server as it is
+ * now and the new login's id.
+ */
+export function addServerLogin(serverId: string, username: string): Promise<{ server: ServerProfile; loginId: string }> {
+  return call("add_server_login", { serverId, username });
 }
 
 /** Store a server's proxy/jump host secret (password or passphrase) in the OS

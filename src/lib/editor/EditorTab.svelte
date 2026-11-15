@@ -54,6 +54,8 @@
     onCheckSudo,
     onSaveWithSudo,
     onSaveCopy,
+    openAs = [],
+    onOpenAs,
     onDismissSaveIssue,
     onLintMissing,
     groupServers = null,
@@ -71,6 +73,9 @@
     onCheckSudo?: () => void;
     onSaveWithSudo?: () => void;
     onSaveCopy?: () => void;
+    /** The server's other logins this file can be opened as when sudo will not (ADR 0074). */
+    openAs?: { id: string; username: string }[];
+    onOpenAs?: (loginId: string) => void;
     onDismissSaveIssue?: () => void;
     /** Server linter isn't installed — let the page offer to install it. */
     onLintMissing?: (tool: string) => void;
@@ -792,6 +797,16 @@
         <div class="mt-3 flex flex-wrap gap-2">
           {#if doc.saveIssue === "permission" && doc.source === "sftp" && !doc.sudo}
             <button class="rounded bg-accent px-2 py-1 text-caption text-panel-alt" onclick={() => onSaveWithSudo?.()}>{t("editor.saveWithSudo")}</button>
+          {/if}
+          {#if refusal}
+            <!-- sudo will not here: the same file under another login of the server (ADR 0074). -->
+            {#each openAs.slice(0, 2) as l (l.id)}
+              <button
+                class="flex items-center gap-1 rounded bg-accent px-2 py-1 text-caption text-panel-alt"
+                data-testid="editor-open-as"
+                onclick={() => onOpenAs?.(l.id)}
+              ><Icon name="users" size={12} />{t("logins.openAs", { user: l.username })}</button>
+            {/each}
           {/if}
           <button class="rounded border border-edge px-2 py-1 text-caption text-text hover:bg-edge" onclick={() => onSaveCopy?.()}>{t("editor.saveCopy")}</button>
         </div>

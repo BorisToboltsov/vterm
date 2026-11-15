@@ -29,6 +29,8 @@
   import type { MenuItem, OpenMenu } from "../ui/ctxmenu";
   import { writeClipboard } from "../app/clipboard";
   import { t } from "../i18n";
+  import type { TabLogin } from "../types";
+  import { choiceUser, defaultLoginId, defaultUser, serverLogins } from "./logins";
 
   let {
     servers,
@@ -39,6 +41,7 @@
     onSelect,
     onSelectFolder,
     onConnect,
+    onConnectAs,
     onAddServer,
     onEditServer,
     onDuplicateServer,
@@ -59,6 +62,8 @@
     onSelect: (id: string) => void;
     onSelectFolder: (path: string) => void;
     onConnect: () => void;
+    /** Connect with a login of the server (ADR 0074), or `"pick"` — ask which. */
+    onConnectAs?: (server: ServerProfile, login: TabLogin | "pick") => void;
     onAddServer: () => void;
     onEditServer: (server: ServerProfile) => void;
     onDuplicateServer: (server: ServerProfile) => void;
@@ -135,10 +140,37 @@
         {
           icon: "plug",
           label: t("common.connect"),
+          // Whom a plain connect logs in as (ADR 0074).
+          hint: choiceUser(server, undefined) ?? undefined,
           onSelect: () => {
             onSelect(server.id);
             onConnect();
           },
+        },
+        {
+          kind: "submenu",
+          key: "connect-as",
+          icon: "users",
+          label: t("logins.connectAs"),
+          items: [
+            ...serverLogins(server)
+              .filter((l) => l.id !== defaultLoginId(server))
+              .map((l) => ({
+                label: l.username,
+                hint: l.authMethod === "key" ? t("logins.byKey") : t("logins.byPassword"),
+                onSelect: () => {
+                  onSelect(server.id);
+                  onConnectAs?.(server, { id: l.id });
+                },
+              })),
+            {
+              label: t("logins.otherMenu"),
+              onSelect: () => {
+                onSelect(server.id);
+                onConnectAs?.(server, "pick");
+              },
+            },
+          ],
         },
         { icon: "pencil", label: t("tree.editServer"), onSelect: () => onEditServer(server) },
         { icon: "copy", label: t("tree.duplicateServer"), onSelect: () => onDuplicateServer(server) },
@@ -146,7 +178,7 @@
         {
           icon: "copy",
           label: t("ctx.copyHost"),
-          onSelect: () => void writeClipboard(`${server.username}@${server.host}`),
+          onSelect: () => void writeClipboard(`${defaultUser(server)}@${server.host}`),
         },
         {
           icon: "copy",
@@ -241,7 +273,9 @@
       if (row.kind === "folder") toggleFolder(row.path);
       else {
         onSelect(row.server.id);
-        onConnect();
+        // ⌥↵ asks which login (ADR 0074).
+        if (event.altKey && onConnectAs) onConnectAs(row.server, "pick");
+        else onConnect();
       }
     } else if (event.key === "Delete" || event.key === "Backspace") {
       event.preventDefault();
@@ -498,7 +532,7 @@
             onSelect(row.server.id);
             listEl?.focus();
           }}
-          ondblclick={onConnect}
+          ondblclick={(e) => (e.altKey && onConnectAs ? onConnectAs(row.server, "pick") : onConnect())}
         >
           {@render guides(row.depth)}
           <!-- Empty toggle column so servers align with folder icons. -->
@@ -541,7 +575,7 @@
               {/if}
             </div>
             <div class="text-xs text-muted">
-              {row.server.username}@{row.server.host}:{row.server.port}
+              {defaultUser(row.server)}@{row.server.host}:{row.server.port}
             </div>
             {#if badges.prod || badges.tags.length > 0}
               <div class="mt-1 flex flex-wrap gap-1">
@@ -650,7 +684,7 @@
   >
     <div class="font-medium">{draggingServer.alias}</div>
     <div class="truncate text-xs text-muted">
-      {draggingServer.username}@{draggingServer.host}:{draggingServer.port}
+      {defaultUser(draggingServer)}@{draggingServer.host}:{draggingServer.port}
     </div>
   </div>
 {/if}

@@ -67,7 +67,28 @@ export interface ServerProfile {
   icon: string;
   /** Colour key tinting the pictogram (see servericons.ts); "" = muted. */
   iconColor: string;
+  /** The server's other logins (ADR 0074); the profile's own `username`/
+   *  `authMethod`/`keyPath` are its first login, id `""`. */
+  logins: ServerLogin[];
+  /** The login a plain "Connect" uses: `""` — the first; an id of `logins`. */
+  defaultLogin: string;
+  /** Ask which login on every connect. */
+  askLogin: boolean;
 }
+
+/** Another login of a server (mirrors model.rs `ServerLogin`). */
+export interface ServerLogin {
+  id: string;
+  username: string;
+  authMethod: AuthMethod;
+  keyPath: string | null;
+  hasSavedPassword: boolean;
+  hasSavedSudo: boolean;
+}
+
+/** Which login a tab connects with (model.rs `LoginChoice`): a saved one
+ *  (`""` — the profile's own), or a user typed for this connection only. */
+export type TabLogin = { id: string } | { once: string };
 
 /** Why sudo will not, whatever the password (mirrors sudo.rs `Refusal`). */
 export type SudoRefusal =
@@ -182,6 +203,10 @@ export interface NewServerProfile {
   pathSync: string | null;
   icon: string;
   iconColor: string;
+  /** The other logins (ADR 0074); a new one's id is named by the form. */
+  logins: Pick<ServerLogin, "id" | "username" | "authMethod" | "keyPath">[];
+  defaultLogin: string;
+  askLogin: boolean;
 }
 
 /** Metadata about a stored session recording (from its asciicast header). */

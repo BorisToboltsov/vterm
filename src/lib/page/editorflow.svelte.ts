@@ -29,6 +29,7 @@ import { orNull, swallow } from "../api/diag";
 import { isProdServer } from "../ai/aiexec";
 import { elevateStep, REFUSAL_HINT, REFUSAL_TITLE, savesThroughSudo, sudoAnswer, triedNote, type SudoAnswer } from "../sudo/sudo";
 import type { ServerProfile, SudoRoute } from "../types";
+import { tabLoginName } from "../servers/logins";
 import type { MessageKey } from "../i18n";
 import { couldBeNginxInclude, editorLangOrPlain, editorLangWithDialect, editorLangWithIncludes } from "../editor/editorlang";
 import { baseName, parentOf } from "../files/fspath";
@@ -495,7 +496,7 @@ export function createEditorFlow(deps: EditorDeps) {
     /** Whose sudo the prompt asks for (`user@server`), and whether it is prod. */
     sudoWho(sid: string): { who: string; prod: boolean } {
       const server = serverOf(sid);
-      return { who: server ? `${server.username}@${server.alias}` : "", prod: prodOf(sid) };
+      return { who: server ? `${tabLoginName(server, deps.findTab(sid)?.login)}@${server.alias}` : "", prod: prodOf(sid) };
     },
     maxBytes,
     openFile,

@@ -32,7 +32,7 @@ export interface UsageRow {
 
 function usage(
   servers: readonly ServerProfile[],
-  own: (s: ServerProfile) => string | null,
+  own: (s: ServerProfile) => (string | null)[],
   jump: (s: ServerProfile) => string | null,
 ): UsageRow[] {
   const rows = new Map<string, UsageRow>();
@@ -42,8 +42,8 @@ function usage(
     return r;
   };
   for (const s of servers) {
-    const a = own(s);
-    if (a) row(a).servers++;
+    // A value a server uses in several of its logins counts once for it.
+    for (const a of new Set(own(s))) if (a) row(a).servers++;
     const b = jump(s);
     if (b) row(b).jumps++;
   }
@@ -59,7 +59,8 @@ const present = (v: string | null | undefined): string | null => (v && v.trim() 
 export const loginRows = (servers: readonly ServerProfile[]): UsageRow[] =>
   usage(
     servers,
-    (s) => present(s.username),
+    // Every login of a server (ADR 0074), not only its first.
+    (s) => [present(s.username), ...(s.logins ?? []).map((l) => present(l.username))],
     (s) => present(s.proxy?.username),
   );
 
@@ -67,7 +68,7 @@ export const loginRows = (servers: readonly ServerProfile[]): UsageRow[] =>
 export const keyPathRows = (servers: readonly ServerProfile[]): UsageRow[] =>
   usage(
     servers,
-    (s) => present(s.keyPath),
+    (s) => [present(s.keyPath), ...(s.logins ?? []).map((l) => present(l.keyPath))],
     (s) => present(s.proxy?.keyPath),
   );
 
@@ -103,6 +104,18 @@ export function remapServers(
       hasSavedPassword: mine?.hasSavedPassword ?? false,
       // The keychain is this machine's: a sudo password is "saved" only here.
       hasSavedSudo: mine?.hasSavedSudo ?? false,
+      // Its other logins (ADR 0074): their users change by the same map; what is
+      // in the keychain is said only for a login this machine has.
+      logins: (s.logins ?? []).map((l) => {
+        const here = mine?.logins?.find((m) => m.id === l.id);
+        return {
+          ...l,
+          username: l.username.trim() === "" ? l.username : replaced(l.username, logins),
+          keyPath: replacedPath(l.keyPath, keys),
+          hasSavedPassword: here?.hasSavedPassword ?? false,
+          hasSavedSudo: here?.hasSavedSudo ?? false,
+        };
+      }),
       proxy: s.proxy
         ? {
             ...s.proxy,

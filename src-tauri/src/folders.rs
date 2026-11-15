@@ -121,10 +121,10 @@ pub async fn delete_folder_with_servers(path: String, state: State<'_, AppState>
     // list on disk and the removed set disagree.
     let (removed_ids, servers_snapshot) = {
         let mut servers = state.servers.locked();
-        let removed_ids: Vec<String> = servers
+        let removed_ids: Vec<(String, Vec<String>)> = servers
             .iter()
             .filter(|s| group_in_subtree(s.group.as_deref(), &path))
-            .map(|s| s.id.clone())
+            .map(|s| (s.id.clone(), s.login_ids()))
             .collect();
         servers.retain(|s| !group_in_subtree(s.group.as_deref(), &path));
         (removed_ids, servers.clone())
@@ -133,8 +133,8 @@ pub async fn delete_folder_with_servers(path: String, state: State<'_, AppState>
 
     // Best-effort keychain wipe + live-session teardown for each removed server.
     let mut sessions = state.sessions.lock().await;
-    for id in &removed_ids {
-        secrets::delete_all(id).log_warn(
+    for (id, logins) in &removed_ids {
+        secrets::delete_all(id, logins).log_warn(
             "servers",
             "the server's saved passwords were not removed from the keychain",
         );

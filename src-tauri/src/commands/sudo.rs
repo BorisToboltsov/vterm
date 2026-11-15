@@ -15,18 +15,21 @@ use serde::Serialize;
 use tauri::State;
 use zeroize::Zeroizing;
 
-/// The saved passwords sudo may be offered on this session: the server's sudo
-/// password, and its login password when it logs in with one. Read from the
+/// The saved passwords sudo may be offered on this session: the sudo password
+/// of the login it logged in as, and that login's password when it logs in with
+/// one (ADR 0074 — each login its own; a one-off login has none). Read from the
 /// keychain here and nowhere else in the bridge.
 fn saved_for(state: &AppState, session_id: &str) -> Saved {
-    let Some(server) = state.session_server(session_id) else {
+    let Some(scope) = state.session_login(session_id).and_then(|l| {
+        let password = l.auth_method == AuthMethod::Password;
+        l.scope.map(|s| (s, password))
+    }) else {
         return Saved::default();
     };
+    let (scope, password) = scope;
     Saved {
-        sudo: secrets::get_sudo_password(&server.id),
-        login: (server.auth_method == AuthMethod::Password)
-            .then(|| secrets::get_password(&server.id))
-            .flatten(),
+        sudo: secrets::get_sudo_password(&scope),
+        login: password.then(|| secrets::get_password(&scope)).flatten(),
     }
 }
 
@@ -142,13 +145,23 @@ pub async fn sudo_check(
         via,
         remember_failed: false,
     };
+    let login = state.session_login(&session_id);
+    let place = login
+        .as_ref()
+        .and_then(|l| Some((l.scope.clone()?, l.login_id.clone()?)));
     if remember && via == Via::Typed {
-        if let (Some(pw), Some(server)) = (&typed, state.session_server(&session_id)) {
-            let saved = secrets::set_sudo_password(&server.id, pw).and_then(|()| {
+        if let (Some(pw), Some(server), Some((scope, login_id))) =
+            (&typed, state.session_server(&session_id), place)
+        {
+            let saved = secrets::set_sudo_password(&scope, pw).and_then(|()| {
                 let snapshot = {
                     let mut servers = state.servers.locked();
-                    if let Some(p) = servers.iter_mut().find(|p| p.id == server.id) {
-                        p.has_saved_sudo = true;
+                    if let Some((_, sudo)) = servers
+                        .iter_mut()
+                        .find(|p| p.id == server.id)
+                        .and_then(|p| p.login_hints_mut(&login_id))
+                    {
+                        *sudo = true;
                     }
                     servers.clone()
                 };

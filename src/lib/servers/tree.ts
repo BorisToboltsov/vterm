@@ -3,6 +3,7 @@
 
 import type { ServerProfile } from "../types";
 import { isLegacyProdTag, isProdServer } from "../ai/aiexec";
+import { serverLogins } from "./logins";
 
 /** Parent folder path of `p` ("" for a top-level path). */
 export const parentOf = (p: string): string => {
@@ -45,7 +46,7 @@ export function filterServers(
     (s) =>
       s.alias.toLowerCase().includes(q) ||
       s.host.toLowerCase().includes(q) ||
-      s.username.toLowerCase().includes(q) ||
+      serverLogins(s).some((l) => l.username.toLowerCase().includes(q)) ||
       groupOf(s).toLowerCase().includes(q) ||
       s.tags.some((t) => t.toLowerCase().includes(q)) ||
       (isProdServer(s) && "prod".includes(q)),

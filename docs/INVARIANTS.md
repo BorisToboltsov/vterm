@@ -880,6 +880,11 @@ Git, Docker, k8s, сетевые пробы и метрики — **один к�
   отдельно. Гейт `servercreation.guard`.
 - **Секрет proxy/jump host** — в keychain под `{id}::proxy`; пароль sudo — под `vterm:sudo/{id}`
   (`hasSavedSudo` — подсказка формы); оба чистятся в `delete_all`/`forget_secrets`.
+- **Секреты — у логина, логин — у вкладки** (ADR 0074). Первый логин — поля профиля (id `""`), прочие —
+  `logins`; область keychain — `secrets::login_scope`, у первого — id сервера. Вкладка держит свой
+  `login` с открытия (в слоте, в пакете, в ⌘T); исчезнувший не подменяется — `login-gone` и выбор.
+  Разовый логин ничего не сохраняет; отказ входа забывает пароль только этого логина; пароль sudo
+  сессии — её логина. Гейт `every_login_reads_its_own_secrets`, `backupimport.guard`.
 - **Копии секретов — в `zeroize::Zeroizing`, не логируются.** Host-key по умолчанию — не
   «accept».
 - **После входа подключение уже не проваливается:** сохранение секрета и `hasSavedPassword` —
@@ -1420,6 +1425,7 @@ Git, Docker, k8s, сетевые пробы и метрики — **один к�
 | `what_the_git_panel_runs_is_allowed` · `what_the_docker_panel_runs_is_allowed` · `what_the_k8s_panel_runs_is_allowed` (Rust) | Политики argv драйверов пускают формы фронта и ничего опасного |
 | `what_the_checks_of_a_project_run_is_allowed` · `a_recipes_script_and_password_never_reach_a_command_line` (Rust) | Проверки проекта — только чтение того, что он такое, без state; рецепт и пароль sudo — через stdin фиксированной обёртки |
 | `a_sudo_password_reaches_the_backend_only_through_the_check` (Rust) | Пароль sudo принимает из окна только `sudo_check`; сохранённый читает только `commands/sudo.rs` |
+| `every_login_reads_its_own_secrets` (Rust) | Подключение читает и пишет секреты по области логина, не по id сервера; разовый логин не сохраняет ничего |
 | `what_the_ci_panel_runs_is_allowed` · `the_ci_panel_reaches_only_the_runs_of_a_repository` (Rust) | Политика CI пускает формы фронта и только пути прогонов: другие команды и эндпоинты, неявная запись, опция, читающая файл, — отказ |
 | `the_cluster_is_changed_only_in_the_shapes_the_panel_offers` · `a_secrets_value_is_never_read_by_any_road` (Rust) | kubectl меняет кластер только откатом Deployment и запуском CronJob; Secret читается только шаблоном ключей, без `describe` и `--raw` |
 | `a_compose_command_reads_only_the_definition_its_stack_was_brought_up_from` · `a_compose_argv_is_held_to_its_stack_before_it_runs` (Rust) | Каталог, файлы и env-файл compose — из меток стека, и сверка идёт до исполнения |

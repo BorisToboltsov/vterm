@@ -2,6 +2,7 @@
 // and the status-bar/monitoring metric probes (mirror of metrics.rs types).
 import { call } from "./call";
 import { createOrderedWriter } from "../terminal/termwrite";
+import type { TabLogin } from "../types";
 
 // ── SSH session ───────────────────────────────────────────────────────────────
 
@@ -12,9 +13,10 @@ export interface ConnectPlan {
   secretLabel: string;
 }
 
-/** Ask the backend whether connecting needs a typed secret (or keychain has it). */
-export function connectPlan(id: string): Promise<ConnectPlan> {
-  return call<ConnectPlan>("connect_plan", { id });
+/** Ask the backend whether connecting with `login` (absent — the default one,
+ *  ADR 0074) needs a typed secret, or the keychain has it. */
+export function connectPlan(id: string, login?: TabLogin): Promise<ConnectPlan> {
+  return call<ConnectPlan>("connect_plan", { id, login: login ?? null });
 }
 
 /**
@@ -38,6 +40,7 @@ export interface ConnectOutcome {
 export function connectSession(
   sessionId: string,
   serverId: string,
+  login: TabLogin | undefined,
   secret: string | null,
   remember: boolean,
   cols: number,
@@ -47,6 +50,7 @@ export function connectSession(
   return call<ConnectOutcome>("connect_session", {
     sessionId,
     serverId,
+    login: login ?? null,
     secret,
     remember,
     cols,

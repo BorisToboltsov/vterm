@@ -86,7 +86,7 @@ describe("invoke wrappers pass the right command + args", () => {
   });
 
   it("connectSession spreads the options object into flat args", async () => {
-    await api.connectSession("sess", "srv", "pw", true, 80, 24, {
+    await api.connectSession("sess", "srv", { id: "dep" }, "pw", true, 80, 24, {
       termType: "xterm-256color",
       connectTimeout: 10,
       keepaliveInterval: 15,
@@ -95,6 +95,7 @@ describe("invoke wrappers pass the right command + args", () => {
     expect(invoke).toHaveBeenCalledWith("connect_session", {
       sessionId: "sess",
       serverId: "srv",
+      login: { id: "dep" },
       secret: "pw",
       remember: true,
       cols: 80,
@@ -347,7 +348,9 @@ describe("remaining invoke wrappers", () => {
     invoke.mockResolvedValue(undefined);
     const cases: [Promise<unknown>, string, Record<string, unknown>][] = [
       [api.forgetSecrets("id1"), "forget_secrets", { id: "id1" }],
-      [api.forgetLoginSecret("id1"), "forget_login_secret", { id: "id1" }],
+      [api.forgetLoginSecret("id1"), "forget_login_secret", { id: "id1", login: "" }],
+      [api.forgetLoginSecret("id1", "dep"), "forget_login_secret", { id: "id1", login: "dep" }],
+      [api.addServerLogin("id1", "ops"), "add_server_login", { serverId: "id1", username: "ops" }],
       [api.listFolders(), "list_folders", undefined as never],
       [api.readClipboardText(), "read_clipboard_text", undefined as never],
       [
@@ -372,7 +375,8 @@ describe("remaining invoke wrappers", () => {
       [api.tabContentKeepOnly([]), "tab_content_keep_only", { sessionIds: [] }],
       [api.shellExists("pwsh.exe"), "shell_exists", { program: "pwsh.exe" }],
       [api.deleteFolder("Prod"), "delete_folder", { path: "Prod" }],
-      [api.connectPlan("id1"), "connect_plan", { id: "id1" }],
+      [api.connectPlan("id1"), "connect_plan", { id: "id1", login: null }],
+      [api.connectPlan("id1", { once: "ops" }), "connect_plan", { id: "id1", login: { once: "ops" } }],
       [api.resizePty("s", 80, 24), "resize_pty", { sessionId: "s", cols: 80, rows: 24 }],
       [api.disconnect("s"), "disconnect", { sessionId: "s" }],
       [api.fetchMetrics("s"), "fetch_metrics", { sessionId: "s" }],

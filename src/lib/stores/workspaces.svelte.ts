@@ -72,6 +72,13 @@ export interface EditorDoc {
    * showing a load that is not happening.
    */
   awaiting?: boolean;
+  /**
+   * A file carried here from another tab of the same server, logged in as
+   * someone else ("Open as admin", ADR 0074): its edits and the version they
+   * were made on. Filled once the connection is open — not read again, so a
+   * save still checks against the version the edits started from.
+   */
+  carried?: Pick<EditorDoc, "content" | "baseContent" | "baseSha256" | "eol" | "encoding" | "mode">;
   /** Load error message, or null. */
   loadError: string | null;
   /** Opened/saved with sudo (root-owned file); save reuses it. The password is
@@ -226,6 +233,25 @@ export function restoreWorkspace(sessionId: string, docs: readonly RestoredDoc[]
   };
 }
 
+/**
+ * Carry a file, edits and all, into a new connection to the same server under
+ * another login (ADR 0074): it waits there like a file of the previous launch,
+ * and is filled from what it carries once the connection is open.
+ */
+export function carryEditor(sessionId: string, doc: EditorDoc): void {
+  restoreWorkspace(sessionId, [{ id: doc.id, source: doc.source, path: doc.path, name: doc.name, lang: doc.lang }], null);
+  updateDoc(sessionId, doc.id, {
+    carried: {
+      content: doc.content,
+      baseContent: doc.baseContent,
+      baseSha256: doc.baseSha256,
+      eol: doc.eol,
+      encoding: doc.encoding,
+      mode: doc.mode,
+    },
+  });
+}
+
 /** The files of a connection still waiting for it to open (v1.36). */
 export function awaitingDocs(sessionId: string): EditorDoc[] {
   return (workspacesState.map[sessionId]?.editors ?? []).filter((e) => e.awaiting);
@@ -364,6 +390,7 @@ export function fillEditor(sessionId: string, id: string, file: TextFile, lang?:
   updateDoc(sessionId, id, {
     ...(lang ? { lang } : {}),
     awaiting: false,
+    carried: undefined,
     content: file.content,
     baseContent: file.content,
     baseSha256: file.sha256,

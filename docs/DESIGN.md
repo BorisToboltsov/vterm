@@ -278,6 +278,21 @@ Uppercase-микротекст — `text-caption uppercase tracking-wider` (и �
   (проверка), `border-accent/50 text-accent` (пройдёт без ввода, значок `key` 11), `border-warn/50
   text-warn` (нужен пароль), `border-bad/50 text-bad` (отказ, значок `lock` 11, без нажатия). Правка от
   root — чип `rounded bg-warn/15 px-1.5 py-0.5 text-caption text-warn` с текстом `root` рядом с путём.
+- **Логины сервера** (ADR 0074). В форме — строки других логинов
+  ([ExtraLogins](../src/lib/servers/ExtraLogins.svelte)) в рамке `rounded border border-edge`:
+  - звезда 13 (`text-warn` у логина по умолчанию, иначе `text-muted`), имя `font-mono`, чип «как входит»
+    `rounded border border-edge px-1.5 text-caption text-muted`, справа «по умолчанию» `text-caption` и
+    шеврон;
+  - раскрытая строка — `bg-panel`, сетка `5rem 1fr` из полей «Логин», «Вход», ключа и пароля, внизу
+    «Удалить логин» `text-caption text-danger`;
+  - под рамкой — «+ Добавить логин» `text-xs text-accent`, «При подключении» — `SegmentedControl`.
+
+  Быстрый выбор ([LoginPicker](../src/lib/servers/LoginPicker.svelte)) — `Modal w-[26rem]`: адрес
+  `font-mono text-meta text-muted`, строки `rounded px-2 py-1 text-xs` (выбранная — `bg-edge`),
+  номер `font-mono text-muted`, звезда 12 `text-warn`, чип справа; линия `h-px bg-edge`, поле «Другой»
+  `font-mono` (неверное имя — `border-bad`), «Добавить в профиль» `text-caption`, подсказка клавиш
+  `text-caption text-muted`. На вкладке логин не по умолчанию — `font-mono text-accent` перед именем
+  сервера (`deploy@`).
 - **Тосты** ([Toast.svelte](../src/lib/ui/Toast.svelte) + [стор](../src/lib/stores/toasts.svelte.ts))
   — контейнер снизу-справа, тон по типу: error → `danger` (`alert`), success → `ok` (`check`),
   info → `accent` (`info`); авто-дисмисс по `TOAST_TTL` (у критичных сообщений TTL = 0).

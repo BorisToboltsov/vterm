@@ -50,6 +50,12 @@ pub enum AppError {
     #[error("unknown server")]
     UnknownServer,
 
+    /// The login a tab connects with was removed from its server's profile
+    /// (`login-gone`, ADR 0074): the tab waits and says so, it does not guess
+    /// another login.
+    #[error("login-gone: this login is no longer in the server's profile")]
+    LoginGone,
+
     /// The file changed on the server since the editor opened it (its current
     /// hash no longer matches the one the editor read). The frontend matches the
     /// `file-changed` marker to warn before overwriting prod config.

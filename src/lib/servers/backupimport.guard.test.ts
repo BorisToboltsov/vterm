@@ -80,12 +80,14 @@ export function frontendViolations(dialog: string, settingsSection: string, rema
     out.push("the import is not given the chosen catalog");
   }
   const r = strip(body(strip(remap), /export function remapServers\(/));
-  if ((r.match(/hasSavedPassword:/g) ?? []).length !== 2) {
-    out.push("the saved-password hint is set other than in the two places");
+  // The server's own login, its jump host's, and each other login's (ADR 0074).
+  if ((r.match(/hasSavedPassword:/g) ?? []).length !== 3) {
+    out.push("the saved-password hint is set other than in the three places");
   }
   if (
     !/hasSavedPassword:\s*mine\?\.hasSavedPassword\s*\?\?\s*false/.test(r) ||
-    !/hasSavedPassword:\s*mine\?\.proxy\?\.hasSavedPassword\s*\?\?\s*false/.test(r)
+    !/hasSavedPassword:\s*mine\?\.proxy\?\.hasSavedPassword\s*\?\?\s*false/.test(r) ||
+    !/hasSavedPassword:\s*here\?\.hasSavedPassword\s*\?\?\s*false/.test(r)
   ) {
     out.push("the saved-password hint is taken from the backup");
   }
@@ -128,6 +130,16 @@ describe("backup import guard", () => {
     const src = read(REMAP).replace(
       "hasSavedPassword: mine?.hasSavedPassword ?? false",
       "hasSavedPassword: mine?.hasSavedPassword ?? s.hasSavedPassword",
+    );
+    expect(frontendViolations(read(DIALOG), read(SECTION), src)).toContain(
+      "the saved-password hint is taken from the backup",
+    );
+  });
+
+  it("catches another login's hint carried over from the backup (ADR 0074)", () => {
+    const src = read(REMAP).replace(
+      "hasSavedPassword: here?.hasSavedPassword ?? false",
+      "hasSavedPassword: here?.hasSavedPassword ?? l.hasSavedPassword",
     );
     expect(frontendViolations(read(DIALOG), read(SECTION), src)).toContain(
       "the saved-password hint is taken from the backup",

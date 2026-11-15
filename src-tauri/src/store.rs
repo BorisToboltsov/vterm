@@ -463,6 +463,9 @@ mod tests {
             notes: String::new(),
             icon: String::new(),
             icon_color: String::new(),
+            logins: Vec::new(),
+            default_login: String::new(),
+            ask_login: false,
         }
     }
 

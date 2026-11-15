@@ -3,7 +3,7 @@ import type { MessageKey } from "../i18n";
 
 /** Action offered on the SSH failure overlay: reconnect from scratch, or reopen
  *  the secret prompt to re-authenticate. */
-export type SshErrorAction = "reconnect" | "reauth";
+export type SshErrorAction = "reconnect" | "reauth" | "pickLogin";
 
 /** Content for the SSH connecting-overlay's failure state. `titleKey`/`detailKey`
  *  are i18n keys the caller resolves with `t()`; `detailText` is already-plain
@@ -60,6 +60,10 @@ export function sshErrorView(status: string, currentPhase: ConnPhase): SshErrorV
       showSteps: true,
       action: "reconnect",
     };
+  }
+  // The tab's login was removed from the profile (ADR 0074): pick another, not retry.
+  if (raw.includes("login-gone")) {
+    return { titleKey: "logins.gone", phase: "authenticating", showSteps: false, action: "pickLogin" };
   }
   if (raw.includes("auth-cancelled")) {
     return {

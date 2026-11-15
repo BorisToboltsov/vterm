@@ -14,6 +14,7 @@
   import { noteStats } from "./notes";
   import { t } from "../i18n";
   import type { ServerProfile } from "../types";
+  import { defaultUser } from "./logins";
 
   let {
     server,
@@ -82,7 +83,7 @@
     <div class="mb-2 flex items-center gap-2">
       <Icon name="note" size={15} class="shrink-0 text-muted" />
       <span class="min-w-0 truncate text-xs text-muted">
-        {server.username}@{server.host}:{server.port}
+        {defaultUser(server)}@{server.host}:{server.port}
       </span>
       <div class="ml-auto flex items-center gap-1 rounded border border-edge p-0.5">
         <button

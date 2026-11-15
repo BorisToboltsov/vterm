@@ -26,10 +26,10 @@ vi.mock("../stores/toasts.svelte", () => toasts);
 import { createRestoreFlow, type RestoreFlow } from "./restoreflow.svelte";
 import { settings } from "../settings/settings.svelte";
 import { addTab, emptyLayout } from "../layout/splitlayout";
-import { findTab, NOT_CONNECTED, resetTabs, tabsState, type Tab } from "../stores/tabs.svelte";
+import { findTab, NOT_CONNECTED, openTab, resetTabs, tabsState, type Tab } from "../stores/tabs.svelte";
 import { savedWindow, type TabFacts } from "../tabs/tabrestore";
 import { contentRecord } from "../tabs/tabcontent";
-import { getWorkspace, workspacesState } from "../stores/workspaces.svelte";
+import { carryEditor, getWorkspace, workspacesState, type EditorDoc } from "../stores/workspaces.svelte";
 import { peekDockState, resetDockState } from "../stores/dockstate.svelte";
 import { getChat, peekChat, removeChat } from "../stores/aichat.svelte";
 import type { TermSnapshot } from "../windows/tabhandoff";
@@ -207,7 +207,7 @@ describe("restore flow: opening a waiting tab", () => {
     expect(status("web")).toEqual({ waiting: null, status: "Connecting…", gen: 1 });
     expect(status("l")).toMatchObject({ waiting: null, gen: 1 });
     expect(status("pw")?.waiting).toBe("manual");
-    expect(askSecret).toHaveBeenCalledWith(expect.objectContaining({ id: "srv-pw" }), "Passphrase", "pw");
+    expect(askSecret).toHaveBeenCalledWith(expect.objectContaining({ id: "srv-pw" }), "Passphrase", "pw", undefined);
     // A local shell needs no question about a secret.
     expect(api.connectPlan.mock.calls.map(([id]) => id)).toEqual(["srv-web", "srv-pw"]);
     cleanup();
@@ -339,6 +339,39 @@ describe("restore flow: where a tab was (v1.36)", () => {
     const [hosts, gone] = getWorkspace("a").editors;
     expect(hosts).toMatchObject({ awaiting: false, loading: false, content: "127.0.0.1 localhost\n", loadError: null });
     expect(gone).toMatchObject({ awaiting: false, loading: false, loadError: "Error: no such file" });
+    cleanup();
+  });
+
+  it("a file carried from another login's tab comes with its edits, against the version they started from (ADR 0074)", async () => {
+    const { flow, cleanup } = harness([server("srv-a")]);
+    const doc = {
+      id: "d1",
+      source: "sftp",
+      path: "/etc/nginx/nginx.conf",
+      name: "nginx.conf",
+      lang: { kind: "nginx", label: "Nginx" },
+      content: "edited",
+      baseContent: "original",
+      baseSha256: "sha-original",
+      eol: "lf",
+      encoding: "utf-8",
+      mode: 0o644,
+    } as unknown as EditorDoc;
+    const sid = openTab("srv-a", "alias-srv-a", null, false, undefined, { id: "adm" });
+    carryEditor(sid, doc);
+    expect(getWorkspace(sid).editors[0]).toMatchObject({ awaiting: true, path: "/etc/nginx/nginx.conf" });
+    flow.connected(sid);
+    await settled();
+    // Not read again: the save checks against the version the edits started from.
+    expect(api.sftpReadText).not.toHaveBeenCalled();
+    expect(getWorkspace(sid).editors[0]).toMatchObject({
+      awaiting: false,
+      content: "edited",
+      baseContent: "original",
+      baseSha256: "sha-original",
+      carried: undefined,
+    });
+    expect(api.sftpWriteAccess).toHaveBeenCalledWith(sid, "/etc/nginx/nginx.conf");
     cleanup();
   });
 

@@ -45,6 +45,7 @@
   import { applyArgv, destroys, initArgv, planArgv, validateArgv } from "./tfplan";
   import { autoLoaded } from "./tfproject";
   import TfPlanView from "./TfPlanView.svelte";
+  import { defaultUser } from "../servers/logins";
 
   let {
     sessionId,
@@ -389,7 +390,7 @@
               <span class="flex min-w-0 flex-wrap gap-1">
                 {#each g.hosts as h (h)}
                   {@const m = matched.find((x) => x.host.name === h)}
-                  <span class="flex items-center gap-1 rounded border px-1.5 {m?.prod ? 'border-danger/50' : m?.server ? 'border-edge' : 'border-dashed border-edge'}" use:tooltip={m?.server ? `${m.server.alias} · ${m.server.username}@${m.server.host}` : t("scenarios.ansible.notInCatalog")}>
+                  <span class="flex items-center gap-1 rounded border px-1.5 {m?.prod ? 'border-danger/50' : m?.server ? 'border-edge' : 'border-dashed border-edge'}" use:tooltip={m?.server ? `${m.server.alias} · ${defaultUser(m.server)}@${m.server.host}` : t("scenarios.ansible.notInCatalog")}>
                     <Icon name={m?.server ? "server" : "help"} size={11} class={m?.prod ? "text-danger" : m?.server ? "text-ok" : "text-muted"} />
                     <span class="font-mono text-text">{h}</span>
                     {#if m?.prod}<span class="rounded bg-danger/15 px-1 text-caption text-danger">prod</span>{/if}

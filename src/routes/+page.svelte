@@ -11,6 +11,7 @@
     deleteServer,
     deleteFolderWithServers,
     forgetLoginSecret,
+    addServerLogin,
     listFolders,
     listServers,
     moveFolder,
@@ -59,7 +60,7 @@
   import { forgetMetrics, readMetrics } from "#lib/stores/metricsfeed.svelte.ts";
   import type { SectionId } from "#lib/monitoring/monproblems.ts";
   import { createRestoreFlow } from "#lib/page/restoreflow.svelte.ts";
-  import type { ServerProfile } from "#lib/types.ts";
+  import type { ServerProfile, TabLogin } from "#lib/types.ts";
   import { storeWarningMessage } from "#lib/servers/storewarn.ts";
   import { sessionBarParts, sessionToolsInline, showSessionBar } from "#lib/terminal/sessionbar.ts";
   import ViewModeToggle from "#lib/ui/ViewModeToggle.svelte";
@@ -93,6 +94,7 @@
     newTabAction,
     nextTabIndex,
     openTab as openTabStore,
+    connectTabWith,
     openLocalTab,
     reconnectTab as reconnectTabStore,
     setSplitRatio,
@@ -170,6 +172,8 @@
     addProjectView,
     type ProjectAsk,
     setEditorSaveIssue,
+    carryEditor,
+    type EditorDoc,
     isDirty,
     removeWorkspace,
     hasUnsaved,
@@ -197,6 +201,17 @@
   import { hasNotes, notesTarget } from "#lib/servers/notes.ts";
   import FolderModals from "#lib/servers/FolderModals.svelte";
   import SecretPrompt from "#lib/connect/SecretPrompt.svelte";
+  import LoginPicker, { type LoginAsk } from "#lib/servers/LoginPicker.svelte";
+  import {
+    asksLogin,
+    choiceUser,
+    defaultChoice,
+    defaultLoginId,
+    serverLogins,
+    tabLoginName,
+    tabUser,
+    withoutSavedPassword,
+  } from "#lib/servers/logins.ts";
   import AuthPromptDialog from "#lib/connect/AuthPromptDialog.svelte";
   import { authPrompts, clearAuthPrompt, setAuthPrompt } from "#lib/stores/authprompt.svelte.ts";
   import HelpPanel from "#lib/app/HelpPanel.svelte";
@@ -619,10 +634,15 @@
       const before = tabsState.activeId;
       sid = await new Promise<string | null>((resolve) => {
         const timer = setTimeout(() => resolve(null), SESSION_WAIT_MS);
-        void connectServer(server, (id) => {
-          clearTimeout(timer);
-          resolve(id);
-        });
+        // A run opens its session with the default login: nobody is there to be asked.
+        void connectServer(
+          server,
+          (id) => {
+            clearTimeout(timer);
+            resolve(id);
+          },
+          defaultChoice(server),
+        );
       });
       if (!sid) throw new Error(t("scenarios.ensure.timeout", { secs: SESSION_WAIT_MS / 1000 }));
       if (before && findTab(before)) activateTab(before);
@@ -665,7 +685,7 @@
     }
     const server = servers.find((s) => s.id === serverId);
     if (!server) return null;
-    return new Promise((resolve) => void connectServer(server, (id) => resolve(id)));
+    return new Promise((resolve) => void connectServer(server, (id) => resolve(id), defaultChoice(server)));
   }
 
   /** Show a project's overview in a tab: its file panel in the folder, the overview beside the terminal. */
@@ -959,7 +979,7 @@
   /** Where a tab is connected, as the roster and the grid say it: `user@host:port`. */
   function tabAddress(tab: Tab | undefined): string {
     const srv = tab ? servers.find((s) => s.id === tab.serverId) : undefined;
-    return srv ? `${srv.username}@${srv.host}:${srv.port}` : t("tab.localShell");
+    return srv && tab ? `${tabLoginName(srv, tab.login)}@${srv.host}:${srv.port}` : t("tab.localShell");
   }
 
   /** Add/remove the active tab to/from the group (entering/leaving broadcast). */
@@ -1023,7 +1043,7 @@
   });
   const topTitle = $derived(activeTab?.alias ?? t("status.notConnected"));
   const topSubtitle = $derived(
-    activeServer ? `${activeServer.username}@${activeServer.host}:${activeServer.port}` : "",
+    activeServer ? `${tabLoginName(activeServer, activeTab?.login)}@${activeServer.host}:${activeServer.port}` : "",
   );
   // Monitoring (status bar + overlay) works on SSH *and* local tabs (Phase 38): a
   // live local PTY reports metrics natively via sysinfo. Gates the monitoring
@@ -1191,7 +1211,7 @@
     const lines: string[] = [];
     const srv = tab ? servers.find((s) => s.id === tab.serverId) : undefined;
     if (srv) {
-      lines.push(`Host: ${srv.host}:${srv.port}`, `User: ${srv.username}`, `Alias: ${srv.alias}`);
+      lines.push(`Host: ${srv.host}:${srv.port}`, `User: ${tabLoginName(srv, tab?.login)}`, `Alias: ${srv.alias}`);
     } else if (tab) {
       lines.push(`Session: ${recordingTitle(tab, servers)}`);
     }
@@ -1549,7 +1569,7 @@
     ...servers.map((s): CommandItem => ({
       id: `srv:${s.id}`,
       title: s.alias,
-      subtitle: `${s.username}@${s.host}:${s.port}`,
+      subtitle: `${choiceUser(s, undefined) ?? s.username}@${s.host}:${s.port}`,
       icon: "server",
       group: t("palette.groupServers"),
       keywords: `${s.tags.join(" ")} ${s.group ?? ""} connect подключить`,
@@ -1558,6 +1578,23 @@
         connectServer(s);
       },
     })),
+    // Each other login of a server, by name (ADR 0074): "Connect: web as deploy".
+    ...servers.flatMap((s) =>
+      serverLogins(s)
+        .filter((l) => l.id !== defaultLoginId(s))
+        .map((l): CommandItem => ({
+          id: `srv:${s.id}:as:${l.id || "first"}`,
+          title: t("logins.paletteAs", { name: s.alias, user: l.username }),
+          subtitle: `${l.username}@${s.host}:${s.port}`,
+          icon: "users",
+          group: t("palette.groupServers"),
+          keywords: `${s.alias} ${l.username} ${s.tags.join(" ")} connect as login подключить как логин`,
+          run: () => {
+            selectedId = s.id;
+            void connectServer(s, undefined, { id: l.id });
+          },
+        })),
+    ),
     ...folders.map((f): CommandItem => ({
       id: `fld:${f}`,
       title: nameOf(f),
@@ -1626,7 +1663,7 @@
     if (action.kind === "ssh") {
       const server = servers.find((s) => s.id === action.serverId);
       if (server) {
-        void connectServer(server, place);
+        void connectServer(server, place, action.login);
         return;
       }
     }
@@ -2110,9 +2147,15 @@
     return servers.find((s) => s.id === tab.serverId)?.alias ?? tab.alias;
   }
 
-  /** Full title of a tab: `nginx · Rescalc dev` for a container/pod tab. */
+  /** The user a tab names before its server — only when it is not the default login (ADR 0074). */
+  function tabLoginUser(tab: Tab): string | null {
+    return tab.kind === "ssh" ? tabUser(servers.find((s) => s.id === tab.serverId), tab.login) : null;
+  }
+
+  /** Full title of a tab: `nginx · Rescalc dev` for a container/pod tab, `deploy@web-01` for a login not the default. */
   function tabTitle(tab: Tab): string {
-    return attachTitle(tabAlias(tab), tab.attach);
+    const user = tabLoginUser(tab);
+    return attachTitle(user ? `${user}@${tabAlias(tab)}` : tabAlias(tab), tab.attach);
   }
 
   /** The titles of sessions' tabs — how a group's members are named on screen. */
@@ -2139,7 +2182,8 @@
   // policy (page/restoreflow) — a waiting tab otherwise opens by its button.
   const restoreFlow = createRestoreFlow({
     servers: () => servers,
-    askSecret: (server, label, sessionId) => secretPrompt?.prompt(server, label, "", undefined, sessionId),
+    askSecret: (server, label, sessionId, login) => secretPrompt?.prompt(server, label, "", undefined, sessionId, login),
+    pickLogin: (server, sessionId) => (loginAsk = { server, forTab: sessionId }),
     keepsake: async (sid) => (await termRefs[sid]?.keepsake?.()) ?? null,
     background: () => activeChromePanel(),
   });
@@ -2160,18 +2204,87 @@
   });
 
   // ── Connection / tabs ──────────────────────────────────────────────────────
-  async function connectServer(server: ServerProfile, place?: (sessionId: string) => void) {
+  /**
+   * Connect to a server with one of its logins (ADR 0074): `login`, or — none
+   * given — the default one, unless the server asks which on every connect. The
+   * tab keeps the login it was opened with.
+   */
+  async function connectServer(server: ServerProfile, place?: (sessionId: string) => void, login?: TabLogin) {
+    if (!login && asksLogin(server)) {
+      loginAsk = { server, place };
+      return;
+    }
+    const choice = login ?? defaultChoice(server);
     try {
-      const plan = await connectPlan(server.id);
+      const plan = await connectPlan(server.id, choice);
       if (plan.needsSecret) {
-        secretPrompt?.prompt(server, plan.secretLabel, "", place);
+        secretPrompt?.prompt(server, plan.secretLabel, "", place, undefined, choice);
         return;
       }
-      const sessionId = openTabStore(server.id, server.alias, null, false);
+      const sessionId = openTabStore(server.id, server.alias, null, false, undefined, choice);
       place?.(sessionId);
     } catch (e) {
       notifyError(String(e), { source: "connection" });
     }
+  }
+
+  // Which login to connect with — asked by ⌥↵, the menu, "Ask" or a refused login.
+  let loginAsk = $state<LoginAsk | null>(null);
+
+  /** The quick picker's answer: a one-off user kept in the profile first, when asked. */
+  async function loginPicked(choice: TabLogin, add: boolean) {
+    const ask = loginAsk;
+    loginAsk = null;
+    if (!ask) return;
+    let server = ask.server;
+    if (add && "once" in choice) {
+      try {
+        const added = await addServerLogin(server.id, choice.once);
+        server = added.server;
+        servers = servers.map((s) => (s.id === server.id ? server : s));
+        choice = { id: added.loginId };
+      } catch (e) {
+        notifyError(String(e), { source: "servers" });
+        return;
+      }
+    }
+    if (ask.forTab) {
+      // The tab that was refused connects in place, with the login picked.
+      try {
+        const plan = await connectPlan(server.id, choice);
+        if (plan.needsSecret) secretPrompt?.prompt(server, plan.secretLabel, "", undefined, ask.forTab, choice);
+        else connectTabWith(ask.forTab, null, false, choice);
+      } catch (e) {
+        notifyError(String(e), { source: "connection" });
+      }
+      return;
+    }
+    await connectServer(server, ask.place, choice);
+  }
+
+  /** The logins of a tab's server other than the one it is logged in as (ADR 0074). */
+  function otherLoginsOf(tab: Tab): { id: string; username: string }[] {
+    const server = tab.kind === "ssh" ? servers.find((s) => s.id === tab.serverId) : undefined;
+    if (!server) return [];
+    const mine = tab.login && "id" in tab.login ? tab.login.id : tab.login ? null : defaultLoginId(server);
+    return serverLogins(server).filter((l) => l.id !== mine);
+  }
+
+  /**
+   * "Open as admin" where sudo will not save a file: a tab of the same server
+   * logged in as that login, the file — edits and all — carried into it.
+   */
+  function openAsLogin(sessionId: string, doc: EditorDoc, loginId: string) {
+    const tab = findTab(sessionId);
+    const server = tab ? servers.find((s) => s.id === tab.serverId) : undefined;
+    if (!server) return;
+    void connectServer(server, (sid) => carryEditor(sid, doc), { id: loginId });
+  }
+
+  /** ⌥↵, ⌥ + double-click, the tree's "Connect as": a login, or the picker. */
+  function connectAs(server: ServerProfile, login: TabLogin | "pick") {
+    if (login === "pick") loginAsk = { server, other: false };
+    else void connectServer(server, undefined, login);
   }
 
   async function startConnect() {
@@ -2191,20 +2304,21 @@
     if (!tab) return;
     const server = servers.find((s) => s.id === tab.serverId);
     const usedSaved = tab.secret === null;
-    if (usedSaved) {
+    // The login that was turned down (ADR 0074) — a one-off one kept nothing.
+    const login = tab.login && "id" in tab.login ? tab.login.id : server ? defaultLoginId(server) : "";
+    if (usedSaved && !(tab.login && "once" in tab.login)) {
       // Only the login secret that was turned down — the sudo password stays.
-      await forgetLoginSecret(tab.serverId);
-      servers = servers.map((s) =>
-        s.id === tab.serverId ? { ...s, hasSavedPassword: false } : s,
-      );
+      await forgetLoginSecret(tab.serverId, login);
+      servers = servers.map((s) => (s.id === tab.serverId ? withoutSavedPassword(s, login) : s));
     }
     if (server) {
-      const plan = await connectPlan(server.id);
+      const choice = tab.login ?? defaultChoice(server);
+      const plan = await connectPlan(server.id, choice);
       const msg =
         plan.secretLabel === "Passphrase"
           ? t("page.passphraseRejected")
           : t("page.passwordRejected");
-      secretPrompt?.prompt(server, plan.secretLabel, msg, undefined, sessionId);
+      secretPrompt?.prompt(server, plan.secretLabel, msg, undefined, sessionId, choice);
     }
   }
 
@@ -2880,6 +2994,7 @@
         selectedId = null;
       }}
       onConnect={startConnect}
+      onConnectAs={connectAs}
       onAddServer={() => serverForm?.openAdd(selectedFolder ?? "")}
       onEditServer={(s) => {
         selectedId = s.id;
@@ -3084,7 +3199,10 @@
           <span class="min-w-0 truncate text-muted">· {tabAlias(tab)}</span>
         </span>
       {:else}
-        <span class="min-w-0 flex-1 truncate">{tabAlias(tab)}</span>
+        {@const user = tabLoginUser(tab)}
+        <span class="min-w-0 flex-1 truncate" data-testid="tab-title"
+          >{#if user}<span class="font-mono text-accent">{user}@</span>{/if}{tabAlias(tab)}</span
+        >
       {/if}
       {#if prodTabIds.has(tab.sessionId)}
         <span class="shrink-0 rounded bg-bad/15 px-1 text-caption text-bad">prod</span>
@@ -3570,7 +3688,7 @@
                   {@const srv = servers.find((s) => s.id === tab.serverId)}
                   <ConnectingOverlay
                     alias={tab.alias}
-                    host={srv ? `${srv.username}@${srv.host}:${srv.port}` : tab.alias}
+                    host={srv ? `${choiceUser(srv, tab.login) ?? srv.username}@${srv.host}:${srv.port}` : tab.alias}
                     phase={connPhase[tab.sessionId] ?? "connecting"}
                     proxy={srv?.proxy ? (srv.proxy.kind === "jump" ? "jump" : "tcp") : null}
                     via={srv?.proxy ? `${srv.proxy.host}:${srv.proxy.port}` : undefined}
@@ -3584,7 +3702,7 @@
                   <ConnectingOverlay
                     failed
                     alias={tab.alias}
-                    host={srv ? `${srv.username}@${srv.host}:${srv.port}` : tab.alias}
+                    host={srv ? `${choiceUser(srv, tab.login) ?? srv.username}@${srv.host}:${srv.port}` : tab.alias}
                     phase={ev.phase}
                     title={t(ev.titleKey)}
                     detail={ev.detailKey ? t(ev.detailKey, ev.detailVars) : ev.detailText}
@@ -3592,13 +3710,25 @@
                     proxy={srv?.proxy ? (srv.proxy.kind === "jump" ? "jump" : "tcp") : null}
                     via={srv?.proxy ? `${srv.proxy.host}:${srv.proxy.port}` : undefined}
                   >
-                    {#if ev.action === "reauth"}
-                      <button
-                        class="flex items-center gap-1.5 rounded bg-accent px-3 py-1 text-xs font-medium text-panel-alt hover:bg-accent-hover"
-                        onclick={() => reauth(tab.sessionId)}
-                      >
-                        {t("connecting.retryAuth")}
-                      </button>
+                    {#if ev.action === "reauth" || ev.action === "pickLogin"}
+                      {#if ev.action === "reauth"}
+                        <button
+                          class="flex items-center gap-1.5 rounded bg-accent px-3 py-1 text-xs font-medium text-panel-alt hover:bg-accent-hover"
+                          onclick={() => reauth(tab.sessionId)}
+                        >
+                          {t("connecting.retryAuth")}
+                        </button>
+                      {/if}
+                      {#if srv}
+                        <!-- Another login of the server, for this tab (ADR 0074). -->
+                        <button
+                          class="flex items-center gap-1.5 rounded border border-edge px-3 py-1 text-xs text-text hover:bg-edge"
+                          data-testid="connect-other-login"
+                          onclick={() => (loginAsk = { server: srv, forTab: tab.sessionId })}
+                        >
+                          <Icon name="users" size={13} />{t("logins.otherLogin")}
+                        </button>
+                      {/if}
                     {:else}
                       <button
                         class="flex items-center gap-1.5 rounded bg-accent px-3 py-1 text-xs font-medium text-panel-alt hover:bg-accent-hover"
@@ -3628,6 +3758,7 @@
                     bind:this={termRefs[tab.sessionId]}
                     sessionId={tab.sessionId}
                     serverId={tab.serverId}
+                    login={tab.login}
                     secret={tab.secret}
                     remember={tab.remember}
                     local={tab.kind === "local"}
@@ -3825,6 +3956,8 @@
                             onCheckSudo={() => editors.askSudo(tab.sessionId, ed, "check")}
                             onSaveWithSudo={() => editors.askSudo(tab.sessionId, ed, "save")}
                             onSaveCopy={() => void editors.saveCopy(ed)}
+                            openAs={ed.source === "sftp" ? otherLoginsOf(tab) : []}
+                            onOpenAs={(loginId) => openAsLogin(tab.sessionId, ed, loginId)}
                             onDismissSaveIssue={() => setEditorSaveIssue(tab.sessionId, ed.id, "none")}
                             onLintMissing={offerLintInstall}
                             groupServers={ed.source === "sftp" ? edFlow.servers(tab.sessionId) : null}
@@ -4379,6 +4512,7 @@
 
 <!-- Password / passphrase prompt (owns its own state; Phase 18.4.4) -->
 <SecretPrompt bind:this={secretPrompt} />
+<LoginPicker ask={loginAsk} onpick={(choice, add) => void loginPicked(choice, add)} oncancel={() => (loginAsk = null)} />
 
 <!-- The server's own login questions (keyboard-interactive) for a tab on screen —
      the one in focus first; a background tab's wait until the user switches to it. -->

@@ -8,6 +8,8 @@
   import PasswordInput from "../ui/PasswordInput.svelte";
   import KeyGenModal from "../utilities/KeyGenModal.svelte";
   import ServerIconPicker from "./ServerIconPicker.svelte";
+  import ExtraLogins from "./ExtraLogins.svelte";
+  import { defaultAfter, draftsOf, draftsProblem, FIRST, newDraft, otherLogins, type LoginDraft } from "./logins";
   import DisclosureRow from "../ui/DisclosureRow.svelte";
   import SegmentedControl from "../ui/SegmentedControl.svelte";
   import Icon from "../ui/Icon.svelte";
@@ -80,6 +82,10 @@
   // A sudo password saved from the editor's sudo prompt (ADR 0073): said here, so
   // it is not a secret nobody knows about; "Forget" removes it with the rest.
   let hasSavedSudo = $state(false);
+  // The server's other logins (ADR 0074) and which of them a plain connect uses.
+  let extraLogins = $state<LoginDraft[]>([]);
+  let defaultLogin = $state(FIRST);
+  let askLogin = $state(false);
   let group = $state("");
   let tagsInput = $state("");
   // Pictogram (icons.ts key via servericons.ts) + colour key, shown before the
@@ -187,6 +193,9 @@
     secret = "";
     hasSavedPassword = false;
     hasSavedSudo = false;
+    extraLogins = [];
+    defaultLogin = FIRST;
+    askLogin = false;
     group = prefillGroup;
     tagsInput = "";
     icon = "";
@@ -216,6 +225,9 @@
     secret = "";
     hasSavedPassword = server.hasSavedPassword;
     hasSavedSudo = server.hasSavedSudo;
+    extraLogins = draftsOf(server).slice(1);
+    defaultLogin = server.defaultLogin ?? FIRST;
+    askLogin = !!server.askLogin;
     group = server.group ?? "";
     tagsInput = server.tags.join(", ");
     icon = server.icon;
@@ -250,6 +262,13 @@
     secret = "";
     hasSavedPassword = false;
     hasSavedSudo = false;
+    // The copy's logins are new ones: their secrets stay with the original.
+    const ids = new Map(draftsOf(server).slice(1).map((d) => [d.id, newDraft().id]));
+    extraLogins = draftsOf(server)
+      .slice(1)
+      .map((d) => ({ ...d, id: ids.get(d.id)!, secret: "", hasSavedPassword: false, hasSavedSudo: false }));
+    defaultLogin = ids.get(server.defaultLogin) ?? FIRST;
+    askLogin = !!server.askLogin;
     group = server.group ?? "";
     tagsInput = server.tags.join(", ");
     icon = server.icon;
@@ -299,6 +318,7 @@
     // The error sits in a section — unfold it rather than point at a closed one.
     if (proxyBad) proxyOpen = true;
     if (!alias.trim() || !isValidHost(host) || !isValidPort(port) || proxyBad) return;
+    if (draftsProblem(extraLogins)) return;
     const tags = parseTags(tagsInput);
     // Secrets never live on the profile — the saved-secret hint is true when one
     // is already stored or the user just typed one (persisted via saveProxySecret).
@@ -333,8 +353,13 @@
       pathSync: storedPathSync(pathSync),
       icon,
       iconColor,
+      logins: otherLogins(extraLogins),
+      defaultLogin: defaultAfter(extraLogins, defaultLogin),
+      askLogin: askLogin && extraLogins.length > 0,
     };
     const serverSecret = secret;
+    // Each other login's typed secret, saved under its own keychain scope after the profile.
+    const loginSecrets = extraLogins.filter((d) => d.secret.trim()).map((d) => ({ id: d.id, secret: d.secret }));
     const proxySecretToSave = useProxy ? proxySecret : "";
     try {
       const saved =
@@ -357,6 +382,13 @@
       if (serverSecret.trim()) {
         try {
           onsaved(await saveServerSecret(saved.id, serverSecret), "edit");
+        } catch (e) {
+          notifyError(t("page.secretNotSaved", { error: String(e) }), { source: "servers" });
+        }
+      }
+      for (const l of loginSecrets) {
+        try {
+          onsaved(await saveServerSecret(saved.id, l.secret, l.id), "edit");
         } catch (e) {
           notifyError(t("page.secretNotSaved", { error: String(e) }), { source: "servers" });
         }
@@ -436,7 +468,25 @@
       <p class="-mt-1 mb-2 text-meta text-danger">{t("page.portInvalid")}</p>
     {/if}
     <label class="mb-2 block text-xs text-muted">
-      {t("page.username")}
+      <span class="flex items-center gap-1.5">
+        {t("page.username")}
+        {#if extraLogins.length > 0}
+          <!-- The first login among several: its star, as each of the others has one (ADR 0074). -->
+          <button
+            type="button"
+            class={defaultLogin === FIRST ? "text-warn" : "text-muted hover:text-text"}
+            aria-label={t("logins.makeDefault")}
+            aria-pressed={defaultLogin === FIRST}
+            data-testid="login-default-first"
+            use:tooltip={t("logins.makeDefault")}
+            onclick={(e) => {
+              e.preventDefault();
+              defaultLogin = FIRST;
+            }}><Icon name="star" size={12} /></button
+          >
+          {#if defaultLogin === FIRST}<span class="text-caption">{t("logins.default")}</span>{/if}
+        {/if}
+      </span>
       <input
         data-testid="field-username"
         class="mt-1 w-full rounded border border-edge bg-panel px-2 py-1 text-sm text-text outline-none focus:border-accent"
@@ -499,6 +549,9 @@
         <Icon name="key" size={12} class="shrink-0" />{t("page.sudoSaved")}
       </p>
     {/if}
+
+    <!-- The server's other logins (ADR 0074). -->
+    <ExtraLogins bind:drafts={extraLogins} bind:defaultLogin bind:askLogin {submitted} />
 
     <div class="mb-3 flex items-center gap-2 text-xs text-text">
       <input type="checkbox" id="srv-prod" data-testid="server-prod" bind:checked={prod} />

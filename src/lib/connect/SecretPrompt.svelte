@@ -6,8 +6,9 @@
   // only in this component's state until it's handed to the tab store.
   import Modal from "../ui/Modal.svelte";
   import PasswordInput from "../ui/PasswordInput.svelte";
-  import type { ServerProfile } from "../types";
+  import type { ServerProfile, TabLogin } from "../types";
   import { connectTabWith, openTab } from "../stores/tabs.svelte";
+  import { choiceUser } from "../servers/logins";
   import { t } from "../i18n";
 
   let target = $state<ServerProfile | null>(null);
@@ -24,17 +25,23 @@
   // A tab that is already open and waits for this secret (one restored from the
   // previous launch): it is connected in place instead of opening a new one.
   let into: string | undefined;
+  // Which login the secret is for (ADR 0074); absent — the server's default.
+  let login = $state<TabLogin | undefined>(undefined);
+  // A one-off login keeps nothing: no "remember" for it.
+  const once = $derived(!!login && "once" in login);
 
   /** Open the prompt for `server`. `label` is "Password" | "Passphrase" (from the
    *  connect plan); `error` shows a red banner when re-prompting after a rejection;
    *  `onopened` is called with the new tab's session id if the user connects;
-   *  `forTab` names an open tab to connect with the secret instead of a new one. */
+   *  `forTab` names an open tab to connect with the secret instead of a new one;
+   *  `forLogin` — which login it is for (absent — the default). */
   export function prompt(
     server: ServerProfile,
     secretLabel: string,
     secretError = "",
     onopened?: (sessionId: string) => void,
     forTab?: string,
+    forLogin?: TabLogin,
   ) {
     target = server;
     label = secretLabel;
@@ -43,6 +50,7 @@
     error = secretError;
     opened = onopened;
     into = forTab;
+    login = forLogin;
   }
 
   function close() {
@@ -54,10 +62,11 @@
   function submit(event: Event) {
     event.preventDefault();
     if (!target) return;
+    const keep = remember && !once;
     if (into !== undefined) {
-      connectTabWith(into, value, remember);
+      connectTabWith(into, value, keep, login);
     } else {
-      const sessionId = openTab(target.id, target.alias, value, remember);
+      const sessionId = openTab(target.id, target.alias, value, keep, undefined, login);
       opened?.(sessionId);
     }
     close();
@@ -71,7 +80,7 @@
   {#if target}
     <form onsubmit={submit}>
       <p class="mb-3 text-xs text-muted">
-        {target.username}@{target.host}:{target.port}
+        {choiceUser(target, login) ?? target.username}@{target.host}:{target.port}
       </p>
       {#if error}
         <p class="mb-3 rounded border border-danger px-2 py-1 text-xs text-danger">{error}</p>
@@ -80,10 +89,12 @@
         {label === "Passphrase" ? t("page.secretPassphrase") : t("page.secretPassword")}
         <PasswordInput testid="secret-input" autofocus class="mt-1" bind:value />
       </label>
-      <label class="mt-3 flex items-center gap-2 text-xs text-muted">
-        <input type="checkbox" bind:checked={remember} />
-        {t("page.rememberKeychain")}
-      </label>
+      {#if !once}
+        <label class="mt-3 flex items-center gap-2 text-xs text-muted">
+          <input type="checkbox" bind:checked={remember} />
+          {t("page.rememberKeychain")}
+        </label>
+      {/if}
       <div class="mt-4 flex justify-end gap-2">
         <button
           type="button"

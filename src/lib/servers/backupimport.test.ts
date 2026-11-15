@@ -20,6 +20,9 @@ const server = (id: string, over: Partial<ServerProfile> = {}): ServerProfile =>
   keyPath: "/Users/boris/.ssh/id_ed25519",
   hasSavedPassword: true,
   hasSavedSudo: false,
+  logins: [],
+  defaultLogin: "",
+  askLogin: false,
   group: null,
   tags: [],
   prod: false,
@@ -110,6 +113,31 @@ describe("remapServers", () => {
     expect(b.hasSavedPassword).toBe(false);
     expect(c.hasSavedPassword).toBe(false);
     expect(c.proxy?.hasSavedPassword).toBe(false);
+  });
+
+  it("other logins: their users and key paths change by the same maps; the keychain is said only for a login here", () => {
+    const login = (id: string, username: string, keyPath: string | null, saved: boolean) => ({
+      id,
+      username,
+      authMethod: "password" as const,
+      keyPath,
+      hasSavedPassword: saved,
+      hasSavedSudo: saved,
+    });
+    const [a] = remapServers(
+      [server("a", { logins: [login("dep", "boris", "/old/k", true), login("adm", "admin", null, true)] })],
+      { boris: "ivan" },
+      { "/old/k": "/new/k" },
+      [server("a", { logins: [login("dep", "x", null, true)] })],
+    );
+    expect(a.logins.map((l) => [l.username, l.keyPath, l.hasSavedPassword, l.hasSavedSudo])).toEqual([
+      ["ivan", "/new/k", true, true],
+      ["admin", null, false, false],
+    ]);
+    expect(loginRows([server("a", { username: "boris", logins: [login("dep", "boris", null, false), login("adm", "admin", null, false)] })])).toEqual([
+      { value: "admin", servers: 1, jumps: 0 },
+      { value: "boris", servers: 1, jumps: 0 },
+    ]);
   });
 
   it("a sudo password is saved only where this keychain has one — never by the archive's word", () => {

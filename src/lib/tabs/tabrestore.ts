@@ -22,6 +22,8 @@ import type { DockSessionState, K8sScopeState } from "../stores/dockstate.svelte
 import type { Tab } from "../stores/tabs.svelte";
 import type { EditorDoc, Workspace } from "../stores/workspaces.svelte";
 import { attachIcon, type TabAttach } from "./tabattach";
+import type { TabLogin } from "../types";
+import { validLoginUser } from "../servers/logins";
 
 // ── The setting ────────────────────────────────────────────────────────────
 
@@ -63,6 +65,8 @@ export interface SavedTab {
   alias: string;
   /** A shell inside a container/pod: the target and the argv that enters it. */
   attach?: TabAttach;
+  /** The login it connected with (ADR 0074) — who, never a secret. */
+  login?: TabLogin;
   /** The folder the shell last said it was in (OSC 7, or the OS for a local shell). */
   shellCwd?: string;
   /** What the dock remembered of the session: its folder, the file panel's, the k8s scope. */
@@ -148,7 +152,7 @@ function savedDock(dock: TabFacts["dock"]): SavedDock | undefined {
  * folders — they are the container's, and it is entered anew.
  */
 export function savedTab(
-  tab: Pick<Tab, "sessionId" | "kind" | "serverId" | "alias" | "attach">,
+  tab: Pick<Tab, "sessionId" | "kind" | "serverId" | "alias" | "attach" | "login">,
   facts?: TabFacts,
 ): SavedTab {
   const out: SavedTab = {
@@ -158,6 +162,7 @@ export function savedTab(
     alias: tab.alias,
   };
   if (tab.attach) out.attach = copyAttach(tab.attach);
+  if (tab.kind === "ssh" && tab.login) out.login = "once" in tab.login ? { once: tab.login.once } : { id: tab.login.id };
   if (!facts) return out;
   if (!tab.attach && facts.shellCwd) out.shellCwd = facts.shellCwd;
   const dock = tab.attach ? undefined : savedDock(facts.dock);
@@ -283,6 +288,17 @@ function parseDocs(raw: unknown): SavedDoc[] {
   return out;
 }
 
+/** The login of a saved tab, read: an id the profile may know, or a user name. */
+function parseLogin(raw: unknown): TabLogin | null {
+  if (!isRecord(raw)) return null;
+  if (typeof raw.id === "string" && (raw.id === "" || LOGIN_ID.test(raw.id))) return { id: raw.id };
+  if (typeof raw.once === "string" && validLoginUser(raw.once)) return { once: raw.once.trim() };
+  return null;
+}
+
+/** A login id as the backend takes it (`valid_login_id`). */
+const LOGIN_ID = /^[A-Za-z0-9_-]{1,64}$/;
+
 /**
  * One saved tab, read. What it was is required — a tab that cannot say is not
  * restored; where it was (v1.36) is not: a damaged folder or file list is left
@@ -297,6 +313,8 @@ function parseTab(raw: unknown): SavedTab | null {
   const serverId = raw.kind === "ssh" ? raw.serverId : "";
   if (!text(serverId) || (raw.kind === "ssh" && serverId === "")) return null;
   const out: SavedTab = { id: raw.id, kind: raw.kind, serverId, alias: text(raw.alias) ? raw.alias : "" };
+  const login = raw.kind === "ssh" ? parseLogin(raw.login) : null;
+  if (login) out.login = login;
   if (raw.attach !== undefined) {
     const attach = parseAttach(raw.attach);
     if (!attach) return null;
