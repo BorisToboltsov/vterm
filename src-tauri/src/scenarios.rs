@@ -1,9 +1,11 @@
-// Scenarios (ADR 0071): the user's recipes — shell scripts with a `# vterm:`
-// header — and the projects of Ansible and Terraform that live in a folder of a
-// session. Three things live here, each pure where it can be:
+// Scenarios (ADR 0071, 0072): the user's recipes — shell scripts with a
+// `# vterm:` header — and playbooks of Ansible, and the projects of Ansible and
+// Terraform that live in a folder of a session. Three things live here, each
+// pure where it can be:
 //
 // - the library on this computer: the recipes folder in the app's data
-//   directory and whatever folders the user added as sources (read only);
+//   directory and whatever folders the user added as sources (read only) — their
+//   scripts and playbooks, and the folders in a source that may be projects;
 // - how a recipe reaches a server: the fixed wrapper a session's exec channel
 //   runs, with the script and the sudo password on stdin — never on a command
 //   line, never in a file the wrapper does not remove;
@@ -21,10 +23,17 @@ use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use zeroize::Zeroizing;
 
-/// The largest recipe the library reads: a recipe is a script, not a payload.
+/// The largest recipe or playbook the library reads: a script, not a payload.
 pub const MAX_RECIPE_BYTES: u64 = 64 * 1024;
-/// How many recipes one folder may give the library.
+/// How many files one folder may give the library.
 pub const MAX_RECIPES_PER_DIR: usize = 300;
+/// What the library reads: shell scripts (recipes) and YAML (playbooks — the
+/// window tells a playbook from other YAML, ADR 0072).
+pub const LIBRARY_EXTENSIONS: [&str; 3] = ["sh", "yml", "yaml"];
+/// How many folders of one source are listed for the window to tell a project by.
+pub const MAX_FOLDERS_PER_SOURCE: usize = 100;
+/// How many names of one such folder are listed.
+pub const MAX_LISTING: usize = 200;
 /// The longest a recipe may run, whatever the window asks for.
 pub const MAX_RUN_SECS: u64 = 3600;
 /// The name every temporary folder of a project run starts with — the only
@@ -53,6 +62,25 @@ pub struct RecipeFile {
     pub modified: u64,
 }
 
+/// One name in a folder's listing.
+#[derive(Serialize, Debug, Clone, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct ListedName {
+    pub name: String,
+    pub is_dir: bool,
+}
+
+/// A folder of a source — the source itself or one folder in it — with its
+/// names, for the window to tell whether it is a project (`projectSigns`).
+#[derive(Serialize, Debug, Clone, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct SourceFolder {
+    pub path: String,
+    /// The source it was found in.
+    pub source: String,
+    pub entries: Vec<ListedName>,
+}
+
 /// What a scan of the library found.
 #[derive(Serialize, Debug, Default)]
 #[serde(rename_all = "camelCase")]
@@ -60,6 +88,8 @@ pub struct RecipeScan {
     /// The app's own recipes folder (created on first save).
     pub dir: String,
     pub files: Vec<RecipeFile>,
+    /// Each source and the folders in it, listed (not the app's own folder).
+    pub folders: Vec<SourceFolder>,
     /// Sources that could not be read — named, never shown as empty (principle 5).
     pub unreadable: Vec<String>,
     /// Files skipped: too large or not text.
@@ -73,8 +103,64 @@ fn mtime(meta: &std::fs::Metadata) -> u64 {
         .map_or(0, |d| d.as_secs())
 }
 
-/// Read the `*.sh` files of `dir` (not its subfolders) into `scan`. A folder
-/// that does not exist is no error for the app's own one — nothing was saved yet.
+/// Whether a file name is one the library reads.
+pub fn is_library_name(name: &str) -> bool {
+    Path::new(name)
+        .extension()
+        .and_then(|x| x.to_str())
+        .is_some_and(|x| LIBRARY_EXTENSIONS.contains(&x))
+}
+
+/// The names of `dir`, folders marked, hidden ones left out; at most
+/// [`MAX_LISTING`]. None when it cannot be read.
+fn listing(dir: &Path) -> Option<Vec<ListedName>> {
+    let mut out: Vec<ListedName> = std::fs::read_dir(dir)
+        .ok()?
+        .flatten()
+        .filter_map(|e| {
+            let name = e.file_name().to_string_lossy().into_owned();
+            let is_dir = e.file_type().ok()?.is_dir();
+            Some(ListedName { name, is_dir })
+        })
+        .collect();
+    out.sort_by(|a, b| a.name.cmp(&b.name));
+    out.truncate(MAX_LISTING);
+    Some(out)
+}
+
+/// A source and the folders in it (one level, not hidden), listed: a source may
+/// be a project itself, or hold projects — the window tells which.
+fn scan_folders(source: &Path, scan: &mut RecipeScan) {
+    let shown = source.to_string_lossy().into_owned();
+    let Some(top) = listing(source) else {
+        return;
+    };
+    let subs: Vec<String> = top
+        .iter()
+        .filter(|e| e.is_dir && !e.name.starts_with('.'))
+        .map(|e| e.name.clone())
+        .take(MAX_FOLDERS_PER_SOURCE)
+        .collect();
+    scan.folders.push(SourceFolder {
+        path: shown.clone(),
+        source: shown.clone(),
+        entries: top,
+    });
+    for name in subs {
+        let path = source.join(&name);
+        if let Some(entries) = listing(&path) {
+            scan.folders.push(SourceFolder {
+                path: path.to_string_lossy().into_owned(),
+                source: shown.clone(),
+                entries,
+            });
+        }
+    }
+}
+
+/// Read the scripts and YAML files of `dir` (not its subfolders) into `scan`. A
+/// folder that does not exist is no error for the app's own one — nothing was
+/// saved yet.
 fn scan_dir(dir: &Path, own: bool, scan: &mut RecipeScan) {
     let shown = dir.to_string_lossy().into_owned();
     let entries = match std::fs::read_dir(dir) {
@@ -89,7 +175,11 @@ fn scan_dir(dir: &Path, own: bool, scan: &mut RecipeScan) {
     let mut paths: Vec<PathBuf> = entries
         .flatten()
         .map(|e| e.path())
-        .filter(|p| p.extension().is_some_and(|x| x == "sh"))
+        .filter(|p| {
+            p.file_name()
+                .and_then(|n| n.to_str())
+                .is_some_and(|n| is_library_name(n) && !n.starts_with('.'))
+        })
         .collect();
     paths.sort();
     for path in paths.into_iter().take(MAX_RECIPES_PER_DIR) {
@@ -138,6 +228,9 @@ pub fn scan(own: &Path, sources: &[String]) -> RecipeScan {
         }
         seen.push(p.clone());
         scan_dir(&p, false, &mut out);
+        if !out.unreadable.contains(s) {
+            scan_folders(&p, &mut out);
+        }
     }
     out
 }
@@ -149,7 +242,8 @@ pub fn recipes_scan(sources: Vec<String>) -> AppResult<RecipeScan> {
     let out = scan(&own, &sources);
     tracing::debug!(
         source = "scenarios",
-        recipes = out.files.len(),
+        files = out.files.len(),
+        folders = out.folders.len(),
         sources = sources.len(),
         unreadable = out.unreadable.len(),
         "the recipe library was read"
@@ -157,11 +251,15 @@ pub fn recipes_scan(sources: Vec<String>) -> AppResult<RecipeScan> {
     Ok(out)
 }
 
-/// The file name a recipe is saved under: one path component ending in `.sh`.
-pub fn recipe_file_name(name: &str) -> AppResult<String> {
+/// The file name a recipe or a playbook is saved under: one path component
+/// ending in `.sh`, `.yml` or `.yaml`, not hidden.
+pub fn library_file_name(name: &str) -> AppResult<String> {
     let name = name.trim();
-    if !name.ends_with(".sh") || name.len() <= 3 || name.starts_with('.') {
-        return Err(AppError::Message(format!("not a recipe file name: {name}")));
+    let stem = name.rsplit_once('.').map_or("", |(stem, _)| stem);
+    if !is_library_name(name) || stem.is_empty() || name.starts_with('.') {
+        return Err(AppError::Message(format!(
+            "not a file name of the library: {name}"
+        )));
     }
     crate::localfile::safe_child(Path::new("."), name)?;
     Ok(name.to_string())
@@ -171,7 +269,7 @@ pub fn recipe_file_name(name: &str) -> AppResult<String> {
 /// other write: a failed save leaves the old recipe as it was. Without `replace`
 /// a taken name is `dest-exists`.
 pub fn save_in(dir: &Path, name: &str, text: &str, replace: bool) -> AppResult<PathBuf> {
-    let name = recipe_file_name(name)?;
+    let name = library_file_name(name)?;
     if text.len() as u64 > MAX_RECIPE_BYTES {
         return Err(AppError::Message("the recipe is larger than 64 KB".into()));
     }
@@ -191,7 +289,7 @@ pub fn save_in(dir: &Path, name: &str, text: &str, replace: bool) -> AppResult<P
     Ok(path)
 }
 
-/// Save a recipe into the app's recipes folder; its path.
+/// Save a recipe or a playbook into the app's recipes folder; its path.
 #[tauri::command]
 pub fn recipe_save(name: String, text: String, replace: bool) -> AppResult<String> {
     let dir = recipes_dir().ok_or_else(|| AppError::Message("no data directory".into()))?;
@@ -200,18 +298,17 @@ pub fn recipe_save(name: String, text: String, replace: bool) -> AppResult<Strin
     Ok(path.to_string_lossy().into_owned())
 }
 
-/// Whether `path` is a recipe of the app's own folder — the only recipes the
-/// app deletes; a source folder is the user's, and stays as it is.
+/// Whether `path` is a file of the app's own folder the library reads — the
+/// only ones the app deletes; a source folder is the user's, and stays as it is.
 pub fn is_own_recipe(own: &Path, path: &Path) -> bool {
     path.parent() == Some(own)
-        && path.extension().is_some_and(|x| x == "sh")
         && path
             .file_name()
             .and_then(|n| n.to_str())
-            .is_some_and(crate::localfile::safe_component)
+            .is_some_and(|n| crate::localfile::safe_component(n) && is_library_name(n))
 }
 
-/// Delete a recipe of the app's own folder.
+/// Delete a recipe or a playbook of the app's own folder.
 #[tauri::command]
 pub fn recipe_delete(path: String) -> AppResult<()> {
     let own = recipes_dir().ok_or_else(|| AppError::Message("no data directory".into()))?;
@@ -671,12 +768,14 @@ mod tests {
     }
 
     #[test]
-    fn the_library_reads_shell_files_and_names_what_it_could_not() {
+    fn the_library_reads_scripts_and_yaml_and_names_what_it_could_not() {
         let own = tempfile::tempdir().unwrap();
         let src = tempfile::tempdir().unwrap();
         std::fs::write(own.path().join("b.sh"), "# b").unwrap();
         std::fs::write(own.path().join("a.sh"), "# a").unwrap();
+        std::fs::write(own.path().join("nginx.yml"), "- hosts: all").unwrap();
         std::fs::write(own.path().join("notes.txt"), "x").unwrap();
+        std::fs::write(own.path().join(".hidden.yml"), "x").unwrap();
         std::fs::write(
             src.path().join("big.sh"),
             vec![b'x'; MAX_RECIPE_BYTES as usize + 1],
@@ -693,12 +792,44 @@ mod tests {
             ],
         );
         let names: Vec<_> = out.files.iter().map(|f| f.name.as_str()).collect();
-        assert_eq!(names, ["a.sh", "b.sh"]);
+        assert_eq!(names, ["a.sh", "b.sh", "nginx.yml"]);
         assert_eq!(out.skipped, 2);
         assert_eq!(out.unreadable, [missing]);
         // The app's own folder before anything is saved: nothing, and no complaint.
         let fresh = scan(&own.path().join("none"), &[]);
         assert!(fresh.files.is_empty() && fresh.unreadable.is_empty());
+    }
+
+    #[test]
+    fn a_source_and_its_folders_are_listed_for_the_window_to_tell_a_project() {
+        let src = tempfile::tempdir().unwrap();
+        let infra = src.path().join("infra");
+        std::fs::create_dir_all(infra.join("roles")).unwrap();
+        std::fs::write(infra.join("site.yml"), "- hosts: all").unwrap();
+        std::fs::create_dir_all(src.path().join(".git")).unwrap();
+        std::fs::write(src.path().join("deploy.yml"), "- hosts: all").unwrap();
+        let own = tempfile::tempdir().unwrap();
+        let out = scan(own.path(), &[src.path().to_string_lossy().into_owned()]);
+        let paths: Vec<_> = out.folders.iter().map(|f| f.path.clone()).collect();
+        let root = src.path().to_string_lossy().into_owned();
+        // The source itself and its folders — hidden ones not.
+        assert_eq!(paths, [root.clone(), infra.to_string_lossy().into_owned()]);
+        assert!(out.folders.iter().all(|f| f.source == root));
+        assert_eq!(
+            out.folders[1].entries,
+            [
+                ListedName {
+                    name: "roles".into(),
+                    is_dir: true
+                },
+                ListedName {
+                    name: "site.yml".into(),
+                    is_dir: false
+                },
+            ]
+        );
+        // The app's own folder is the library's, never a project's.
+        assert!(scan(own.path(), &[]).folders.is_empty());
     }
 
     #[test]
@@ -712,15 +843,25 @@ mod tests {
         ));
         save_in(dir.path(), "x.sh", "two", true).unwrap();
         assert_eq!(std::fs::read_to_string(&p).unwrap(), "two");
-        for bad in ["../x.sh", "x.txt", ".sh", ".hidden.sh", "a/b.sh"] {
+        let book = save_in(dir.path(), "web.yml", "- hosts: all", false).unwrap();
+        for bad in [
+            "../x.sh",
+            "x.txt",
+            ".sh",
+            ".hidden.sh",
+            "a/b.sh",
+            ".yml",
+            "x.json",
+        ] {
             assert!(save_in(dir.path(), bad, "x", false).is_err(), "{bad}");
         }
         assert_eq!(
             std::fs::read_dir(dir.path()).unwrap().count(),
-            1,
+            2,
             "no staged file left"
         );
         assert!(is_own_recipe(dir.path(), &p));
+        assert!(is_own_recipe(dir.path(), &book));
         assert!(!is_own_recipe(
             dir.path(),
             &dir.path().join("sub").join("x.sh")

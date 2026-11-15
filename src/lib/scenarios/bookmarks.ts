@@ -1,7 +1,8 @@
-// What the Scenarios panel remembers (ADR 0071): the folders of this computer
-// the library reads recipes from, and the projects pinned to its "Projects"
-// group — a folder of a server of the catalog or of this computer. Settings
-// data: a backup carries it, every window shares it. Pure.
+// What the Scenarios panel remembers (ADR 0071, 0072): the folders of this
+// computer the library reads recipes from, the projects pinned to its
+// "Projects" group — a folder of a server of the catalog or of this computer —
+// and the shipped recipes it wrote into "Mine". Settings data: a backup carries
+// it, every window shares it. Pure.
 import type { ProjectKind } from "./project";
 
 export interface ProjectBookmark {
@@ -64,4 +65,29 @@ export function togglePin(list: readonly ProjectBookmark[], b: ProjectBookmark):
 export function folderName(root: string): string {
   const parts = root.split(/[\\/]+/).filter(Boolean);
   return parts[parts.length - 1] ?? root;
+}
+
+/**
+ * What the app remembers of a shipped file it wrote into "Mine": the
+ * fingerprint of the text written and its language. `hash: ""` — a file of that
+ * name was already the user's when the build came: never the app's to write.
+ */
+export interface SeedMark {
+  hash: string;
+  lang: string;
+}
+
+export type SeedState = Record<string, SeedMark>;
+
+/** The marks as stored: library file names, each with a fingerprint and a language. */
+export function sanitizeSeeded(v: unknown): SeedState {
+  if (!v || typeof v !== "object" || Array.isArray(v)) return {};
+  const out: SeedState = {};
+  for (const [file, mark] of Object.entries(v as Record<string, unknown>).slice(0, 200)) {
+    if (!/^[\w.-]+\.(sh|ya?ml)$/.test(file) || !mark || typeof mark !== "object") continue;
+    const m = mark as Record<string, unknown>;
+    if (typeof m.hash !== "string" || typeof m.lang !== "string" || m.hash.length > 32 || m.lang.length > 16) continue;
+    out[file] = { hash: m.hash, lang: m.lang };
+  }
+  return out;
 }

@@ -1,4 +1,4 @@
-// Scenarios guard (ADR 0071). What holds the subsystem together across files:
+// Scenarios guard (ADR 0071, 0072). What holds the subsystem together across files:
 //
 //  1. A playbook run is typed only as `playbookLine` builds it, and only after
 //     the run is watched — a run started unwatched leaves its folder (with the
@@ -11,6 +11,11 @@
 //     (`forgetScenarios`, called from `closeTabFully` — `tabteardown.guard`).
 //  5. The sudo password of a recipe run reaches only `recipeRun`: no event, no
 //     message, no setting carries it.
+//  6. A file of «Mine» is written over only where the seeding plan allows it —
+//     a shipped file the app wrote and nobody changed (`seedPlan`, ADR 0072):
+//     `recipeSave` with `replace` is called by the store's save, which the
+//     panel and the page never ask to replace, and by `writeShipped`, which
+//     writes only a plan of `seedPlan` or `restorePlan`.
 //
 // Every check is a function over source text with comments removed, and shows
 // on a mutated copy that it catches the violation it exists for.
@@ -98,6 +103,53 @@ export function cleanupViolations(store: string): string[] {
   return out;
 }
 
+/** The top-level arguments of each call `name(` in `src` — its definition is not a call. */
+function callArgs(src: string, name: string): string[][] {
+  const out: string[][] = [];
+  const re = new RegExp(`\\b${name}\\(`, "g");
+  for (const m of src.matchAll(re)) {
+    if (/function\s+$/.test(src.slice(Math.max(0, (m.index ?? 0) - 12), m.index))) continue;
+    const args: string[] = [];
+    let depth = 0;
+    let cur = "";
+    for (let i = (m.index ?? 0) + m[0].length; i < src.length; i++) {
+      const ch = src[i];
+      if (ch === ")" && depth === 0) break;
+      if ("([{".includes(ch)) depth++;
+      if (")]}".includes(ch)) depth--;
+      if (ch === "," && depth === 0) {
+        args.push(cur.trim());
+        cur = "";
+        continue;
+      }
+      cur += ch;
+    }
+    if (cur.trim()) args.push(cur.trim());
+    out.push(args);
+  }
+  return out;
+}
+
+export function overwriteViolations(store: string, callers: Record<string, string>): string[] {
+  const c = code(store);
+  const out: string[] = [];
+  for (const args of callArgs(c, "recipeSave")) {
+    const call = args.join(", ");
+    if (call !== "name, text, replace" && call !== "w.file, w.text, w.replace") out.push(`recipeSave(${call}) outside the save and the seeding`);
+  }
+  if (!/await recipeSave\(name, text, replace\)/.test(fnBody(c, "saveRecipe"))) out.push("the save does not pass on its caller's replace");
+  for (const args of callArgs(c, "writeShipped")) {
+    if (args.length !== 1 || !(args[0] === "plan" || args[0].startsWith("restorePlan("))) out.push(`writeShipped(${args.join(", ")}) is not a plan of the seeding`);
+  }
+  if (!/const plan = seedPlan\(/.test(fnBody(c, "seedShipped"))) out.push("the seeding plan is not seedPlan's");
+  for (const [file, src] of Object.entries(callers)) {
+    for (const args of callArgs(code(src), "saveRecipe")) {
+      if (args.length > 2) out.push(`${file} asks a save to replace: saveRecipe(${args.join(", ")})`);
+    }
+  }
+  return out;
+}
+
 export function passwordViolations(store: string, panel: string): string[] {
   const out: string[] = [];
   for (const [name, src] of [["store", code(store)], ["panel", code(panel)]] as const) {
@@ -113,6 +165,7 @@ export function passwordViolations(store: string, panel: string): string[] {
 const VIEW = "src/lib/scenarios/ProjectView.svelte";
 const STORE = "src/lib/stores/scenarios.svelte.ts";
 const PANEL = "src/lib/scenarios/ScenariosPanel.svelte";
+const PAGE = "src/routes/+page.svelte";
 const all = Object.fromEntries(
   readdirSync(DIR)
     .filter((f) => /\.(svelte|ts)$/.test(f) && !f.endsWith(".test.ts"))
@@ -134,6 +187,9 @@ describe("scenarios guard", () => {
   });
   it("a recipe's sudo password reaches only the run", () => {
     expect(passwordViolations(read(STORE), read(PANEL))).toEqual([]);
+  });
+  it("a file of «Mine» is written over only where the seeding plan allows it", () => {
+    expect(overwriteViolations(read(STORE), { [PANEL]: read(PANEL), [PAGE]: read(PAGE) })).toEqual([]);
   });
 });
 
@@ -180,5 +236,19 @@ describe("scenarios guard — catches what it exists for", () => {
     expect(passwordViolations(mutate(store, "      password: spec.password,", "      password: null,"), panel)).toContain(
       "the password does not reach recipeRun",
     );
+  });
+
+  it("a save that replaces, a write of the build's text by hand", () => {
+    const panel = read(PANEL);
+    expect(overwriteViolations(store, { [PANEL]: mutate(panel, "await saveRecipe(file, r.text);", "await saveRecipe(file, r.text, true);") })).toEqual([
+      `${PANEL} asks a save to replace: saveRecipe(file, r.text, true)`,
+    ]);
+    expect(overwriteViolations(`${store}\nconst x = () => recipeSave("install-docker.sh", shipped, true);`, {})).toContain(
+      'recipeSave("install-docker.sh", shipped, true) outside the save and the seeding',
+    );
+    expect(overwriteViolations(mutate(store, "const written = await writeShipped(plan);", "const written = await writeShipped({ writes: all, seeded: {} });"), {})).toContain(
+      "writeShipped({ writes: all, seeded: {} }) is not a plan of the seeding",
+    );
+    expect(overwriteViolations(mutate(store, "const plan = seedPlan(", "const plan = everything("), {})).toContain("the seeding plan is not seedPlan's");
   });
 });

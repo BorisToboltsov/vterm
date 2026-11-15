@@ -627,6 +627,15 @@
       if (!sid) throw new Error(t("scenarios.ensure.timeout", { secs: SESSION_WAIT_MS / 1000 }));
       if (before && findTab(before)) activateTab(before);
     }
+    return waitConnected(sid);
+  }
+
+  /**
+   * A tab's session once it is connected — an SSH login or a local shell
+   * registered: a project's overview reads through it at once. Not in time, or
+   * gone — said.
+   */
+  async function waitConnected(sid: string): Promise<string> {
     const deadline = Date.now() + SESSION_WAIT_MS;
     while (Date.now() < deadline) {
       const tab = findTab(sid);
@@ -670,10 +679,38 @@
     addProjectView(sid, tab.kind === "local" ? "local" : "sftp", kind, root, folderName(root), ask, beside);
   }
 
-  /** A pinned project of the Scenarios panel: its place's tab, then the overview. */
+  /** A tab for a place, once it is connected; null — none, or it did not connect (said). */
+  async function readyTabForPlace(serverId: string | null): Promise<string | null> {
+    const sid = await tabForPlace(serverId);
+    if (!sid) return null;
+    try {
+      return await waitConnected(sid);
+    } catch (e) {
+      notifyError(String(e instanceof Error ? e.message : e), { source: "scenarios", sessionId: sid });
+      return null;
+    }
+  }
+
+  /** A project of the Scenarios panel: its place's tab, connected, then the overview. */
   async function openBookmark(b: ProjectBookmark) {
-    const sid = await tabForPlace(b.serverId);
+    const sid = await readyTabForPlace(b.serverId);
     if (sid) openProjectIn(sid, b.kind, b.root);
+  }
+
+  /**
+   * A playbook of the library (ADR 0072) where it runs: the tab of this computer
+   * or of the server, connected, and the playbook's view beside its terminal
+   * with the run dialog open. On a server the playbook is carried into the
+   * run's folder; here it runs in its own folder.
+   */
+  async function openLibraryPlaybook(path: string, node: string | null, action: "check" | "run") {
+    const sid = await readyTabForPlace(node);
+    const tab = sid ? findTab(sid) : null;
+    if (!sid || !tab) return;
+    const zone = panes(getWorkspace(sid).layout).find((z) => z.tabs.includes(TERMINAL_VIEW));
+    const beside = !!zone && canSplitZone(sid, zone.id, "right");
+    const file = baseName(path);
+    addProjectView(sid, tab.kind === "local" ? "local" : "sftp", "ansible", path, file, { action, playbook: file }, beside, true);
   }
 
   /** A recipe file of this computer in the editor of a local tab. */
@@ -2834,6 +2871,7 @@
       ensureSession={sessionForServer}
       onOpenProject={(b) => void openBookmark(b)}
       onEditRecipe={(path) => void editRecipe(path)}
+      onRunPlaybook={(path, node, action) => void openLibraryPlaybook(path, node, action)}
       onAsk={aiOn ? askAiAboutScenario : undefined}
       onNewProject={askNewProject}
     />
@@ -3762,10 +3800,18 @@
                             onTypeArgv={(argv) => typeInTerminal(tab.sessionId, argv)}
                             onShowTerminal={() => showSessionView(tab.sessionId, TERMINAL_VIEW)}
                             onOpenFile={(path) =>
-                              ed.source === "sftp"
-                                ? void editors.openFile(tab.sessionId, path, path.split("/").pop() ?? path)
-                                : void editors.openLocal(tab.sessionId, path)}
+                              ed.project?.library
+                                ? void editRecipe(path)
+                                : ed.source === "sftp"
+                                  ? void editors.openFile(tab.sessionId, path, path.split("/").pop() ?? path)
+                                  : void editors.openLocal(tab.sessionId, path)}
                             onAsk={aiOn ? (ctx) => askAiAboutScenario(tab.sessionId, ctx) : undefined}
+                            onMoveTo={ed.project.library
+                              ? (serverId) => {
+                                  settings.playbookNode = serverId;
+                                  void openLibraryPlaybook(ed.path, serverId, "check");
+                                }
+                              : undefined}
                           />
                         {:else if ed.pipelines}
                           <!-- The map of a group of pipelines (ADR 0068): no text of its own. -->

@@ -1,11 +1,12 @@
 <script lang="ts">
-  // The Scenarios panel (ADR 0071): the recipe library — projects pinned from
-  // the file panel, the user's recipes, the folders they added, the built-in
-  // ones — and the runs of recipes on servers of the catalog. Not a panel of a
-  // session: it works with no tab open, like the server tree. A recipe picked
-  // stands beside the list in a wide panel and in its place in a narrow one;
-  // the questions (prod, delete) stand beside the panel's root, never inside
-  // its container (`panelcontainer.guard`).
+  // The Scenarios panel (ADR 0071, 0072): the library — projects pinned from
+  // the file panel or found in the folders the user added, the user's recipes
+  // and playbooks («Mine», where the shipped ones are written once), the
+  // folders they added — and the runs of recipes on servers of the catalog. Not
+  // a panel of a session: it works with no tab open, like the server tree. An
+  // item picked stands beside the list in a wide panel and in its place in a
+  // narrow one; the questions (prod, delete) stand beside the panel's root,
+  // never inside its container (`panelcontainer.guard`).
   import { untrack } from "svelte";
   import { wideWhen } from "../actions/panelwide.svelte";
   import { tooltip } from "../actions/tooltip";
@@ -13,6 +14,7 @@
   import { isProdServer } from "../ai/aiexec";
   import { t } from "../i18n";
   import { settings } from "../settings/settings.svelte";
+  import { hostEnv } from "../stores/hostenv.svelte";
   import {
     clearRecipeRuns,
     deleteRecipe,
@@ -21,7 +23,9 @@
     libraryError,
     libraryLoading,
     loadLibrary,
+    projectKindOf,
     recipeRuns,
+    restoreShipped,
     saveRecipe,
     startRecipeRun,
     stopRecipeRun,
@@ -29,7 +33,7 @@
     type RecipeRunRecord,
     type RunHost,
   } from "../stores/scenarios.svelte";
-  import { notifyError, notifySuccess } from "../stores/toasts.svelte";
+  import { notifyError, notifyInfo, notifySuccess } from "../stores/toasts.svelte";
   import ConfirmDialog from "../ui/ConfirmDialog.svelte";
   import ContextMenu from "../ui/ContextMenu.svelte";
   import EmptyState from "../ui/EmptyState.svelte";
@@ -39,12 +43,12 @@
   import Modal from "../ui/Modal.svelte";
   import type { OpenMenu } from "../ui/ctxmenu";
   import type { ServerProfile } from "../types";
-  import { folderName, sanitizeSources, togglePin, type ProjectBookmark } from "./bookmarks";
-  import { freeFileName, recipeFileName, recipeTemplate } from "./recipe";
-  import { recipeMatches, type LibraryRecipe } from "./recipelib";
+  import { folderName, isPinned, sanitizeSources, togglePin, type ProjectBookmark } from "./bookmarks";
+  import PlaybookDetail from "./PlaybookDetail.svelte";
+  import { freeFileName, playbookFileName, playbookTemplate, recipeFileName, recipeTemplate } from "./recipe";
+  import { itemMatches, itemName, type LibraryItem, type LibraryRecipe } from "./recipelib";
   import RecipeDetail, { type RunAsk } from "./RecipeDetail.svelte";
   import RunHosts from "./RunHosts.svelte";
-  import { recipeDescription, recipeName } from "./scenariotext";
 
   let {
     visible = true,
@@ -53,6 +57,7 @@
     ensureSession,
     onOpenProject,
     onEditRecipe,
+    onRunPlaybook,
     onAsk,
     onNewProject,
   }: {
@@ -63,8 +68,10 @@
     /** The session a run uses on a server: an open one, or one the page opens. */
     ensureSession: EnsureSession;
     onOpenProject: (b: ProjectBookmark) => void;
-    /** A recipe file of this computer in the editor. */
+    /** A recipe or playbook file of this computer in the editor. */
     onEditRecipe: (path: string) => void;
+    /** A playbook of the library opened where it runs (a server's id, or null — this computer), its dialog open. */
+    onRunPlaybook: (path: string, node: string | null, action: "check" | "run") => void;
     /** A failed server's answer to the assistant (its session). */
     onAsk?: (sessionId: string, context: string) => void;
     /** "New Ansible project" — in the folder the file panel shows. */
@@ -76,43 +83,55 @@
   $effect(() => {
     if (!visible || read) return;
     read = true;
-    untrack(() => void loadLibrary());
+    untrack(() => {
+      void hostEnv.resolve();
+      void loadLibrary();
+    });
   });
 
   let wide = $state(false);
   let query = $state("");
-  type Pick = { kind: "recipe"; id: string } | { kind: "project"; key: string } | null;
+  type Pick = { kind: "item"; id: string } | { kind: "project"; key: string } | null;
   let pick = $state<Pick>(null);
   let collapsed = $state.raw<ReadonlySet<string>>(new Set());
   let menu = $state<OpenMenu | null>(null);
 
   const lib = $derived(library());
-  const all = $derived([...lib.own, ...lib.sources, ...lib.builtin]);
-  const recipe = $derived.by(() => {
+  const all = $derived([...lib.own, ...lib.sources]);
+  const item = $derived.by(() => {
     const p = pick;
-    return p?.kind === "recipe" ? (all.find((r) => r.id === p.id) ?? null) : null;
+    return p?.kind === "item" ? (all.find((r) => r.id === p.id) ?? null) : null;
   });
   const keyOf = (b: ProjectBookmark) => `${b.serverId ?? "local"}:${b.root}`;
+
+  /** A project of the group: pinned, or found in a folder the library reads (`source`). */
+  type ProjectEntry = { b: ProjectBookmark; source: string | null };
+  const projects = $derived.by<ProjectEntry[]>(() => {
+    const pinned = settings.scenarioProjects.map((b) => ({ b, source: null }));
+    const found = lib.projects
+      .map((p) => ({ b: { kind: p.kind, root: p.root, serverId: null }, source: p.source }))
+      .filter((f) => !isPinned(settings.scenarioProjects, f.b));
+    return [...pinned, ...found];
+  });
   const project = $derived.by(() => {
     const p = pick;
-    return p?.kind === "project" ? (settings.scenarioProjects.find((b) => keyOf(b) === p.key) ?? null) : null;
+    return p?.kind === "project" ? (projects.find((e) => keyOf(e.b) === p.key) ?? null) : null;
   });
   const serverName = (id: string | null) => (id ? (servers.find((s) => s.id === id)?.alias ?? t("scenarios.project.goneServer")) : t("scenarios.project.thisComputer"));
 
-  const matches = (r: LibraryRecipe) => recipeMatches(r, recipeName(r), recipeDescription(r), query);
+  const matches = (r: LibraryItem) => itemMatches(r, query);
   const projectsShown = $derived(
-    settings.scenarioProjects.filter((b) => !query.trim() || `${folderName(b.root)} ${b.root}`.toLowerCase().includes(query.trim().toLowerCase())),
+    projects.filter((e) => !query.trim() || `${folderName(e.b.root)} ${e.b.root}`.toLowerCase().includes(query.trim().toLowerCase())),
   );
   const groups = $derived.by(() => {
-    const out: { key: string; label: string; icon: "script" | "listCheck" | "folder"; items: LibraryRecipe[]; source?: string }[] = [];
+    const out: { key: string; label: string; icon: "script" | "folder"; items: LibraryItem[]; source?: string }[] = [];
     out.push({ key: "own", label: t("scenarios.group.own"), icon: "script", items: lib.own.filter(matches) });
     for (const dir of settings.scenarioSources) {
       out.push({ key: `src:${dir}`, label: folderName(dir), icon: "folder", items: lib.sources.filter((r) => r.dir === dir && matches(r)), source: dir });
     }
-    out.push({ key: "builtin", label: t("scenarios.group.builtin"), icon: "listCheck", items: lib.builtin.filter(matches) });
     return out;
   });
-  const total = $derived(all.length + settings.scenarioProjects.length);
+  const total = $derived(all.length + projects.length);
   const shownCount = $derived(projectsShown.length + groups.reduce((n, g) => n + g.items.length, 0));
 
   function toggleGroup(key: string) {
@@ -121,6 +140,10 @@
     else next.add(key);
     collapsed = next;
   }
+
+  // ── Where a playbook runs ─────────────────────────────────────────────────
+  /** The place picked last; a server since removed is this computer again. */
+  const node = $derived(settings.playbookNode && servers.some((s) => s.id === settings.playbookNode) ? settings.playbookNode : null);
 
   // ── Runs ──────────────────────────────────────────────────────────────────
   const runs = $derived(recipeRuns());
@@ -139,7 +162,7 @@
   async function run(r: LibraryRecipe, ask: RunAsk) {
     const picked = servers.filter((s) => ask.serverIds.includes(s.id)).map((server) => ({ server, prod: isProdServer(server) }));
     await startRecipeRun(
-      { recipe: r, name: recipeName(r), values: ask.values, servers: picked, mode: ask.mode, elevation: ask.elevation, password: ask.password },
+      { recipe: r, name: itemName(r), values: ask.values, servers: picked, mode: ask.mode, elevation: ask.elevation, password: ask.password },
       ensureSession,
     );
   }
@@ -160,33 +183,44 @@
   }
 
   // ── The library's files ───────────────────────────────────────────────────
-  let creating = $state(false);
+  let creating = $state<"recipe" | "playbook" | null>(null);
   let newName = $state("");
   let newProblem = $state("");
-  let deleting = $state<LibraryRecipe | null>(null);
+  let deleting = $state<LibraryItem | null>(null);
 
-  async function createRecipe() {
+  function startCreating(kind: "recipe" | "playbook") {
+    newName = "";
+    newProblem = "";
+    creating = kind;
+  }
+
+  async function createItem() {
     const name = newName.trim();
     if (!name) {
       newProblem = t("scenarios.new.nameRequired");
       return;
     }
-    const file = freeFileName(recipeFileName(name), lib.own.map((r) => r.file));
+    const playbook = creating === "playbook";
+    const file = freeFileName(
+      playbook ? playbookFileName(name) : recipeFileName(name),
+      lib.own.map((r) => r.file),
+    );
+    const text = playbook ? playbookTemplate(name, t("scenarios.new.description")) : recipeTemplate(name, t("scenarios.new.description"));
     try {
-      const path = await saveRecipe(file, recipeTemplate(name, t("scenarios.new.description")));
-      creating = false;
-      pick = { kind: "recipe", id: path };
+      const path = await saveRecipe(file, text);
+      creating = null;
+      pick = { kind: "item", id: path };
       onEditRecipe(path);
     } catch (e) {
       newProblem = String(e);
     }
   }
 
-  async function copyToMine(r: LibraryRecipe) {
+  async function copyToMine(r: LibraryItem) {
     const file = freeFileName(r.file, lib.own.map((x) => x.file));
     try {
       const path = await saveRecipe(file, r.text);
-      pick = { kind: "recipe", id: path };
+      pick = { kind: "item", id: path };
       notifySuccess(t("scenarios.recipe.copied", { file }), { source: "scenarios" });
     } catch (e) {
       notifyError(t("scenarios.recipe.copyFailed", { error: String(e) }), { source: "scenarios" });
@@ -199,7 +233,7 @@
     if (!r) return;
     try {
       await deleteRecipe(r.id);
-      if (pick?.kind === "recipe" && pick.id === r.id) pick = null;
+      if (pick?.kind === "item" && pick.id === r.id) pick = null;
     } catch (e) {
       notifyError(t("scenarios.recipe.deleteFailed", { error: String(e) }), { source: "scenarios" });
     }
@@ -235,16 +269,50 @@
     if (done) notifySuccess(t("scenarios.import.done", { count: done }), { source: "scenarios" });
   }
 
+  /** "Add a project folder…": a folder of this computer, pinned when it is a project. */
+  async function addProject() {
+    const dir = await pickRecipeFolder(t("scenarios.addProject.pick"));
+    if (!dir) return;
+    try {
+      const kind = await projectKindOf(dir);
+      if (!kind) {
+        notifyError(t("scenarios.addProject.notProject", { dir }), { source: "scenarios" });
+        return;
+      }
+      const b: ProjectBookmark = { kind, root: dir, serverId: null };
+      if (!isPinned(settings.scenarioProjects, b)) settings.scenarioProjects = togglePin(settings.scenarioProjects, b);
+      pick = { kind: "project", key: keyOf(b) };
+      notifySuccess(t("scenarios.addProject.added", { name: folderName(dir) }), { source: "scenarios" });
+    } catch (e) {
+      notifyError(t("scenarios.addProject.failed", { error: String(e) }), { source: "scenarios" });
+    }
+  }
+
+  async function restore() {
+    try {
+      const count = await restoreShipped();
+      if (count) notifySuccess(t("scenarios.restore.done", { count }), { source: "scenarios" });
+      else notifyInfo(t("scenarios.restore.none"), { source: "scenarios" });
+    } catch (e) {
+      notifyError(t("scenarios.restore.failed", { error: String(e) }), { source: "scenarios" });
+    }
+  }
+
   function addMenu(e: MouseEvent) {
     const r = (e.currentTarget as HTMLElement).getBoundingClientRect();
     menu = {
       x: r.left,
       y: r.bottom + 2,
       items: [
-        { icon: "filePlus", label: t("scenarios.menu.newRecipe"), onSelect: () => ((newName = ""), (newProblem = ""), (creating = true)) },
+        { icon: "filePlus", label: t("scenarios.menu.newRecipe"), onSelect: () => startCreating("recipe") },
+        { icon: "gearPlay", label: t("scenarios.menu.newPlaybook"), onSelect: () => startCreating("playbook") },
         { icon: "upload", label: t("scenarios.menu.import"), onSelect: () => void importFiles() },
         { icon: "folderPlus", label: t("scenarios.menu.addSource"), onSelect: () => void addSource() },
-        ...(onNewProject ? [{ kind: "separator" as const }, { icon: "gearPlay" as const, label: t("scenarios.menu.newProject"), onSelect: () => onNewProject?.() }] : []),
+        { kind: "separator" as const },
+        { icon: "pin", label: t("scenarios.menu.addProject"), onSelect: () => void addProject() },
+        ...(onNewProject ? [{ icon: "gearPlay" as const, label: t("scenarios.menu.newProject"), onSelect: () => onNewProject?.() }] : []),
+        { kind: "separator" as const },
+        { icon: "listCheck", label: t("scenarios.menu.restore"), onSelect: () => void restore() },
       ],
     };
   }
@@ -254,20 +322,32 @@
   }
 </script>
 
-{#snippet recipeRow(r: LibraryRecipe)}
+{#snippet itemRow(r: LibraryItem)}
+  {@const name = itemName(r)}
   <button
     type="button"
-    class="flex w-full items-center gap-2 px-2.5 py-1 text-left text-xs hover:bg-edge/40 {pick?.kind === 'recipe' && pick.id === r.id ? 'bg-accent/10' : ''}"
-    data-testid="recipe-row"
-    onclick={() => (pick = { kind: "recipe", id: r.id })}
+    class="flex w-full items-center gap-2 px-2.5 py-1 text-left text-xs hover:bg-edge/40 {pick?.kind === 'item' && pick.id === r.id ? 'bg-accent/10' : ''}"
+    data-testid={r.kind === "playbook" ? "playbook-row" : "recipe-row"}
+    onclick={() => (pick = { kind: "item", id: r.id })}
   >
-    <Icon name="script" size={13} class={r.meta ? "text-muted" : "text-warn"} />
-    <span class="min-w-0 flex-1 truncate {r.origin === 'builtin' ? '' : 'font-mono'} text-text">{r.origin === "builtin" ? recipeName(r) : r.file}</span>
-    {#if !r.meta}<span class="text-caption text-warn" use:tooltip={r.error ?? ""}>{t("scenarios.recipe.noHeaderShort")}</span>{/if}
+    {#if r.kind === "playbook"}
+      <Icon name="gearPlay" size={13} class="text-warn" />
+    {:else}
+      <Icon name="script" size={13} class={r.meta ? "text-muted" : "text-warn"} />
+    {/if}
+    <span class="min-w-0 flex-1 truncate text-text {name === r.file ? 'font-mono' : ''}">{name}</span>
+    {#if r.kind === "recipe" && !r.meta}
+      <span class="text-caption text-warn" use:tooltip={r.error ?? ""}>{t("scenarios.recipe.noHeaderShort")}</span>
+    {:else if r.kind === "playbook" && !r.book}
+      <span class="text-caption text-warn" use:tooltip={r.error ?? ""}>{t("scenarios.playbook.unreadableShort")}</span>
+    {:else if name !== r.file}
+      <span class="max-w-[45%] shrink-0 truncate font-mono text-caption text-muted">{r.file}</span>
+    {/if}
   </button>
 {/snippet}
 
-{#snippet projectCard(b: ProjectBookmark)}
+{#snippet projectCard(entry: ProjectEntry)}
+  {@const b = entry.b}
   <div class="space-y-2 p-3" data-testid="project-card">
     <div class="flex items-center gap-2">
       {#if !wide}
@@ -280,6 +360,7 @@
       <span class="rounded bg-edge px-1.5 text-caption text-muted">{b.kind === "ansible" ? "Ansible" : "Terraform"}</span>
     </div>
     <p class="break-all font-mono text-meta text-muted">{serverName(b.serverId)}:{b.root}</p>
+    {#if entry.source}<p class="text-meta text-muted">{t("scenarios.project.foundHint")}</p>{/if}
     <p class="text-meta text-muted">{t("scenarios.project.openHint")}</p>
     <div class="flex gap-2">
       <button type="button" class="flex items-center gap-1 rounded border border-accent/50 bg-accent/10 px-2.5 py-1 text-xs text-accent" onclick={() => onOpenProject(b)}>
@@ -289,26 +370,42 @@
         type="button"
         class="rounded border border-edge px-2.5 py-1 text-xs text-text hover:border-accent"
         onclick={() => {
+          const found = entry.source !== null;
           settings.scenarioProjects = togglePin(settings.scenarioProjects, b);
-          pick = null;
-        }}>{t("scenarios.project.unpin")}</button
+          if (!found) pick = null;
+        }}>{entry.source ? t("scenarios.project.pin") : t("scenarios.project.unpin")}</button
       >
     </div>
   </div>
 {/snippet}
 
 {#snippet detail()}
-  {#if recipe}
+  {#if item?.kind === "recipe"}
+    {@const recipe = item}
     <RecipeDetail
       {recipe}
       {servers}
       {connected}
       onrun={(ask) => requestRun(recipe, ask)}
-      oncopy={recipe.origin !== "own" ? () => void copyToMine(recipe) : undefined}
-      onedit={recipe.origin !== "builtin" ? () => onEditRecipe(recipe.id) : undefined}
+      oncopy={recipe.origin === "source" ? () => void copyToMine(recipe) : undefined}
+      onedit={() => onEditRecipe(recipe.id)}
       ondelete={recipe.origin === "own" ? () => (deleting = recipe) : undefined}
       onback={wide ? undefined : () => (pick = null)}
       onask={onAsk ? askAi : undefined}
+    />
+  {:else if item?.kind === "playbook"}
+    {@const playbook = item}
+    <PlaybookDetail
+      {playbook}
+      {servers}
+      {node}
+      windows={hostEnv.isWindows}
+      onnode={(n) => (settings.playbookNode = n)}
+      onrun={(action) => onRunPlaybook(playbook.id, node, action)}
+      oncopy={playbook.origin === "source" ? () => void copyToMine(playbook) : undefined}
+      onedit={() => onEditRecipe(playbook.id)}
+      ondelete={playbook.origin === "own" ? () => (deleting = playbook) : undefined}
+      onback={wide ? undefined : () => (pick = null)}
     />
   {:else if project}
     {@render projectCard(project)}
@@ -375,7 +472,7 @@
         {/each}
       {/if}
     </div>
-  {:else if !wide && pick && (recipe || project)}
+  {:else if !wide && pick && (item || project)}
     {@render detail()}
   {:else}
     <div class="flex min-h-0 flex-1">
@@ -390,19 +487,23 @@
           {#each lib.scan?.unreadable ?? [] as dir (dir)}
             <p class="px-2.5 py-0.5 text-meta text-warn">{t("scenarios.sources.unreadable", { dir })}</p>
           {/each}
-          {#if settings.scenarioProjects.length}
+          {#if projectsShown.length || !query}
             <GroupHeader label={t("scenarios.group.projects")} count={projectsShown.length} collapsed={collapsed.has("projects")} icon="gearPlay" ontoggle={() => toggleGroup("projects")} />
             {#if !collapsed.has("projects")}
-              {#each projectsShown as b (keyOf(b))}
+              {#if projects.length === 0}
+                <p class="px-2.5 py-1 text-meta text-muted" data-testid="projects-empty">{t("scenarios.group.projectsEmpty")}</p>
+              {/if}
+              {#each projectsShown as e (keyOf(e.b))}
                 <button
                   type="button"
-                  class="flex w-full items-center gap-2 px-2.5 py-1 text-left text-xs hover:bg-edge/40 {pick?.kind === 'project' && pick.key === keyOf(b) ? 'bg-accent/10' : ''}"
-                  onclick={() => (pick = { kind: "project", key: keyOf(b) })}
-                  ondblclick={() => onOpenProject(b)}
+                  class="flex w-full items-center gap-2 px-2.5 py-1 text-left text-xs hover:bg-edge/40 {pick?.kind === 'project' && pick.key === keyOf(e.b) ? 'bg-accent/10' : ''}"
+                  data-testid="project-row"
+                  onclick={() => (pick = { kind: "project", key: keyOf(e.b) })}
+                  ondblclick={() => onOpenProject(e.b)}
                 >
-                  <Icon name={b.kind === "ansible" ? "gearPlay" : "cube"} size={13} class={b.kind === "ansible" ? "text-warn" : "text-accent"} />
-                  <span class="min-w-0 flex-1 truncate font-mono text-text">{folderName(b.root)}</span>
-                  <span class="truncate text-meta text-muted">{serverName(b.serverId)}</span>
+                  <Icon name={e.b.kind === "ansible" ? "gearPlay" : "cube"} size={13} class={e.b.kind === "ansible" ? "text-warn" : "text-accent"} />
+                  <span class="min-w-0 flex-1 truncate font-mono text-text">{folderName(e.b.root)}</span>
+                  <span class="truncate text-meta text-muted">{e.source ? t("scenarios.project.foundIn", { dir: folderName(e.source) }) : serverName(e.b.serverId)}</span>
                 </button>
               {/each}
             {/if}
@@ -431,10 +532,13 @@
                 {#if g.key === "own" && g.items.length === 0}
                   <p class="px-2.5 py-1 text-meta text-muted">{t("scenarios.group.ownEmpty")}</p>
                 {/if}
-                {#each g.items as r (r.id)}{@render recipeRow(r)}{/each}
+                {#each g.items as r (r.id)}{@render itemRow(r)}{/each}
               {/if}
             {/if}
           {/each}
+          {#if lib.notPlaybooks}
+            <p class="px-2.5 py-1 text-caption text-muted">{t("scenarios.notPlaybooks", { count: lib.notPlaybooks })}</p>
+          {/if}
         </div>
       </div>
       {#if wide}
@@ -448,7 +552,7 @@
 
 <ConfirmDialog
   open={asking !== null}
-  title={asking ? t("scenarios.confirm.prodTitle", { recipe: recipeName(asking.recipe) }) : ""}
+  title={asking ? t("scenarios.confirm.prodTitle", { recipe: itemName(asking.recipe) }) : ""}
   confirmLabel={t("scenarios.confirm.run")}
   danger
   onconfirm={() => {
@@ -474,12 +578,12 @@
   <span class="block">{t("scenarios.confirm.deleteBody")}</span>
 </ConfirmDialog>
 
-<Modal open={creating} title={t("scenarios.new.title")} width="w-96" showClose onclose={() => (creating = false)}>
+<Modal open={creating !== null} title={creating === "playbook" ? t("scenarios.newPlaybook.title") : t("scenarios.new.title")} width="w-96" showClose onclose={() => (creating = null)}>
   <form
     class="space-y-2"
     onsubmit={(e) => {
       e.preventDefault();
-      void createRecipe();
+      void createItem();
     }}
   >
     <label class="block text-xs text-muted" for="new-recipe-name">{t("scenarios.new.name")}</label>
@@ -489,10 +593,10 @@
       bind:value={newName}
       oninput={() => (newProblem = "")}
     />
-    <p class="text-meta text-muted">{t("scenarios.new.hint")}</p>
+    <p class="text-meta text-muted">{creating === "playbook" ? t("scenarios.newPlaybook.hint") : t("scenarios.new.hint")}</p>
     {#if newProblem}<p class="text-meta text-danger" role="alert">{newProblem}</p>{/if}
     <div class="flex justify-end gap-2">
-      <button type="button" class="rounded border border-edge px-3 py-1 text-xs text-text" onclick={() => (creating = false)}>{t("common.cancel")}</button>
+      <button type="button" class="rounded border border-edge px-3 py-1 text-xs text-text" onclick={() => (creating = null)}>{t("common.cancel")}</button>
       <button type="submit" class="rounded bg-accent px-3 py-1 text-xs text-panel">{t("scenarios.new.create")}</button>
     </div>
   </form>

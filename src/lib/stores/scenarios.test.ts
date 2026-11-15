@@ -2,9 +2,10 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-// The Scenarios store (ADR 0071) over a mocked backend: a recipe run on several
-// servers, a playbook run watched through its events, a plan read once saved,
-// and the folders of those runs removed.
+// The Scenarios store (ADR 0071, 0072) over a mocked backend: the library with
+// the shipped files written into «Mine» once, a recipe run on several servers, a
+// playbook run watched through its events — a playbook of the library carried
+// to a server — a plan read once saved, and the folders of those runs removed.
 
 const env = vi.hoisted(() => ({
   runs: [] as { sid: string; mode: string; script: string; elevation: string; password: string | null; cancelId: string }[],
@@ -24,6 +25,11 @@ const env = vi.hoisted(() => ({
   writes: [] as string[],
   dirs: [] as string[],
   gate: Promise.resolve() as Promise<void>,
+  mine: new Map<string, string>(),
+  sourceFiles: [] as { path: string; dir: string; name: string; text: string; modified: number }[],
+  folders: [] as { path: string; source: string; entries: { name: string; isDir: boolean }[] }[],
+  saves: [] as { name: string; replace: boolean }[],
+  localTexts: {} as Record<string, string>,
 }));
 
 vi.mock("../api", () => ({
@@ -55,10 +61,20 @@ vi.mock("../api", () => ({
   }),
   recipesScan: vi.fn(async (sources: string[]) => {
     env.scanSources.push(sources);
-    return { dir: "/data/scripts", files: [{ path: "/data/scripts/a.sh", dir: "/data/scripts", name: "a.sh", text: "# vterm:\n#   name: A\n", modified: 0 }], unreadable: [], skipped: 0 };
+    const own = [...env.mine].sort().map(([name, text]) => ({ path: `/data/scripts/${name}`, dir: "/data/scripts", name, text, modified: 0 }));
+    return { dir: "/data/scripts", files: [...own, ...env.sourceFiles], folders: env.folders, unreadable: [], skipped: 0 };
   }),
-  recipeSave: vi.fn(async (name: string) => `/data/scripts/${name}`),
-  recipeDelete: vi.fn(async () => {}),
+  recipeSave: vi.fn(async (name: string, text: string, replace: boolean) => {
+    if (!replace && env.mine.has(name)) throw new Error("dest-exists");
+    env.saves.push({ name, replace });
+    env.mine.set(name, text);
+    return `/data/scripts/${name}`;
+  }),
+  recipeDelete: vi.fn(async (path: string) => void env.mine.delete(path.split("/").pop() ?? path)),
+  readLocalText: vi.fn(async (path: string) => {
+    if (!(path in env.localTexts)) throw new Error(`no ${path}`);
+    return { content: env.localTexts[path], encoding: "utf-8", eol: "lf", sha256: "" };
+  }),
   connectionFiles: vi.fn(() => ({
     list: async () => env.listing.map((e) => ({ ...e, path: e.name })),
     read: async (path: string) => {
@@ -74,7 +90,7 @@ vi.mock("../api", () => ({
 }));
 
 import { captureDiag } from "../api/diag";
-import { builtinRecipes } from "../scenarios/recipelib";
+import { libraryRecipe, shippedText, SHIPPED_FILES } from "../scenarios/recipelib";
 import { settings } from "../settings/settings.svelte";
 import type { ServerProfile } from "../types";
 import {
@@ -86,6 +102,9 @@ import {
   library,
   loadAnsibleProject,
   loadLibrary,
+  loadLibraryPlaybook,
+  projectKindOf,
+  restoreShipped,
   loadTfProject,
   planApplied,
   planWatch,
@@ -123,7 +142,7 @@ const server = (id: string, prod = false): ServerProfile => ({
   iconColor: "",
 });
 
-const docker = builtinRecipes()[0];
+const docker = libraryRecipe("own", "install-docker.sh", "/data/scripts", "/data/scripts/install-docker.sh", shippedText("install-docker.sh"));
 const settle = () => new Promise((r) => setTimeout(r, 0));
 async function untilDone(id: string) {
   for (let i = 0; i < 50 && recipeRuns().find((r) => r.id === id)?.endedAt === null; i++) await settle();
@@ -230,15 +249,80 @@ describe("a recipe run", () => {
 });
 
 describe("the library", () => {
-  it("reads the app's folder and the sources of the settings, then the user's recipes", async () => {
-    settings.scenarioSources = ["/repo/scripts"];
+  beforeEach(() => {
+    env.mine.clear();
+    env.mine.set("a.sh", "# vterm:\n#   name: A\n");
+    env.sourceFiles = [];
+    env.folders = [];
+    env.saves.length = 0;
+    settings.scenarioSeeded = {};
+    settings.scenarioSources = [];
+    settings.language = "ru";
+  });
+
+  it("writes the shipped recipes and playbooks into «Mine» once, in the reader's language", async () => {
+    const diag = captureDiag();
     await loadLibrary();
-    expect(env.scanSources.at(-1)).toEqual(["/repo/scripts"]);
+    expect(env.saves.map((w) => w.name)).toEqual(SHIPPED_FILES);
+    expect(library().own.map((r) => r.file)).toEqual(["a.sh", ...SHIPPED_FILES].sort());
+    const docker = library().own.find((r) => r.file === "install-docker.sh")!;
+    expect(docker.kind === "recipe" && docker.meta?.name).toBe("Установить Docker");
+    const book = library().own.find((r) => r.file === "install-docker.yml")!;
+    expect(book.kind).toBe("playbook");
+    expect(Object.keys(settings.scenarioSeeded).sort()).toEqual([...SHIPPED_FILES].sort());
+    expect(diag.events().find((e) => e.text === "the shipped recipes were written into Mine")?.fields).toMatchObject({ written: 13, fresh: 13 });
+    diag.stop();
+    // Read again: nothing written; one deleted stays deleted, one changed stays as changed.
+    env.saves.length = 0;
+    env.mine.delete("swap-file.sh");
+    env.mine.set("cleanup-disk.sh", "#!/bin/sh\n# mine\n");
+    await loadLibrary();
+    expect(env.saves).toEqual([]);
+    expect(env.mine.has("swap-file.sh")).toBe(false);
+    expect(env.mine.get("cleanup-disk.sh")).toBe("#!/bin/sh\n# mine\n");
+    // «Bring back» writes only what is missing.
+    expect(await restoreShipped()).toBe(1);
+    expect(env.saves).toEqual([{ name: "swap-file.sh", replace: false }]);
+    expect(env.mine.get("cleanup-disk.sh")).toBe("#!/bin/sh\n# mine\n");
+    expect(await restoreShipped()).toBe(0);
+  });
+
+  it("a name another window wrote meanwhile is that window's write, not a failure", async () => {
+    const { recipeSave } = await import("../api");
+    vi.mocked(recipeSave).mockRejectedValueOnce(new Error("dest-exists"));
+    await loadLibrary();
+    expect(library().own.length).toBeGreaterThan(1);
+    expect(Object.keys(settings.scenarioSeeded)).toHaveLength(SHIPPED_FILES.length);
+  });
+
+  it("reads the sources of the settings: their recipes and playbooks, and the projects in them", async () => {
+    settings.scenarioSeeded = Object.fromEntries(SHIPPED_FILES.map((f) => [f, { hash: "gone", lang: "ru" }]));
+    settings.scenarioSources = ["/repo"];
+    env.sourceFiles = [
+      { path: "/repo/deploy.yml", dir: "/repo", name: "deploy.yml", text: "- name: Deploy\n  hosts: web\n", modified: 0 },
+      { path: "/repo/vars.yml", dir: "/repo", name: "vars.yml", text: "port: 80\n", modified: 0 },
+    ];
+    env.folders = [
+      { path: "/repo", source: "/repo", entries: [{ name: "deploy.yml", isDir: false }] },
+      { path: "/repo/infra", source: "/repo", entries: [{ name: "ansible.cfg", isDir: false }] },
+    ];
+    await loadLibrary();
+    expect(env.scanSources.at(-1)).toEqual(["/repo"]);
+    expect(env.saves).toEqual([]);
     expect(library().own.map((r) => r.file)).toEqual(["a.sh"]);
-    expect(library().builtin).toHaveLength(10);
+    expect(library().sources.map((r) => [r.kind, r.file])).toEqual([["playbook", "deploy.yml"]]);
+    expect(library().notPlaybooks).toBe(1);
+    expect(library().projects).toEqual([{ kind: "ansible", root: "/repo/infra", source: "/repo" }]);
     expect(await saveRecipe("b.sh", "x")).toBe("/data/scripts/b.sh");
     await deleteRecipe("/data/scripts/b.sh");
-    settings.scenarioSources = [];
+    expect(env.mine.has("b.sh")).toBe(false);
+  });
+
+  it("tells whether a folder of this computer is a project", async () => {
+    env.listing = [{ name: "main.tf", isDir: false }];
+    expect(await projectKindOf("/srv/tf")).toBe("terraform");
+    env.listing = [{ name: "notes.txt", isDir: false }];
+    expect(await projectKindOf("/srv/x")).toBeNull();
   });
 });
 
@@ -279,6 +363,25 @@ describe("a playbook run", () => {
     endAnsibleWatch("s2");
     expect(ansibleWatch("s2")?.ended).toBe(true);
     expect(env.cleaned).toEqual([first, second]);
+  });
+
+  it("a playbook of the library is read on this computer and Ansible asked where it runs; carried, it travels in the run's folder", async () => {
+    env.localTexts["/data/scripts/web.yml"] = "# Web\n- name: Web\n  hosts: all\n  become: true\n";
+    env.localTexts["/data/scripts/vars.yml"] = "port: 80\n";
+    const before = env.iacAnswer;
+    env.iacAnswer = (args) =>
+      args[0] === "ansible-playbook" ? { stdout: "ansible-playbook [core 2.17.4]\n", stderr: "", exitCode: 0 } : { stdout: "", stderr: "", exitCode: 127 };
+    const ov = await loadLibraryPlaybook("s9", "/data/scripts/web.yml");
+    expect(ov).toMatchObject({ root: "/data/scripts", installed: true, version: "ansible-playbook [core 2.17.4]", inventories: [], inventory: null });
+    expect(ov.library?.path).toBe("/data/scripts/web.yml");
+    expect(ov.playbooks.map((p) => [p.file, p.book.plays[0].become])).toEqual([["web.yml", true]]);
+    await prepareAnsibleRun("s9", null, { file: "web.yml", text: ov.library!.text });
+    expect(env.temps.at(-1)!.files.map((f) => f.name)).toEqual(["vterm_events.py", "web.yml"]);
+    expect(env.temps.at(-1)!.files[1].text).toBe(ov.library!.text);
+    await expect(loadLibraryPlaybook("s9", "/data/scripts/vars.yml")).rejects.toThrow(/not a playbook/);
+    env.iacAnswer = () => ({ stdout: "", stderr: "", exitCode: 127 });
+    expect((await loadLibraryPlaybook("s9", "/data/scripts/web.yml")).installed).toBe(false);
+    env.iacAnswer = before;
   });
 
   it("a read that fails is said in the watch, and the watch goes on", async () => {

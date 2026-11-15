@@ -132,14 +132,15 @@ pub fn safe_recording_name(entry: &str) -> Option<String> {
     Some(base.to_string())
 }
 
-/// Reduce an archive's `scripts/<name>` entry to a safe recipe file name, like
-/// [`safe_recording_name`]: `None` for anything but one `*.sh` component.
+/// Reduce an archive's `scripts/<name>` entry to a safe file name of the
+/// library, like [`safe_recording_name`]: `None` for anything but one `*.sh`,
+/// `*.yml` or `*.yaml` component.
 pub fn safe_script_name(entry: &str) -> Option<String> {
     let rest = entry.strip_prefix(SCRIPTS_PREFIX)?;
-    crate::scenarios::recipe_file_name(rest).ok()
+    crate::scenarios::library_file_name(rest).ok()
 }
 
-/// The recipes an archive carries: (entry index, safe `*.sh` name).
+/// The recipes and playbooks an archive carries: (entry index, safe name).
 pub fn script_entries(zip: &mut Archive) -> AppResult<Vec<(usize, String)>> {
     let mut out = Vec::new();
     for i in 0..zip.len() {
@@ -542,6 +543,10 @@ mod tests {
         assert_eq!(
             safe_script_name("scripts/install-docker.sh").as_deref(),
             Some("install-docker.sh")
+        );
+        assert_eq!(
+            safe_script_name("scripts/install-docker.yml").as_deref(),
+            Some("install-docker.yml")
         );
         for bad in [
             "scripts/../x.sh",

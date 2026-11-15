@@ -1,4 +1,4 @@
-// Scenarios API (ADR 0071): the recipe library on this computer, a recipe run
+// Scenarios API (ADR 0071, 0072): the library of recipes and playbooks on this computer, a recipe run
 // on a server, and the checks and the temporary folder of an Ansible or
 // Terraform project on the host where it lies. `ansible-playbook` and
 // `terraform plan/apply` are not here: they are typed into the tab's terminal.
@@ -6,7 +6,7 @@ import { open } from "@tauri-apps/plugin-dialog";
 import { call } from "./call";
 import type { ExecOutput } from "../types";
 
-/** One recipe file of the library (mirror of `scenarios::RecipeFile`). */
+/** One file of the library — a recipe or a playbook (mirror of `scenarios::RecipeFile`). */
 export interface RecipeFile {
   path: string;
   /** The folder it was found in. */
@@ -16,11 +16,21 @@ export interface RecipeFile {
   modified: number;
 }
 
+/** A folder of a source with its names (mirror of `scenarios::SourceFolder`): a project or not, the window tells. */
+export interface SourceFolder {
+  path: string;
+  /** The source it was found in. */
+  source: string;
+  entries: { name: string; isDir: boolean }[];
+}
+
 /** What a scan of the library found (mirror of `scenarios::RecipeScan`). */
 export interface RecipeScan {
   /** The app's own recipes folder. */
   dir: string;
   files: RecipeFile[];
+  /** Each source and the folders in it, listed. */
+  folders: SourceFolder[];
   /** Sources that could not be read — named, never shown as empty. */
   unreadable: string[];
   /** Files skipped: too large or not text. */
@@ -44,12 +54,12 @@ export function recipesScan(sources: string[]): Promise<RecipeScan> {
   return call<RecipeScan>("recipes_scan", { sources });
 }
 
-/** Save a recipe into the app's folder; its path. A taken name without `replace` — `dest-exists`. */
+/** Save a recipe or a playbook into the app's folder; its path. A taken name without `replace` — `dest-exists`. */
 export function recipeSave(name: string, text: string, replace: boolean): Promise<string> {
   return call<string>("recipe_save", { name, text, replace });
 }
 
-/** Delete a recipe of the app's own folder. */
+/** Delete a recipe or a playbook of the app's own folder. */
 export function recipeDelete(path: string): Promise<void> {
   return call<void>("recipe_delete", { path });
 }
@@ -99,14 +109,14 @@ export function iacCleanup(sessionId: string, dir: string): Promise<void> {
   return call<void>("iac_cleanup", { sessionId, dir });
 }
 
-/** A folder of this computer to read recipes from; null — none picked. */
+/** A folder of this computer (recipes to read, a project to pin); null — none picked. */
 export async function pickRecipeFolder(title: string): Promise<string | null> {
   const res = await open({ directory: true, multiple: false, title });
   return typeof res === "string" ? res : null;
 }
 
-/** Shell scripts of this computer to copy into the library. */
+/** Shell scripts and playbooks of this computer to copy into the library. */
 export async function pickRecipeFiles(title: string): Promise<string[]> {
-  const res = await open({ directory: false, multiple: true, title, filters: [{ name: "Shell", extensions: ["sh"] }] });
+  const res = await open({ directory: false, multiple: true, title, filters: [{ name: "Shell, YAML", extensions: ["sh", "yml", "yaml"] }] });
   return Array.isArray(res) ? res : typeof res === "string" ? [res] : [];
 }

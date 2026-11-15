@@ -108,8 +108,10 @@ export interface EditorDoc {
    * its overview, the playbook run being watched, the plan. No text, never
    * saved, not reopened at launch. `ask` — what to open on (a run dialog, a
    * check, a plan), bumped with `askSeq` when asked again on an open view.
+   * `library` — not a folder but a playbook of the library (ADR 0072): `root`
+   * is its file on this computer, whichever host the run goes to.
    */
-  project?: { kind: "ansible" | "terraform"; root: string; ask?: ProjectAsk; askSeq?: number };
+  project?: { kind: "ansible" | "terraform"; root: string; ask?: ProjectAsk; askSeq?: number; library?: boolean };
 }
 
 /** What a project view is opened for, beyond its overview. */
@@ -452,7 +454,8 @@ export function addPipelinesView(
 /**
  * Show a project's overview (ADR 0071) in the connection's file zone: a
  * document with no text, standing where files stand. The same folder asked for
- * again is shown — with what it was asked for this time.
+ * again is shown — with what it was asked for this time. `library` — a playbook
+ * of the library (ADR 0072), `root` its file on this computer.
  */
 export function addProjectView(
   sessionId: string,
@@ -462,11 +465,12 @@ export function addProjectView(
   name: string,
   ask?: ProjectAsk,
   beside = false,
+  library = false,
 ): string {
   const ws = ensure(sessionId);
-  const known = ws.editors.find((e) => e.project && e.project.root === root);
+  const known = ws.editors.find((e) => e.project && e.project.root === root && !!e.project.library === library);
   if (known) {
-    if (ask) updateDoc(sessionId, known.id, { project: { kind, root, ask, askSeq: (known.project?.askSeq ?? 0) + 1 } });
+    if (ask) updateDoc(sessionId, known.id, { project: { kind, root, ask, askSeq: (known.project?.askSeq ?? 0) + 1, library } });
     patch(sessionId, { layout: showView(ensure(sessionId).layout, known.id) });
     return known.id;
   }
@@ -491,7 +495,7 @@ export function addProjectView(
     sudo: false,
     sudoPassword: "",
     gotoLine: null,
-    project: { kind, root, ask, askSeq: ask ? 1 : 0 },
+    project: { kind, root, ask, askSeq: ask ? 1 : 0, library },
   };
   patch(sessionId, { editors: [...ws.editors, doc], layout: openView(ws.layout, id, beside) });
   return id;

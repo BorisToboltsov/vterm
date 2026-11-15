@@ -1,0 +1,26 @@
+# Every package to its newest version from the system's repositories; says when a reboot is due.
+- name: Update packages
+  hosts: all
+  become: true
+  tasks:
+    - name: Upgrade every package (Debian, Ubuntu)
+      ansible.builtin.apt:
+        upgrade: dist
+        update_cache: true
+      when: ansible_facts.os_family == "Debian"
+
+    - name: Upgrade every package (RHEL family)
+      ansible.builtin.dnf:
+        name: "*"
+        state: latest
+      when: ansible_facts.os_family == "RedHat"
+
+    - name: Look for the reboot flag
+      ansible.builtin.stat:
+        path: /var/run/reboot-required
+      register: reboot_flag
+
+    - name: Say a reboot is due
+      ansible.builtin.debug:
+        msg: a reboot is due
+      when: reboot_flag.stat.exists

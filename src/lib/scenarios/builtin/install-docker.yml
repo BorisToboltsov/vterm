@@ -1,0 +1,40 @@
+# Docker Engine from the system's packages (Debian, Ubuntu) or Docker's repository (RHEL family); the login joins the docker group.
+- name: Install Docker
+  hosts: all
+  become: true
+  vars:
+    # The user to add to the docker group: the login of the inventory, unless set.
+    docker_user: "{{ ansible_user | default('') }}"
+  tasks:
+    - name: Install Docker (Debian, Ubuntu)
+      ansible.builtin.apt:
+        name: docker.io
+        state: present
+        update_cache: true
+      when: ansible_facts.os_family == "Debian"
+
+    - name: Docker's repository (RHEL family)
+      ansible.builtin.get_url:
+        url: https://download.docker.com/linux/centos/docker-ce.repo
+        dest: /etc/yum.repos.d/docker-ce.repo
+        mode: "0644"
+      when: ansible_facts.os_family == "RedHat"
+
+    - name: Install Docker (RHEL family)
+      ansible.builtin.dnf:
+        name: [docker-ce, docker-ce-cli, containerd.io, docker-compose-plugin]
+        state: present
+      when: ansible_facts.os_family == "RedHat"
+
+    - name: Docker runs, and starts at boot
+      ansible.builtin.service:
+        name: docker
+        state: started
+        enabled: true
+
+    - name: The user joins the docker group
+      ansible.builtin.user:
+        name: "{{ docker_user }}"
+        groups: docker
+        append: true
+      when: docker_user | length > 0 and docker_user != "root"
