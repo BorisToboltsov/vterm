@@ -472,11 +472,11 @@ pub fn parse_remote_read(exit: i32, stdout: &str) -> AppResult<TempChunk> {
 
 /// Make a temporary folder on this computer, private to the user.
 pub fn local_mktemp() -> AppResult<PathBuf> {
-    // `tempfile` makes it 0700 on Unix and picks a name nobody holds; kept, the
-    // run removes it (`iac_cleanup`).
+    // `tempfile` makes it in the system's temporary directory, 0700 on Unix,
+    // under a name nobody holds; kept, the run removes it (`iac_cleanup`).
     tempfile::Builder::new()
         .prefix(TEMP_MARK)
-        .tempdir_in(std::env::temp_dir())
+        .tempdir()
         .map(|d| d.keep())
         .map_err(|e| AppError::Message(format!("make the folder of the run: {e}")))
 }
@@ -532,8 +532,12 @@ pub fn local_read(path: &Path, offset: u64) -> AppResult<TempChunk> {
 /// Whether a local folder may be removed as a folder of a run: it is one, and
 /// it lies directly in this computer's temporary directory.
 pub fn local_removable(dir: &Path) -> bool {
+    // Only compared with, never created in: the folder itself was made by
+    // `tempfile` under a name nobody held (`local_mktemp`).
+    // nosemgrep: rust.lang.security.temp-dir.temp-dir
+    let tmp = std::env::temp_dir();
     is_temp_path(&dir.to_string_lossy())
-        && dir.parent() == Some(std::env::temp_dir().as_path())
+        && dir.parent() == Some(tmp.as_path())
         && dir
             .file_name()
             .and_then(|n| n.to_str())

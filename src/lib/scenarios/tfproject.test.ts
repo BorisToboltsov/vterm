@@ -1,11 +1,14 @@
 import { describe, expect, it } from "vitest";
 import { autoLoaded, lockedProviders, readProject, scanBlocks, varFiles } from "./tfproject";
 
+// HCL's template opener, written without an escape in the template literal.
+const TPL = "${";
+
 const MAIN = `
 # A comment with a { brace
 resource "hcloud_server" "web" {
   count       = var.web_count
-  name        = "web-\${count.index + 1}" // a } in a string
+  name        = "web-${TPL}count.index + 1}" // a } in a string
   labels      = { env = "prod", "team" = "ops" }
   firewall_ids = [
     hcloud_firewall.base.id,
@@ -83,6 +86,18 @@ describe("a Terraform project read from its text", () => {
     ]);
     expect(p.backend).toBe("s3");
     expect(p.providers).toEqual({ random: "hashicorp/random", hcloud: "hetznercloud/hcloud" });
+  });
+
+  it("ends a heredoc only at a line that is its tag alone", () => {
+    // "EOT here" and "XEOT" do not end it — their braces stay inside; CRLF lines do.
+    const src = 'a "x" {\n  v = <<EOT\n  EOT here {\n  XEOT }\n  EOT\n  w = 1\n}\nb "y" {}\n';
+    expect(scanBlocks(src).map((b) => [b.kind, b.attrs])).toEqual([
+      ["a", { v: '""', w: "1" }],
+      ["b", {}],
+    ]);
+    expect(scanBlocks(src.replace(/\n/g, "\r\n")).map((b) => b.kind)).toEqual(["a", "b"]);
+    // A heredoc never closed takes the rest of the file — no block is made from it.
+    expect(scanBlocks('a "x" {\n  v = <<EOT\n  }\nb "y" {}\n').map((b) => b.kind)).toEqual(["a"]);
   });
 
   it("keeps a block's own attributes, nested blocks apart", () => {

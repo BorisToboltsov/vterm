@@ -65,10 +65,19 @@ function blankNoise(src: string): string {
     if (c === "<" && src[i + 1] === "<") {
       const m = /^<<-?([A-Za-z_][A-Za-z0-9_]*)[ \t]*\n/.exec(src.slice(i));
       if (m) {
-        const re = new RegExp(`\\n[ \\t]*${m[1]}[ \\t]*(?=\\n|$)`, "g");
-        re.lastIndex = i + m[0].length - 1;
-        const end = re.exec(src);
-        const stop = end ? end.index + end[0].length : n;
+        // The heredoc ends at the first line that is its tag alone (spaces
+        // around allowed) — compared line by line, no pattern built from the file.
+        let stop = n;
+        for (let j = i + m[0].length; j <= n; ) {
+          const eol = src.indexOf("\n", j);
+          const end = eol < 0 ? n : eol;
+          if (src.slice(j, end).trim() === m[1]) {
+            stop = end;
+            break;
+          }
+          if (eol < 0) break;
+          j = eol + 1;
+        }
         // Keep the heredoc as one blank value so `x = <<EOF` still reads as an attribute.
         out += '""';
         for (i += 2; i < stop; i++) if (src[i] === "\n") out += "\n";
