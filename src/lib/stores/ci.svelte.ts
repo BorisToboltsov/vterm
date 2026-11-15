@@ -7,7 +7,7 @@
 // for it ("tell me when it ends"), it asks one run every WATCH_MS, and it ends
 // with the run — or with the tab (`forgetCi` in `closeTabFully`).
 
-import { ciRun, gitRun } from "../api";
+import { ciRun, connectionFiles, gitRun } from "../api";
 import { diag } from "../api/diag";
 import {
   authArgs,
@@ -42,6 +42,8 @@ import {
 import { isKnown, parseRemotes, pickRepo, repoRelative, reposOf, type Forge, type Repo, type RepoRemote } from "../ci/forge";
 import { parentOf } from "../files/fspath";
 import { repoRootArgs } from "../git/git";
+import { cachedReader, loadGroup, type PipelineGroup } from "../pipeline/pipeload";
+import { loadYaml } from "../pipeline/yamldoc";
 import { t } from "../i18n";
 import { settings } from "../settings/settings.svelte";
 import { aboutSession } from "./diag.svelte";
@@ -85,6 +87,19 @@ export async function fileAtCommit(sessionId: string, root: string, sha: string,
   if (!rel || !/^[0-9a-f]{7,64}$/.test(sha)) return null;
   const out = await gitRun(sessionId, root, ["show", `${sha}:${rel}`]);
   return out.exitCode === 0 ? out.stdout : null;
+}
+
+/**
+ * The pipelines of a repository (ADR 0070): its workflow files and GitLab
+ * pipelines, read through the connection the session's files come through —
+ * SFTP, or this computer for a local tab — by the schema's own loader, with its
+ * budget and depth. Rejects only when the YAML parser does not load; a file
+ * that cannot be read is in `failed`.
+ */
+export async function readPipelines(sessionId: string, local: boolean, root: string): Promise<PipelineGroup> {
+  const Y = await loadYaml();
+  const reader = cachedReader(connectionFiles(local ? null : sessionId, settings.sftp.maxOpenMb * 1024 * 1024));
+  return loadGroup(Y, reader, [{ path: root, isDir: true }]);
 }
 
 /** The forge of a host, said by the user once (`settings.ciForges`). */
@@ -282,19 +297,29 @@ export async function checkWatched(): Promise<void> {
   }
 }
 
-// ── A run asked for on its file's schema ─────────────────────────────────────
+// ── What the CI panel asked a file's schema to show ──────────────────────────
 
-/** The run the CI panel asked a file's schema to show, by session and path; `seq` — asked again. */
-export const ciSchemaAsk = $state<{ by: Record<string, { repo: Repo; runId: string; seq: number }> }>({ by: {} });
+/**
+ * What a schema is asked for: a run of the file (ADR 0069), the play of the
+ * event that starts it, or the form to start it by hand (ADR 0070).
+ */
+export type SchemaAsk = { kind: "run"; repo: Repo; runId: string } | { kind: "play" } | { kind: "start" };
+
+/** The ask of each file's schema, by session and path; `seq` — asked again. */
+export const ciSchemaAsk = $state<{ by: Record<string, SchemaAsk & { seq: number }> }>({ by: {} });
 const askKey = (sessionId: string, path: string) => `${sessionId}\n${path}`;
 let askSeq = 0;
 
+export function askOnSchema(sessionId: string, path: string, ask: SchemaAsk): void {
+  ciSchemaAsk.by[askKey(sessionId, path)] = { ...ask, seq: ++askSeq };
+}
+
 export function askRunOnSchema(sessionId: string, path: string, repo: Repo, runId: string): void {
-  ciSchemaAsk.by[askKey(sessionId, path)] = { repo, runId, seq: ++askSeq };
+  askOnSchema(sessionId, path, { kind: "run", repo, runId });
 }
 
 /** What the schema of `path` was asked to show, if anything. */
-export function schemaAskOf(sessionId: string | null, path: string): { repo: Repo; runId: string; seq: number } | null {
+export function schemaAskOf(sessionId: string | null, path: string): (SchemaAsk & { seq: number }) | null {
   return sessionId ? (ciSchemaAsk.by[askKey(sessionId, path)] ?? null) : null;
 }
 

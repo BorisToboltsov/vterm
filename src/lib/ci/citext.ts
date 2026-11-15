@@ -30,6 +30,19 @@ export const STATE_TONE: Record<CiState, string> = {
   neutral: "text-muted",
 };
 
+/** A run's state as a filled mark — the squares of a pipeline's recent runs (ADR 0070). */
+export const STATE_FILL: Record<CiState, string> = {
+  queued: "bg-muted/50",
+  running: "bg-accent",
+  waiting: "bg-warn",
+  manual: "bg-warn",
+  ok: "bg-ok",
+  failed: "bg-bad",
+  cancelled: "bg-edge",
+  skipped: "bg-edge",
+  neutral: "bg-muted/50",
+};
+
 export const stateText = (s: CiState): string => t(`ci.state.${s}` as const);
 
 const PROBLEM_TITLE: Record<CiFailure["kind"], MessageKey> = {

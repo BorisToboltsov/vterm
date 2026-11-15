@@ -10,6 +10,11 @@
 // 3. The schema of a run reads the file at the run's commit through the store,
 //    never `git` itself: the schema reads only through its connection
 //    (`pipeline.guard`), the store asks git on the same session.
+// 4. The pipelines tab (ADR 0070) reads the repository's files through the
+//    store's `readPipelines` — the schema's loader over the session's
+//    connection — and never on a timer: on finding the repository, on
+//    «Refresh», back on screen. The jobs its dots are coloured by are read
+//    only while the panel is on screen.
 //
 // Sources are read without comments: a rule written only in a comment is not a rule.
 
@@ -95,6 +100,22 @@ export function watchViolations(store: string): string[] {
   return out;
 }
 
+/** What the panel does that the pipelines tab forbids: files on a timer, or behind the store's back; the dots' jobs while hidden. */
+export function pipesViolations(panel: string, store: string): string[] {
+  const out: string[] = [];
+  if (/\b(connectionFiles|sftpReadText|readLocalText|sftpList|localList)\b/.test(panel)) out.push("the panel reads files itself");
+  if (!/\breadPipelines\(/.test(panel)) out.push("the panel does not read the pipelines through the store");
+  const reader = fn(store, "readPipelines");
+  if (!/connectionFiles\(/.test(reader) || !/loadGroup\(/.test(reader)) out.push("readPipelines does not use the schema's loader over the connection");
+  for (const timer of panel.match(/setInterval\([^]*?\}, [\d_]+\)/g) ?? []) {
+    if (/\breadPipes\(/.test(timer)) out.push("the pipeline files are read on a timer");
+  }
+  const at = panel.indexOf("void readLatestJobs()");
+  const effect = at < 0 ? "" : panel.slice(panel.lastIndexOf("$effect(", at), at);
+  if (!effect || !/\bvisible\b/.test(effect)) out.push("the dots' jobs are read while the panel is hidden");
+  return out;
+}
+
 describe("CI guard (ADR 0069)", () => {
   const sources = Object.fromEntries(
     files(join(SRC, "lib")).map((f) => [relative(SRC, f).split("\\").join("/"), code(readFileSync(f, "utf8"))]),
@@ -122,6 +143,21 @@ describe("CI guard (ADR 0069)", () => {
       "forgetCi keeps the tab's watches",
     );
     expect(watchViolations(store.replace("clearInterval(timer);", ""))).toContain("the timer is never stopped");
+  });
+
+  it("the pipelines tab reads files through the store, never on a timer; its dots' jobs only on screen", () => {
+    const panel = read("lib/ci/CiPanel.svelte");
+    expect(pipesViolations(panel, store)).toEqual([]);
+    expect(pipesViolations(`${panel}\nimport { sftpReadText } from "../api";`, store)).toContain("the panel reads files itself");
+    expect(pipesViolations(panel.replace("const id = setInterval(() => {", "const id = setInterval(() => {\n void readPipes();"), store)).toContain(
+      "the pipeline files are read on a timer",
+    );
+    expect(pipesViolations(panel.replace("if (!visible || !sessionReady || phase !== \"ready\") return;\n    untrack(() => void readLatestJobs());", "untrack(() => void readLatestJobs());"), store)).toContain(
+      "the dots' jobs are read while the panel is hidden",
+    );
+    expect(pipesViolations(panel, store.replace("connectionFiles(local ? null : sessionId", "sftpReadText(sessionId"))).toContain(
+      "readPipelines does not use the schema's loader over the connection",
+    );
   });
 
   it("the schema of a run asks git through the store, never itself", () => {

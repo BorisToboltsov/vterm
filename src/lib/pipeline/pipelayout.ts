@@ -48,6 +48,31 @@ export const METRICS: LayoutMetrics = {
   eventGap: 8,
 };
 
+/**
+ * The same graph in a panel's preview (ADR 0070): smaller cards, narrower
+ * gutters. `top` holds GitLab's stage titles; a workflow has none and starts
+ * near the edge (`compactMetrics`).
+ */
+export const COMPACT: LayoutMetrics = {
+  node: 24,
+  sub: 20,
+  row: 30,
+  gutter: 26,
+  padX: 6,
+  top: 22,
+  minColumn: 96,
+  maxColumn: 180,
+  radius: 6,
+  event: 96,
+  eventH: 20,
+  eventGap: 6,
+};
+
+/** The compact metrics for a pipeline: room for stage titles only where there are stages. */
+export function compactMetrics(pipeline: Pick<Pipeline, "kind">): LayoutMetrics {
+  return pipeline.kind === "gitlab" ? COMPACT : { ...COMPACT, top: 6 };
+}
+
 export interface NodeBox {
   id: string;
   col: number;
@@ -89,9 +114,15 @@ export interface GraphLayout {
   height: number;
 }
 
-/** Lines shown under a job: its matrix copies when opened, the jobs it calls. */
-export function subLines(job: PipeJob, open: boolean): string[] {
-  if (job.call?.pipeline) return job.call.pipeline.jobs.map((j) => j.name + (j.matrix?.items ? ` ×${j.matrix.items.length}` : ""));
+/**
+ * Lines shown under a job: its matrix copies when opened, the jobs it calls —
+ * those too only when opened where calls are folded (a panel's preview, ADR 0070).
+ */
+export function subLines(job: PipeJob, open: boolean, foldCalls = false): string[] {
+  if (job.call?.pipeline) {
+    if (foldCalls && !open) return [];
+    return job.call.pipeline.jobs.map((j) => j.name + (j.matrix?.items ? ` ×${j.matrix.items.length}` : ""));
+  }
   if (job.matrix?.items && open) return job.matrix.items;
   return [];
 }
@@ -171,6 +202,8 @@ export interface LayoutInput {
   /** Events to draw on the left, by key, in order; none — no event column. */
   events?: readonly string[];
   metrics?: LayoutMetrics;
+  /** A called pipeline's jobs stand under its caller only when it is opened (`open`). */
+  foldCalls?: boolean;
 }
 
 /** The jobs a pipeline starts with: those that wait for nothing. */
@@ -188,7 +221,7 @@ export function layoutPipeline(pipeline: Pipeline, input: LayoutInput): GraphLay
   const cw = Math.min(m.maxColumn, Math.max(m.minColumn, (input.width - 2 * m.padX - lead - m.gutter * (ncol - 1)) / ncol));
   const width = Math.max(input.width, 2 * m.padX + lead + ncol * cw + (ncol - 1) * m.gutter);
   const heightOf = (job: PipeJob) => {
-    const lines = subLines(job, input.open.has(job.id)).length;
+    const lines = subLines(job, input.open.has(job.id), input.foldCalls).length;
     return lines ? m.node + lines * m.sub + 6 : m.node;
   };
   const spanOf = (job: PipeJob) => Math.ceil((heightOf(job) + m.row - m.node) / m.row);

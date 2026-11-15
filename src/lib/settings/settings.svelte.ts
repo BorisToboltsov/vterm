@@ -306,6 +306,9 @@ export interface Settings {
   // The CI panel (ADR 0069): the forge of a host whose name does not say it
   // (a GitLab on a LAN address), by host, as the user said it once.
   ciForges: Record<string, Forge>;
+  // The CI panel's tab the user picked last (ADR 0070): the repository's
+  // pipelines or their runs. Where the runs cannot be read, the pipelines show.
+  ciTab: "pipelines" | "runs";
   // Scenarios (ADR 0071): folders of this computer the recipe library reads,
   // the projects pinned to its "Projects" group, and the panel's last tab.
   scenarioSources: string[];
@@ -488,6 +491,7 @@ const DEFAULTS: Settings = {
   gitHighlightCurrent: true,
   gitLogScope: "head",
   ciForges: {},
+  ciTab: "pipelines",
   scenarioSources: [],
   scenarioProjects: [],
   scenarioTab: "library",
@@ -632,6 +636,7 @@ function load(): Settings {
       gitHighlightCurrent: raw.gitHighlightCurrent !== false,
       gitLogScope: raw.gitLogScope === "all" ? "all" : "head",
       ciForges: sanitizeForges(raw.ciForges),
+      ciTab: raw.ciTab === "runs" ? "runs" : "pipelines",
       scenarioSources: sanitizeSources(raw.scenarioSources),
       scenarioProjects: sanitizeBookmarks(raw.scenarioProjects),
       scenarioTab: sanitizeScenarioTab(raw.scenarioTab),

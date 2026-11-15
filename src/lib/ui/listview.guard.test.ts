@@ -41,6 +41,7 @@ const FILTER_ROWS: Record<string, "ListHeader" | "FilterField"> = {
   "src/lib/monitoring/MonProcesses.svelte": "ListHeader",
   "src/lib/notifications/JournalList.svelte": "ListHeader",
   "src/lib/ci/CiPanel.svelte": "ListHeader",
+  "src/lib/ci/CiPipelines.svelte": "ListHeader",
   "src/lib/git/GitBranches.svelte": "FilterField",
   "src/lib/git/GitLogFilter.svelte": "FilterField",
   "src/lib/servers/ServerTree.svelte": "FilterField",

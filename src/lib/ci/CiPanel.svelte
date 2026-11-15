@@ -1,8 +1,11 @@
 <script lang="ts">
-  // The CI panel (ADR 0069): the runs of the repository the terminal is in —
-  // GitHub Actions through `gh`, GitLab CI through `glab`, the user's own, on
-  // the host the session runs on. A list (filter, groups, order — ADR 0050),
-  // the run picked beside it in a wide panel and in its place in a narrow one.
+  // The CI panel (ADR 0069, 0070): the repository the terminal is in, as two
+  // tabs. «Pipelines» — its pipeline files, read as the schema reads them, each
+  // with its jobs as dots coloured by its latest run, and the way into the
+  // schema; they stand without the forge. «Runs» — its runs, GitHub Actions
+  // through `gh`, GitLab CI through `glab`, the user's own, on the host the
+  // session runs on. Each a list (filter, groups, order — ADR 0050), the item
+  // picked beside it in a wide panel and in its place in a narrow one.
   // Read while the panel is on screen: every 10 s while something runs, every
   // minute otherwise. Every write asks first, on production in red.
   import { untrack } from "svelte";
@@ -17,12 +20,19 @@
   import { dockCwd } from "../stores/dockstate.svelte";
   import { clickLink } from "../stores/linkopen.svelte";
   import { listOrder, setListOrder } from "../stores/listview.svelte";
+  import { settings } from "../settings/settings.svelte";
+  import type { PipelineGroup } from "../pipeline/pipeload";
+  import type { Pipeline } from "../pipeline/pipeline";
+  import { buildMap } from "../pipeline/pipemap";
+  import type { RunState } from "../pipeline/pipeplay";
+  import PipelineDots from "../pipeline/PipelineDots.svelte";
   import {
     cancelRun,
     checkAuth,
     isWatched,
     readJobs,
     readLog,
+    readPipelines,
     readRuns,
     repoRemotes,
     rerunRun,
@@ -45,7 +55,9 @@
   import { applyView, filterSummary, NO_FILTER, type ListFilter, type ListOrder, type ListSchema } from "../ui/listview";
   import { pollFailed, singleFlight, type PollFailure } from "../ui/poll";
   import { isActive, logPlaces, logTail, type CiFailure, type CiJob, type CiRun } from "./ciparse";
-  import { clock } from "./cirun";
+  import { jobsToRead, ownerOf, pipeRows, type HeldJobs, type PipeRow } from "./cipipes";
+  import { clock, jobNotes, runOnSchema } from "./cirun";
+  import CiPipelines from "./CiPipelines.svelte";
   import { problemHint, problemTitle, runName, STATE_ICON, STATE_TONE, stateText } from "./citext";
   import CiRunDetail, { type OpenLog } from "./CiRunDetail.svelte";
   import { CLI, FORGES, isKnown, pickRepo, repoWebUrl, type Repo, type RepoRemote } from "./forge";
@@ -62,6 +74,9 @@
     onOpenSchema,
     onOpenLog,
     onTypeInTerminal,
+    local = false,
+    onOpenPipeline,
+    onPipelines,
   }: {
     sessionId: string;
     /** On screen: the panel reads only then (`dockpanels.guard`). */
@@ -80,6 +95,12 @@
     onOpenLog?: (name: string, text: string) => void;
     /** "Sign in": the CLI's own login, typed into this tab's terminal. */
     onTypeInTerminal?: (argv: string[]) => void;
+    /** A local tab: the repository's files are this computer's, not a server's. */
+    local?: boolean;
+    /** A pipeline file on its schema: as it is, its event played, or on the form to start it (ADR 0070). */
+    onOpenPipeline?: (path: string, ask: "play" | "start" | null) => void;
+    /** The map of the repository's pipelines. */
+    onPipelines?: (targets: { path: string; isDir: boolean }[]) => void;
   } = $props();
 
   /** How often the list is read: while a run goes on, and otherwise. */
@@ -110,6 +131,101 @@
   let log = $state.raw<OpenLog | null>(null);
   let busy = $state(false);
 
+  // ── Two tabs: the pipelines and their runs (ADR 0070) ─────────────────────
+  type CiTab = "pipelines" | "runs";
+  /** Picked here since the repository was found; null — the stored choice decides. */
+  let tabPick = $state<CiTab | null>(null);
+  /** The runs cannot be read here: no remote, a host nobody named, the CLI missing or signed out. */
+  const blocked = $derived(phase === "noRemote" || phase === "unknown" || phase === "problem");
+  const tab = $derived<CiTab>(tabPick ?? (blocked ? "pipelines" : settings.ciTab));
+  function pickTab(next: CiTab) {
+    tabPick = next;
+    settings.ciTab = next;
+  }
+
+  let group = $state.raw<PipelineGroup | null>(null);
+  let pipesError = $state<string | null>(null);
+  let pipesAt = 0;
+  let failedSaid = "";
+  let pipeSelected = $state<string | null>(null);
+  let pipeFilter = $state<ListFilter>(NO_FILTER);
+  const pipes = $derived(group && root ? pipeRows(buildMap(group.pipelines), root, runs) : null);
+  /** Runs' jobs read for the dots and the preview: each pipeline's latest run, and the run opened. */
+  let held = $state.raw<ReadonlyMap<string, HeldJobs>>(new Map());
+  /** The pipeline each run of the list belongs to, when the panel can tell. */
+  const pipeOfRun = $derived.by(() => {
+    const out = new Map<string, Pipeline>();
+    if (!pipes || !runs) return out;
+    for (const r of runs) {
+      const owner = ownerOf(r, pipes);
+      const row = owner ? pipes.find((p) => p.id === owner) : undefined;
+      if (row) out.set(r.id, row.pipeline);
+    }
+    return out;
+  });
+  function onPipeline(run: CiRun | undefined, pipeline: Pipeline) {
+    const h = run ? held.get(run.id) : undefined;
+    return h ? runOnSchema(pipeline, h.jobs) : null;
+  }
+  const runStates = (run: CiRun | undefined, pipeline: Pipeline): Record<string, RunState> | null => onPipeline(run, pipeline)?.states ?? null;
+  function hold(run: CiRun, list: CiJob[]) {
+    const next = new Map(held);
+    next.set(run.id, { state: run.state, attempt: run.attempt, jobs: list });
+    held = next;
+  }
+
+  /** The repository's pipelines, from its files — whatever the forge says. */
+  const readPipes = singleFlight(async () => {
+    const top = root;
+    if (!top) return;
+    try {
+      const next = await readPipelines(sessionId, local, top);
+      if (top !== root) return;
+      pipesAt = Date.now();
+      pipesError = null;
+      group = next;
+      const said = next.failed.map((f) => f.path).join("\n");
+      if (said && said !== failedSaid) {
+        const first = next.failed[0];
+        diag.warn("ci", "pipeline files of the repository were not read: the CI panel lists the rest", { count: next.failed.length, path: first.path, said: first.detail }, aboutSession(sessionId));
+      }
+      failedSaid = said;
+    } catch (e) {
+      if (top !== root) return;
+      pipesError = String(e);
+      diag.warn("ci", "the pipelines of the repository were not read: the YAML parser did not load", { said: String(e) }, aboutSession(sessionId));
+    }
+  });
+
+  /** The jobs of each pipeline's latest run, for its dots: a run that ended once, a running one with every read. */
+  const readLatestJobs = singleFlight(async () => {
+    const r = repo;
+    const list = pipes;
+    if (!r || !list) return;
+    for (const run of jobsToRead(list, held)) {
+      const answer = await readJobs(sessionId, r, run.id);
+      if (r !== repo) return;
+      if (!answer.ok) {
+        // The forge said no: the dots stay grey, the rest wait for the next read of the list.
+        diag.debug("ci", "the jobs of a pipeline's latest run were not read: its dots stay grey", { run: run.id, kind: answer.failure.kind }, aboutSession(sessionId));
+        return;
+      }
+      hold(run, answer.value);
+    }
+  });
+  // With every new list (and back on screen): what the dots still lack.
+  $effect(() => {
+    void pipes;
+    if (!visible || !sessionReady || phase !== "ready") return;
+    untrack(() => void readLatestJobs());
+  });
+
+  function runsOf(row: PipeRow) {
+    filter = { text: "", facets: { workflow: [row.runs[0]?.workflow || "—"] } };
+    selected = null;
+    pickTab("runs");
+  }
+
   // ── Where the runs are ────────────────────────────────────────────────────
   let located: string | null = null;
   async function locate(force = false) {
@@ -122,12 +238,25 @@
     if (at !== cwd) return;
     if (top.exitCode !== 0) {
       root = null;
+      group = null;
       repos = [];
       phase = "noRepo";
       return;
     }
-    root = top.stdout.trim();
-    repos = (await repoRemotes(sessionId, root)) ?? [];
+    const found = top.stdout.trim();
+    if (found !== root) {
+      // Another repository: nothing of the last one stands.
+      root = found;
+      group = null;
+      pipesError = null;
+      failedSaid = "";
+      held = new Map();
+      pipeSelected = null;
+      pipeFilter = NO_FILTER;
+      tabPick = null;
+    }
+    void readPipes();
+    repos = (await repoRemotes(sessionId, found)) ?? [];
     await settle();
   }
 
@@ -208,7 +337,12 @@
   $effect(() => {
     const back = visible && !wasVisible;
     wasVisible = visible;
-    if (back && phase === "ready") untrack(() => void refresh());
+    if (!back) return;
+    untrack(() => {
+      if (phase === "ready") void refresh();
+      // The files change seldom: read again only when the last read is a while old.
+      if (root && Date.now() - pipesAt > SLOW_MS) void readPipes();
+    });
   });
 
   async function loadJobs(fresh: boolean) {
@@ -229,6 +363,7 @@
     }
     jobsFailure = null;
     jobs = answer.value;
+    hold(picked, answer.value);
     if (fresh && openJob === null) {
       const bad = answer.value.find((j) => j.state === "failed" && !j.allowFailure);
       if (bad) void toggleJob(bad.id);
@@ -379,6 +514,7 @@
 </script>
 
 {#snippet runRow(r: CiRun)}
+  {@const shape = pipeOfRun.get(r.id)}
   <button
     type="button"
     class="flex w-full items-start gap-2 border-b border-edge/50 px-2.5 py-1.5 text-left hover:bg-edge/40 {selected === r.id && wide ? 'bg-accent/10' : ''}"
@@ -396,6 +532,7 @@
         <Icon name="gitBranch" size={10} /><span class="truncate">{r.branch ?? r.sha.slice(0, 7)}</span><span>· {r.event}</span>
       </span>
     </span>
+    {#if shape}<span class="self-center"><PipelineDots pipeline={shape} states={runStates(r, shape)} /></span>{/if}
     <span class="shrink-0 text-right">
       <span class="block tabular-nums text-meta {isActive(r.state) ? 'text-accent' : 'text-text'}">{length(r) !== null ? clock(length(r) ?? 0) : "—"}</span>
       <span class="block text-caption text-muted">{compactAge(r.created, now)}</span>
@@ -403,8 +540,59 @@
   </button>
 {/snippet}
 
+{#snippet runsNote()}
+  <!-- Why there are no runs here — over the pipelines, which stand without them. -->
+  <div class="flex shrink-0 flex-wrap items-center gap-x-2 gap-y-1 border-b border-edge bg-warn/10 px-2.5 py-1 text-meta text-warn" data-testid="ci-runs-note">
+    <Icon name={phase === "problem" && problem?.kind === "missing" ? "wrench" : phase === "problem" && problem?.kind === "signedOut" ? "key" : "alert"} size={12} />
+    <span class="min-w-0 flex-1 truncate">
+      {#if phase === "noRemote"}{t("ci.noRemote")}{:else if phase === "unknown" && shown}{t("ci.unknownForge", { host: shown.host })}{:else if problem && repo}{problemTitle(problem, cli, repo.host)}{/if}
+      · {t("ci.pipes.runsOff")}
+    </span>
+    {#if phase === "unknown" && shown}
+      {#each FORGES as f (f)}
+        <button type="button" class="rounded border border-edge px-2 py-0.5 text-text hover:border-accent" onclick={() => sayForge(f)}>{f === "github" ? "GitHub" : "GitLab"}</button>
+      {/each}
+    {:else if phase === "problem"}
+      {#if problem?.kind === "signedOut" && onTypeInTerminal && repo}
+        {@const r = repo}
+        <button type="button" class="flex items-center gap-1 rounded border border-edge px-2 py-0.5 text-text hover:border-accent" onclick={() => onTypeInTerminal?.([cli, "auth", "login", "--hostname", r.host])}>
+          <Icon name="terminal" size={12} />{t("ci.signInTerminal")}
+        </button>
+      {/if}
+      <button type="button" class="flex items-center gap-1 rounded border border-edge px-2 py-0.5 text-text hover:border-accent" onclick={() => void settle()}>
+        <Icon name="refresh" size={12} />{t("ci.retry")}
+      </button>
+    {/if}
+  </div>
+{/snippet}
+
 <div class="flex h-full min-h-0 flex-col @container" use:wideWhen={(w) => (wide = w)} data-testid="ci-panel">
   <div class="flex shrink-0 items-center gap-1.5 border-b border-edge px-2.5 py-1">
+    {#if root && phase !== "noRepo"}
+      <!-- What the panel shows: the repository's pipelines, or their runs (ADR 0070). -->
+      <div class="flex shrink-0 overflow-hidden rounded border border-edge text-meta" role="radiogroup" aria-label={t("ci.tabs")}>
+        <button
+          type="button"
+          role="radio"
+          aria-checked={tab === "pipelines"}
+          class="px-2 py-0.5 {tab === 'pipelines' ? 'bg-accent/15 text-accent' : 'text-muted hover:bg-edge hover:text-text'}"
+          data-testid="ci-tab-pipelines"
+          onclick={() => pickTab("pipelines")}
+        >
+          {t("ci.tab.pipelines")}{#if pipes}<span class="ml-1 tabular-nums text-muted">{pipes.length}</span>{/if}
+        </button>
+        <button
+          type="button"
+          role="radio"
+          aria-checked={tab === "runs"}
+          class="border-l border-edge px-2 py-0.5 {tab === 'runs' ? 'bg-accent/15 text-accent' : 'text-muted hover:bg-edge hover:text-text'}"
+          data-testid="ci-tab-runs"
+          onclick={() => pickTab("runs")}
+        >
+          {t("ci.tab.runs")}{#if runs && !blocked}<span class="ml-1 tabular-nums text-muted">{runs.length}</span>{/if}
+        </button>
+      </div>
+    {/if}
     {#if repos.length}
       <!-- The remote whose runs are shown: origin first; each with its forge. -->
       <select
@@ -419,24 +607,70 @@
       </select>
     {/if}
     <span class="ml-auto truncate text-caption text-muted">
-      {#if phase === "ready" && runs}{busyList ? t("ci.pollFast") : t("ci.pollSlow")}{/if}
+      {#if tab === "runs" && phase === "ready" && runs}{busyList ? t("ci.pollFast") : t("ci.pollSlow")}{/if}
     </span>
+    {#if root && onPipelines && pipes?.length}
+      {@const top = root}
+      <button
+        type="button"
+        class="flex shrink-0 items-center gap-1 rounded px-1.5 py-0.5 text-meta text-muted hover:bg-edge hover:text-text"
+        aria-label={t("ci.pipes.map")}
+        use:tooltip={t("ci.pipes.mapHint")}
+        data-testid="ci-pipes-map"
+        onclick={() => onPipelines?.([{ path: top, isDir: true }])}
+      >
+        <Icon name="network" size={13} />{#if wide}<span>{t("ci.pipes.map")}</span>{/if}
+      </button>
+    {/if}
     <button
       type="button"
       class="rounded p-1 text-muted hover:bg-edge hover:text-text disabled:opacity-40"
       aria-label={t("ci.refresh")}
       use:tooltip={t("ci.refresh")}
       disabled={!sessionReady}
-      onclick={() => (phase === "ready" ? ((readAt = 0), void refresh()) : void locate(true))}
+      onclick={() => {
+        if (root) void readPipes();
+        if (phase === "ready") {
+          readAt = 0;
+          void refresh();
+        } else void locate(true);
+      }}
     >
       <Icon name="refresh" size={13} />
     </button>
   </div>
 
-  {#if phase === "idle" || (phase === "checking" && !runs)}
+  {#if !root && (phase === "idle" || phase === "checking")}
     <div class="space-y-2 p-3"><Skeleton /><Skeleton width="85%" /><Skeleton width="70%" /></div>
   {:else if phase === "noRepo"}
     <EmptyState icon="gitBranch" title={t("ci.noRepo")} hint={t("ci.noRepoHint")} />
+  {:else if tab === "pipelines"}
+    {#if blocked}{@render runsNote()}{/if}
+    <CiPipelines
+      rows={pipes}
+      failed={group?.failed ?? []}
+      error={pipesError}
+      {wide}
+      {now}
+      runsKnown={phase === "ready"}
+      selected={pipeSelected}
+      filter={pipeFilter}
+      statesOf={(row) => runStates(row.runs[0], row.pipeline)}
+      notesOf={(row) => {
+        const on = onPipeline(row.runs[0], row.pipeline);
+        return on ? jobNotes(on, now) : {};
+      }}
+      onfilter={(next) => (pipeFilter = next)}
+      onmenu={(m) => (menu = m)}
+      onselect={(id) => (pipeSelected = id)}
+      onschema={(row) => onOpenPipeline?.(row.id, null)}
+      onplay={(row) => onOpenPipeline?.(row.id, "play")}
+      onlast={(row, last) => repo && onOpenSchema?.(row.id, repo, last)}
+      onstart={(row) => onOpenPipeline?.(row.id, "start")}
+      onruns={runsOf}
+    />
+  {:else if phase === "checking" && !runs}
+    <div class="space-y-2 p-3"><Skeleton /><Skeleton width="85%" /><Skeleton width="70%" /></div>
   {:else if phase === "noRemote"}
     <EmptyState icon="gitBranch" title={t("ci.noRemote")} hint={t("ci.noRemoteHint")} />
   {:else if phase === "unknown" && shown}

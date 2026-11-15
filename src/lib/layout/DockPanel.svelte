@@ -51,6 +51,7 @@
     onAskAi,
     onOpenAt,
     onOpenRunSchema,
+    onOpenPipeline,
     onOpenLog,
     onTypeInTerminal,
     getAiContext,
@@ -104,6 +105,8 @@
     onOpenAt?: (path: string, line: number) => void;
     /** CI: a workflow file on its schema, showing a run. */
     onOpenRunSchema?: (path: string, repo: Repo, run: CiRun) => void;
+    /** CI: a pipeline file on its schema — as it is, its event played, or on its start form (ADR 0070). */
+    onOpenPipeline?: (path: string, ask: "play" | "start" | null) => void;
     /** CI: a job's whole log as a document to read. */
     onOpenLog?: (name: string, text: string) => void;
     /** CI: the CLI's sign-in, typed into this tab's terminal. */
@@ -206,6 +209,9 @@
     onOpenSchema={onOpenRunSchema}
     {onOpenLog}
     {onTypeInTerminal}
+    local={kind === "local"}
+    {onOpenPipeline}
+    {onPipelines}
   />
 {:else if id === "ai"}
   <AiChat
