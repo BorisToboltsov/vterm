@@ -378,6 +378,7 @@ mod tests {
             auth_method: AuthMethod::Key,
             key_path: Some("/home/u/.ssh/id_ed25519".into()),
             has_saved_password: false,
+            has_saved_sudo: false,
             group: Some("Prod".into()),
             tags: vec!["web".into()],
             prod: None,

@@ -4,7 +4,10 @@
 #   nopass / nopass    — sudo asks for nothing
 #   plain / plain      — no sudo rights at all
 #   deploy / deploypass — whom they `su` to: its home is closed to everyone else
-# Used by the ignored `live_fileuser` tests in src-tauri/src/fileuser.rs.
+#   limited / limited  — sudo may run only `id`: a right password, a refused command
+#   ttyonly / ttyonly  — sudo wants a terminal (`requiretty`)
+# Used by the ignored `live_fileuser` tests in src-tauri/src/fileuser.rs and
+# `live_sudo` in src-tauri/src/sudo.rs.
 ARG BASE=ubuntu:24.04
 FROM ${BASE}
 RUN apt-get update \
@@ -18,6 +21,10 @@ RUN useradd -m -s /bin/bash plain && echo 'plain:plain' | chpasswd
 RUN useradd -m -s /bin/bash deploy && echo 'deploy:deploypass' | chpasswd \
  && chmod 700 /home/deploy \
  && echo secret > /home/deploy/only-deploy.txt && chown deploy:deploy /home/deploy/only-deploy.txt
+RUN useradd -m -s /bin/bash limited && echo 'limited:limited' | chpasswd \
+ && echo 'limited ALL=(root) /usr/bin/id' > /etc/sudoers.d/limited && chmod 440 /etc/sudoers.d/limited
+RUN useradd -m -s /bin/bash -G sudo ttyonly && echo 'ttyonly:ttyonly' | chpasswd \
+ && echo 'Defaults:ttyonly requiretty' > /etc/sudoers.d/ttyonly && chmod 440 /etc/sudoers.d/ttyonly
 RUN printf 'Port 2222\nPasswordAuthentication yes\n' > /etc/ssh/sshd_config.d/sudo.conf
 # sshd itself stays root: it must switch to the logging-in user. An unprivileged port, though.
 EXPOSE 2222

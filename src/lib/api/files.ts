@@ -16,11 +16,13 @@ export function shellUser(sessionId: string): Promise<ShellUserReport> {
 }
 
 /**
- * The file panel works as `user` from now on, through `sudo`. Throws with a marker
- * the panel reads (`fileUserFailure`): no password given, a wrong one, a refusal.
+ * The file panel works as `user` from now on, through `sudo` — without a password,
+ * or with the session's sudo password (taken, saved or the login's: ADR 0073; a
+ * typed one goes to `sudoCheck` first). Throws with a marker the panel reads
+ * (`fileUserFailure`): a password wanted, a wrong one, a refusal.
  */
-export function sftpOpenAs(sessionId: string, user: string, password: string | null): Promise<void> {
-  return call<void>("sftp_open_as", { sessionId, user, password });
+export function sftpOpenAs(sessionId: string, user: string): Promise<void> {
+  return call<void>("sftp_open_as", { sessionId, user });
 }
 
 /** The file panel works as the login user again. */
@@ -47,15 +49,11 @@ export function sftpCreateFile(sessionId: string, path: string): Promise<void> {
 /**
  * Open a remote file as text in the editor (throws on large/binary files).
  * `maxBytes` is the configured open-size limit (backend clamps it to a hard cap).
+ * `sudo` reads it as root with the session's sudo password (ADR 0073) — the
+ * window never holds one; a sudo answer comes back as its marker (`sudoAnswer`).
  */
-export function sftpReadText(
-  sessionId: string,
-  path: string,
-  maxBytes?: number,
-  sudo?: boolean,
-  sudoPassword?: string,
-): Promise<TextFile> {
-  return call<TextFile>("sftp_read_text", { sessionId, path, maxBytes, sudo, sudoPassword });
+export function sftpReadText(sessionId: string, path: string, maxBytes?: number, sudo?: boolean): Promise<TextFile> {
+  return call<TextFile>("sftp_read_text", { sessionId, path, maxBytes, sudo });
 }
 
 /** Advisory check for the editor's temp-sibling save directory. */
@@ -64,11 +62,6 @@ export function sftpWriteAccess(
   path: string,
 ): Promise<"writable" | "restricted" | "unknown"> {
   return call("sftp_write_access", { sessionId, path });
-}
-
-/** Check sudo authentication before editing; later write permission can still differ. */
-export function sftpCheckSudo(sessionId: string, password: string): Promise<boolean> {
-  return call("sftp_check_sudo", { sessionId, password });
 }
 
 /** Open a LOCAL file as text in the editor (throws on large/binary files). */
@@ -242,42 +235,39 @@ export function serverToolsStatus(sessionId: string): Promise<ToolsStatus> {
   return call<ToolsStatus>("server_tools_status", { sessionId });
 }
 
-/** Run a tool install command on the server (one-click); returns its output. */
-export function runToolInstall(
-  sessionId: string,
-  command: string,
-  sudoPassword?: string,
-): Promise<string> {
-  return call<string>("run_tool_install", { sessionId, command, sudoPassword });
+/** Run a tool install command on the server (one-click); returns its output. A
+ *  leading `sudo` gets the session's sudo password (`sudoCheck` first, ADR 0073). */
+export function runToolInstall(sessionId: string, command: string): Promise<string> {
+  return call<string>("run_tool_install", { sessionId, command });
 }
 
 /**
  * Lint the editor buffer with a real tool on the server (Phase 12.7). `name` is the
  * file's basename — some validators infer the type from it (systemd-analyze needs the
- * unit suffix). `sudoPassword` (reused from an open-as-root, never a fresh prompt) runs
- * validators that require root (`sshd -t`) under sudo.
+ * unit suffix). `sudo` (the file was opened as root) runs validators that require root
+ * (`sshd -t`) under sudo, with what sudo already took this session — never a prompt.
  */
 export function lintRemote(
   sessionId: string,
   content: string,
   kind: string,
-  opts: { name?: string; sudoPassword?: string } = {},
+  opts: { name?: string; sudo?: boolean } = {},
 ): Promise<RemoteLintResult> {
   return call<RemoteLintResult>("lint_remote", {
     sessionId,
     content,
     kind,
     name: opts.name,
-    sudoPassword: opts.sudoPassword,
+    sudo: opts.sudo,
   });
 }
 
 /** List every config file nginx loads on the server (`nginx -T`), for detecting
  *  nginx configs outside the `/etc/nginx/` tree. Empty when nginx is absent/unreadable.
- *  `sudoPassword` (reused from an open-as-root, never a fresh prompt) runs the dump under
- *  sudo so a root-only config tree still resolves. */
-export function nginxConfigFiles(sessionId: string, sudoPassword?: string): Promise<string[]> {
-  return call<string[]>("nginx_config_files", { sessionId, sudoPassword });
+ *  `sudo` (a file opened as root) runs the dump under sudo with what sudo already took
+ *  this session — never a prompt — so a root-only config tree still resolves. */
+export function nginxConfigFiles(sessionId: string, sudo?: boolean): Promise<string[]> {
+  return call<string[]>("nginx_config_files", { sessionId, sudo });
 }
 
 /** Content search under a remote directory (grep over SSH). */
@@ -347,8 +337,8 @@ export function sftpWriteText(
   eol: "lf" | "crlf",
   expectedSha256: string | null,
   opts: {
+    /** Write as root, with the session's sudo password (ADR 0073). */
     sudo?: boolean;
-    sudoPassword?: string;
     backup?: boolean;
     /** Encoding the read reported; omitted means UTF-8. See textenc.rs. */
     encoding?: string;
@@ -362,7 +352,6 @@ export function sftpWriteText(
     encoding: opts.encoding,
     expectedSha256,
     sudo: opts.sudo,
-    sudoPassword: opts.sudoPassword,
     backup: opts.backup,
   });
 }

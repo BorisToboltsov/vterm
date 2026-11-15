@@ -41,6 +41,7 @@ pub fn add_server(profile: NewServerProfile, state: State<AppState>) -> AppResul
         auth_method: profile.auth_method,
         key_path: profile.key_path,
         has_saved_password: false,
+        has_saved_sudo: false,
         group: profile.group,
         tags: profile.tags,
         prod: profile.prod,
@@ -241,6 +242,7 @@ pub fn forget_secrets(id: String, state: State<AppState>) -> AppResult<()> {
         let mut servers = state.servers.lock().unwrap();
         if let Some(p) = servers.iter_mut().find(|p| p.id == id) {
             p.has_saved_password = false;
+            p.has_saved_sudo = false;
             if let Some(px) = p.proxy.as_mut() {
                 px.has_saved_password = false;
             }

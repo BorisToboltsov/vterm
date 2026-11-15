@@ -77,6 +77,9 @@
   // blank to keep" instead of pre-filling a secret (PasswordInput invariant).
   let secret = $state("");
   let hasSavedPassword = $state(false);
+  // A sudo password saved from the editor's sudo prompt (ADR 0073): said here, so
+  // it is not a secret nobody knows about; "Forget" removes it with the rest.
+  let hasSavedSudo = $state(false);
   let group = $state("");
   let tagsInput = $state("");
   // Pictogram (icons.ts key via servericons.ts) + colour key, shown before the
@@ -183,6 +186,7 @@
     keyPath = null;
     secret = "";
     hasSavedPassword = false;
+    hasSavedSudo = false;
     group = prefillGroup;
     tagsInput = "";
     icon = "";
@@ -211,6 +215,7 @@
     keyPath = server.keyPath;
     secret = "";
     hasSavedPassword = server.hasSavedPassword;
+    hasSavedSudo = server.hasSavedSudo;
     group = server.group ?? "";
     tagsInput = server.tags.join(", ");
     icon = server.icon;
@@ -244,6 +249,7 @@
     keyPath = server.keyPath;
     secret = "";
     hasSavedPassword = false;
+    hasSavedSudo = false;
     group = server.group ?? "";
     tagsInput = server.tags.join(", ");
     icon = server.icon;
@@ -488,6 +494,11 @@
         placeholder={hasSavedPassword ? t("page.secretKeep") : ""}
       />
     </label>
+    {#if hasSavedSudo}
+      <p class="-mt-2 mb-3 flex items-center gap-1.5 text-meta text-muted" data-testid="server-sudo-saved">
+        <Icon name="key" size={12} class="shrink-0" />{t("page.sudoSaved")}
+      </p>
+    {/if}
 
     <div class="mb-3 flex items-center gap-2 text-xs text-text">
       <input type="checkbox" id="srv-prod" data-testid="server-prod" bind:checked={prod} />

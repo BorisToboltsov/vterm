@@ -157,11 +157,14 @@ describe("invoke wrappers pass the right command + args", () => {
       sessionId: "sess",
       path: "/etc/app.conf",
     });
-    await api.sftpCheckSudo("sess", "password");
-    expect(invoke).toHaveBeenCalledWith("sftp_check_sudo", {
+    await api.sudoCheck("sess", "password", true);
+    expect(invoke).toHaveBeenCalledWith("sudo_check", {
       sessionId: "sess",
       password: "password",
+      remember: true,
     });
+    await api.sudoRoute("sess");
+    expect(invoke).toHaveBeenCalledWith("sudo_route", { sessionId: "sess" });
     await api.saveEditorCopy("/tmp/app.conf", "data\n", "crlf", "utf-8-bom");
     expect(invoke).toHaveBeenCalledWith("save_editor_copy", {
       path: "/tmp/app.conf",
@@ -251,26 +254,23 @@ describe("invoke wrappers pass the right command + args", () => {
   it("server tools commands", async () => {
     await api.serverToolsStatus("sess");
     expect(invoke).toHaveBeenCalledWith("server_tools_status", { sessionId: "sess" });
-    await api.runToolInstall("sess", "sudo apt-get install -y shellcheck", "pw");
+    await api.runToolInstall("sess", "sudo apt-get install -y shellcheck");
     expect(invoke).toHaveBeenCalledWith("run_tool_install", {
       sessionId: "sess",
       command: "sudo apt-get install -y shellcheck",
-      sudoPassword: "pw",
     });
   });
 
-  it("sftpReadText/WriteText forward sudo + backup options", async () => {
-    await api.sftpReadText("s", "/etc/sudoers", 2048, true, "pw");
+  it("sftpReadText/WriteText forward sudo + backup options, and never a password", async () => {
+    await api.sftpReadText("s", "/etc/sudoers", 2048, true);
     expect(invoke).toHaveBeenCalledWith("sftp_read_text", {
       sessionId: "s",
       path: "/etc/sudoers",
       maxBytes: 2048,
       sudo: true,
-      sudoPassword: "pw",
     });
     await api.sftpWriteText("s", "/etc/hosts", "x\n", "lf", "sha", {
       sudo: true,
-      sudoPassword: "pw",
       backup: true,
     });
     expect(invoke).toHaveBeenCalledWith("sftp_write_text", {
@@ -280,7 +280,6 @@ describe("invoke wrappers pass the right command + args", () => {
       eol: "lf",
       expectedSha256: "sha",
       sudo: true,
-      sudoPassword: "pw",
       backup: true,
     });
   });

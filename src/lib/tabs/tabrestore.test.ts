@@ -333,7 +333,7 @@ describe("where a tab was (v1.36)", () => {
     loading: false,
     loadError: null,
     sudo: false,
-    sudoPassword: "",
+    sudoRoute: null,
     gotoLine: null,
     ...over,
   });
@@ -367,7 +367,7 @@ describe("where a tab was (v1.36)", () => {
 
   it("a file opened through sudo, a diff against a commit and an unsaved buffer stay behind", () => {
     const editors = [
-      doc({ id: "a", sudo: true, sudoPassword: "hunter2" }),
+      doc({ id: "a", sudo: true }),
       doc({ id: "b", gitBase: "old text" }),
       doc({ id: "c", path: "script.sh", name: "script.sh", baseSha256: "" }),
       doc({ id: "d", source: "local", path: "C:\\Users\\me\\notes.txt", name: "notes.txt" }),

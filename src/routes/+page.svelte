@@ -160,6 +160,7 @@
   import { asRecipe, freeFileName, recipeFileName } from "#lib/scenarios/recipe.ts";
   import DiffModal from "#lib/editor/DiffModal.svelte";
   import ToolInstallDialog from "#lib/editor/ToolInstallDialog.svelte";
+  import SudoPrompt from "#lib/sudo/SudoPrompt.svelte";
   import type { ToolStatus } from "#lib/editor/servertools.ts";
   import { editorLangOrPlain } from "#lib/editor/editorlang.ts";
   import {
@@ -225,7 +226,6 @@
   import { hostEnv } from "#lib/stores/hostenv.svelte.ts";
   import ServerTree from "#lib/servers/ServerTree.svelte";
   import Modal from "#lib/ui/Modal.svelte";
-  import PasswordInput from "#lib/ui/PasswordInput.svelte";
   import ConfirmDialog from "#lib/ui/ConfirmDialog.svelte";
   import UnsavedCloseDialog from "#lib/editor/UnsavedCloseDialog.svelte";
   import { activeTabStrip } from "#lib/tabs/tabstrip.ts";
@@ -2477,6 +2477,10 @@
   // ── Config editor (Phase 12; the flow lives in page/editorflow.svelte.ts) ──
   const editors = createEditorFlow({
     findTab,
+    serverOf: (sid) => {
+      const tab = findTab(sid);
+      return tab?.kind === "ssh" ? servers.find((s) => s.id === tab.serverId) : null;
+    },
     // A file beside the terminal only where the terminal's zone holds two.
     roomBeside: (sid) => {
       const zone = panes(getWorkspace(sid).layout).find((z) => z.tabs.includes(TERMINAL_VIEW));
@@ -2500,24 +2504,8 @@
   const edDoc = $derived(
     edFlow.ask ? (getWorkspace(edFlow.ask.lead).editors.find((d) => d.id === edFlow.ask?.docId) ?? null) : null,
   );
-  // What the sudo prompt says: reopen, check access ahead of editing, or save.
-  const sudoPromptPath = $derived(
-    editors.sudo?.kind === "open" ? editors.sudo.path : editors.sudo ? editors.sudo.doc.path : "",
-  );
-  const sudoPromptTitle = $derived(
-    editors.sudo?.kind === "save"
-      ? t("editor.sudoSaveTitle")
-      : editors.sudo?.kind === "check"
-        ? t("editor.checkSudo")
-        : t("editor.sudoTitle"),
-  );
-  const sudoPromptConfirm = $derived(
-    editors.sudo?.kind === "save"
-      ? t("editor.save")
-      : editors.sudo?.kind === "check"
-        ? t("editor.checkSudo")
-        : t("editor.sudoOpen"),
-  );
+  // Whose sudo the prompt asks for, and whether that server is prod.
+  const sudoWho = $derived(editors.sudo ? editors.sudoWho(editors.sudo.sid) : { who: "", prod: false });
 
   /**
    * Open an AI-generated script (17.6) as a scratch editor in the active
@@ -4122,6 +4110,7 @@
   open={!!installTool}
   sessionId={installTool?.sessionId ?? ""}
   tool={installTool?.tool ?? null}
+  who={installTool ? editors.sudoWho(installTool.sessionId).who : ""}
   onRunInTerminal={runInstallInTerminal}
   onInstalled={() => (toolsReloadToken += 1)}
   onclose={() => (installTool = null)}
@@ -4312,35 +4301,17 @@
   oncancel={() => editors.cancelClose()}
 />
 
-<!-- Sudo prompt: reopen (or re-save) a permission-denied file as root -->
-<Modal open={!!editors.sudo} title={sudoPromptTitle} onclose={() => editors.cancelSudo()}>
-  <form
-    onsubmit={(e) => {
-      e.preventDefault();
-      void editors.confirmSudo();
-    }}
-  >
-    <p class="mb-2 break-all text-xs text-muted">{sudoPromptPath}</p>
-    <PasswordInput
-      testid="sudo-password"
-      autofocus
-      placeholder={t("editor.sudoPassword")}
-      bind:value={editors.sudoPassword}
-    />
-    <div class="mt-4 flex justify-end gap-2">
-      <button
-        type="button"
-        class="rounded px-3 py-1 text-sm text-muted hover:text-text"
-        onclick={() => editors.cancelSudo()}>{t("common.cancel")}</button
-      >
-      <button
-        type="submit"
-        class="rounded bg-accent px-3 py-1 text-sm text-panel-alt hover:bg-accent-hover"
-        >{sudoPromptConfirm}</button
-      >
-    </div>
-  </form>
-</Modal>
+<!-- Sudo prompt (ADR 0073): reopen, edit or save a file as root -->
+<SudoPrompt
+  ask={editors.sudo}
+  who={sudoWho.who}
+  prod={sudoWho.prod}
+  busy={editors.sudoBusy}
+  bind:password={editors.sudoPassword}
+  bind:remember={editors.sudoRemember}
+  onconfirm={() => void editors.confirmSudo()}
+  oncancel={() => editors.cancelSudo()}
+/>
 
 <!-- Pre-save diff: server version ⇄ what we'll write (settings-gated) -->
 <DiffModal
@@ -4432,7 +4403,7 @@
     }
   }}
   onforgotten={(id) => {
-    servers = servers.map((s) => (s.id === id ? { ...s, hasSavedPassword: false } : s));
+    servers = servers.map((s) => (s.id === id ? { ...s, hasSavedPassword: false, hasSavedSudo: false } : s));
   }}
   onOpenAiPrompts={() => openSettings("ai")}
 />

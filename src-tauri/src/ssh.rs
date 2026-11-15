@@ -210,6 +210,9 @@ pub struct SshSession {
     sftp: Mutex<Option<Arc<SftpSession>>>,
     /// Whom that SFTP works as, when not the login user (`sudo`, ADR 0047).
     file_user: std::sync::Mutex<Option<FileUser>>,
+    /// What sudo took on this connection and which saved passwords it turned
+    /// down (ADR 0073): dies with the session, and the window never holds it.
+    sudo: Mutex<crate::sudo::SudoMemo>,
     /// Active session recorder, if recording (shared with the reader task).
     recorder: Arc<std::sync::Mutex<Option<crate::recording::Recorder>>>,
     /// Where the shell's output goes — the windows, or a handoff's hold (ADR 0017).
@@ -315,6 +318,34 @@ impl SshSession {
         });
         *guard = Some(Arc::new(opened));
         Ok(())
+    }
+
+    /// What is known of sudo here before any password is tried (ADR 0073).
+    /// `saved` says whether a saved sudo and a saved login password exist.
+    pub async fn sudo_route(
+        &self,
+        saved: impl FnOnce() -> (bool, bool),
+    ) -> AppResult<crate::sudo::Route> {
+        crate::sudo::route(&self.handle, &self.sudo, saved).await
+    }
+
+    /// The password sudo takes here — typed, remembered or saved — or why none.
+    pub async fn sudo_resolve(
+        &self,
+        saved: impl FnOnce() -> crate::sudo::Saved,
+        typed: Option<Zeroizing<String>>,
+    ) -> AppResult<(Option<Zeroizing<String>>, crate::sudo::Via)> {
+        crate::sudo::resolve(&self.handle, &self.sudo, saved, typed).await
+    }
+
+    /// The credential sudo took this session, without asking anything.
+    pub async fn sudo_taken(&self) -> Option<(Option<Zeroizing<String>>, crate::sudo::Via)> {
+        self.sudo.lock().await.taken()
+    }
+
+    /// sudo turned the remembered credential down: forget it.
+    pub async fn sudo_drop_taken(&self) {
+        self.sudo.lock().await.drop_taken();
     }
 
     /// Back to the login user: the next use opens the `sftp` subsystem again.
@@ -1307,6 +1338,7 @@ pub async fn connect(
         reader,
         sftp: Mutex::new(None),
         file_user: std::sync::Mutex::new(None),
+        sudo: Mutex::new(crate::sudo::SudoMemo::default()),
         recorder,
         gate,
         _proxy_handle: proxy_handle,

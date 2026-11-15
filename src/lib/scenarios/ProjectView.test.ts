@@ -75,6 +75,7 @@ const db: ServerProfile = {
   authMethod: "key",
   keyPath: null,
   hasSavedPassword: false,
+  hasSavedSudo: false,
   group: null,
   tags: [],
   prod: true,
@@ -106,7 +107,7 @@ const doc = (kind: "ansible" | "terraform", root: string, ask?: EditorDoc["proje
   loading: false,
   loadError: null,
   sudo: false,
-  sudoPassword: "",
+  sudoRoute: null,
   gotoLine: null,
   project: { kind, root, ask, askSeq: ask ? 1 : 0 },
 });

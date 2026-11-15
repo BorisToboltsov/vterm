@@ -13,6 +13,7 @@ pub mod recording;
 pub mod scenarios;
 pub mod session;
 pub mod sftp;
+pub mod sudo;
 
 /// The bridge layer's production code — `lib.rs` and every module here, each
 /// cut before its test module — for the gates that read how a command is
@@ -45,6 +46,7 @@ const BRIDGE: &[(&str, &str)] = &[
     ("scenarios.rs", include_str!("scenarios.rs")),
     ("session.rs", include_str!("session.rs")),
     ("sftp.rs", include_str!("sftp.rs")),
+    ("sudo.rs", include_str!("sudo.rs")),
 ];
 
 #[cfg(test)]

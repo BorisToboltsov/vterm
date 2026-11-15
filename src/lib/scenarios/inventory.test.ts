@@ -20,6 +20,7 @@ function server(p: Partial<ServerProfile>): ServerProfile {
     authMethod: "key",
     keyPath: null,
     hasSavedPassword: false,
+    hasSavedSudo: false,
     group: null,
     tags: [],
     prod: false,

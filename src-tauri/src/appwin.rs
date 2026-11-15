@@ -127,8 +127,9 @@ impl From<HandoffFailure> for AppError {
 /// A tab on its way to another window.
 struct Pending {
     session_id: String,
-    /// The tab's state, opaque to the backend. Holds the tab's typed password and
-    /// editors' sudo passwords, hence wiped on drop and handed out exactly once.
+    /// The tab's state, opaque to the backend. Holds the tab's typed password,
+    /// hence wiped on drop and handed out exactly once. (sudo's stays with the
+    /// session, in the backend: ADR 0073.)
     packet: Option<Zeroizing<String>>,
     /// Wakes the source window's `detach_commit`.
     done: oneshot::Sender<HandoffResult>,

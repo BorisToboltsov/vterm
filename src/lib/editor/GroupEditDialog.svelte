@@ -9,7 +9,8 @@
   import Icon from "../ui/Icon.svelte";
   import PasswordInput from "../ui/PasswordInput.svelte";
   import { t } from "../i18n";
-  import { editTally, writable, type EditAsk, type HostEdit } from "./groupedit";
+  import { editTally, sudoCanTry, writable, type EditAsk, type HostEdit } from "./groupedit";
+  import { REFUSAL_TITLE, triedNote } from "../sudo/sudo";
   import { changeView } from "./linepatch";
 
   let {
@@ -40,7 +41,7 @@
   });
 
   const tally = $derived(ask ? editTally(ask.hosts.map((h) => h.edit), (i) => ask.hosts[i].picked) : null);
-  const denied = $derived(!!ask?.hosts.some((h) => h.edit.kind === "denied"));
+  const denied = $derived(!!ask?.hosts.some((h) => sudoCanTry(h.edit)));
   const prodPicked = $derived(ask ? ask.hosts.filter((h) => h.picked && writable(h.edit) && h.prod).map((h) => h.label) : []);
   const reading = $derived(!!ask?.hosts.some((h) => h.edit.kind === "reading"));
 
@@ -50,8 +51,13 @@
         return { text: t("groupEdit.reading"), tone: "text-muted" };
       case "missing":
         return { text: t("groupEdit.missing"), tone: "text-muted" };
-      case "denied":
-        return { text: t("groupEdit.denied"), tone: "text-warn" };
+      case "denied": {
+        const s = edit.sudo;
+        if (!s) return { text: t("groupEdit.denied"), tone: "text-warn" };
+        if (s.kind === "refused") return { text: `${t(REFUSAL_TITLE[s.why])}${s.said ? ` — ${s.said}` : ""}`, tone: "text-bad" };
+        if (s.kind === "wrong") return { text: t("sudo.wrongPassword"), tone: "text-bad" };
+        return { text: t(triedNote(s.tried) ?? "sudo.badge.password"), tone: "text-warn" };
+      }
       case "failed":
         return { text: t("groupEdit.failed", { error: edit.error }), tone: "text-warn" };
       case "written":
@@ -125,11 +131,11 @@
       </ul>
       {#if denied && !ask.done}
         <div class="mt-3 flex items-center gap-2">
-          <PasswordInput bind:value={password} placeholder={t("groupEdit.sudoPassword")} class="min-w-0 flex-1" />
+          <PasswordInput bind:value={password} placeholder={t("sudo.passwordOptional")} class="min-w-0 flex-1" />
           <button
             type="button"
             class="shrink-0 rounded border border-edge px-2 py-1 text-xs text-muted hover:text-text disabled:opacity-40"
-            disabled={password.length === 0}
+            data-testid="group-edit-sudo"
             onclick={() => onsudo?.(password)}
           >
             {t("groupEdit.sudoRead")}

@@ -17,11 +17,6 @@ use std::sync::Arc;
 use tauri::{AppHandle, Emitter, Manager, State};
 use zeroize::Zeroizing;
 
-/// A sudo password from the page, wiped on drop wherever this command keeps it.
-fn sudo_secret(password: Option<String>) -> Option<Zeroizing<String>> {
-    password.map(Zeroizing::new)
-}
-
 /// The secret as the `sync` helpers take it.
 fn secret_str(password: &Option<Zeroizing<String>>) -> Option<&str> {
     password.as_deref().map(String::as_str)
@@ -95,10 +90,21 @@ pub async fn sftp_open_as(
     state: State<'_, AppState>,
     session_id: String,
     user: String,
-    password: Option<String>,
 ) -> AppResult<()> {
     let session = session_arc(&state, &session_id).await?;
-    let res = session.sftp_as(&user, sudo_secret(password)).await;
+    // Without a password first: sudo may want none for this user. When it wants
+    // one, the session's sudo password — taken, saved or the login's (ADR 0073).
+    let mut res = session.sftp_as(&user, None).await;
+    if matches!(res, Err(AppError::SudoPasswordRequired(_))) {
+        res = match super::sudo::sudo_password(&state, &session_id, &session).await {
+            Ok(Some(pw)) => session.sftp_as(&user, Some(pw)).await,
+            Ok(None) => res,
+            Err(e) => Err(e),
+        };
+        if let Err(e) = &res {
+            super::sudo::forget_refused(&session, e).await;
+        }
+    }
     match &res {
         Ok(()) => {
             tracing::info!(
@@ -203,15 +209,18 @@ pub async fn sftp_read_text(
     path: String,
     max_bytes: Option<u64>,
     sudo: Option<bool>,
-    sudo_password: Option<String>,
 ) -> AppResult<sftp::TextFile> {
-    let sudo_password = sudo_secret(sudo_password);
     let limit = max_bytes
         .unwrap_or(sftp::MAX_EDIT_SIZE)
         .clamp(1, sftp::HARD_MAX_EDIT_SIZE);
     if sudo == Some(true) {
         let session = session_arc(&state, &session_id).await?;
-        return sync::sudo_read(&session, &path, limit, secret_str(&sudo_password)).await;
+        let pw = super::sudo::sudo_password(&state, &session_id, &session).await?;
+        let res = sync::sudo_read(&session, &path, limit, secret_str(&pw)).await;
+        if let Err(e) = &res {
+            super::sudo::forget_refused(&session, e).await;
+        }
+        return res;
     }
     let sftp = get_sftp(&state, &session_id).await?;
     sftp::read_text(&sftp, &path, limit).await
@@ -237,22 +246,6 @@ pub async fn sftp_write_access(
     }
 }
 
-/// Check sudo credentials before editing, without touching the target file.
-#[tauri::command]
-pub async fn sftp_check_sudo(
-    state: State<'_, AppState>,
-    session_id: String,
-    password: String,
-) -> AppResult<bool> {
-    let password = Zeroizing::new(password);
-    let session = session_arc(&state, &session_id).await?;
-    sync::check_sudo(&session, &password).await
-}
-
-/// Read a remote file as base64 bytes for the markdown preview's inline images
-/// (Phase 44.4). `max_bytes` is clamped to a hard ceiling that is deliberately far
-/// below the editor's: this path exists to show a screenshot next to a README, not
-/// to move files — that is what the SFTP panel's download is for.
 #[tauri::command]
 pub async fn sftp_read_bytes(
     state: State<'_, AppState>,
@@ -284,10 +277,8 @@ pub async fn sftp_write_text(
     encoding: Option<String>,
     expected_sha256: Option<String>,
     sudo: Option<bool>,
-    sudo_password: Option<String>,
     backup: Option<bool>,
 ) -> AppResult<sftp::WriteResult> {
-    let sudo_password = sudo_secret(sudo_password);
     // The editor echoes back the encoding `read_text` reported, so the file is
     // rewritten in the encoding it arrived in. An older/absent value means UTF-8.
     let encoding = encoding.unwrap_or_else(|| crate::textenc::default_encoding().into());
@@ -302,7 +293,12 @@ pub async fn sftp_write_text(
     let session = session_arc(&state, &session_id).await?;
     let sftp = session.sftp().await?;
     let res = if sudo == Some(true) {
-        sync::sudo_write(&session, &sftp, &req, secret_str(&sudo_password)).await
+        let pw = super::sudo::sudo_password(&state, &session_id, &session).await?;
+        let res = sync::sudo_write(&session, &sftp, &req, secret_str(&pw)).await;
+        if let Err(e) = &res {
+            super::sudo::forget_refused(&session, e).await;
+        }
+        res
     } else {
         sftp::write_text(&sftp, &req).await
     };
@@ -392,19 +388,22 @@ pub async fn local_hash_tree(
 /// List every config file nginx actually loads on the server, via `nginx -T` (it
 /// resolves `include` globs/recursion itself). Used by the editor to recognise nginx
 /// configs that live outside the `/etc/nginx/` tree. Best-effort: empty list when
-/// nginx is absent or its config isn't readable. When a `sudo_password` is supplied
-/// (reused from an open-as-root, never a fresh prompt) the dump runs under sudo, so a
-/// root-only config tree is still resolved; otherwise the caller falls back to path
-/// detection without interrupting the user.
+/// nginx is absent or its config isn't readable. With `sudo` (the file was opened
+/// as root) and a credential sudo already took this session, the dump runs under
+/// sudo, so a root-only config tree is still resolved — never a fresh prompt or a
+/// saved password tried for it; otherwise the caller falls back to path detection
+/// without interrupting the user.
 #[tauri::command]
 pub async fn nginx_config_files(
     state: State<'_, AppState>,
     session_id: String,
-    sudo_password: Option<String>,
+    sudo: Option<bool>,
 ) -> AppResult<Vec<String>> {
     let session = session_arc(&state, &session_id).await?;
-    if let Some(pw) = sudo_secret(sudo_password).filter(|p| !p.is_empty()) {
-        return sync::nginx_config_files_sudo(&session, &pw).await;
+    if sudo == Some(true) {
+        if let Some((pw, _)) = session.sudo_taken().await {
+            return sync::nginx_config_files_sudo(&session, secret_str(&pw)).await;
+        }
     }
     let out = session
         .run_command(sync::nginx_config_dump_command())
@@ -423,7 +422,7 @@ pub async fn lint_remote(
     content: String,
     kind: String,
     name: Option<String>,
-    sudo_password: Option<String>,
+    sudo: Option<bool>,
 ) -> AppResult<sync::LintResult> {
     let Some(tool) = sync::lint_tool(&kind) else {
         return Ok(sync::LintResult::default());
@@ -457,8 +456,14 @@ pub async fn lint_remote(
         );
     }
     sftp::write_bytes(&sftp, &tmp, content.as_bytes()).await?;
-    let sudo_password = sudo_secret(sudo_password);
-    let out = sync::run_lint(&session, &tool, &tmp, secret_str(&sudo_password)).await;
+    // Under sudo only with what sudo already took for this file's session.
+    let taken = if sudo == Some(true) {
+        session.sudo_taken().await
+    } else {
+        None
+    };
+    let taken_pw = taken.as_ref().map(|(pw, _)| secret_str(pw));
+    let out = sync::run_lint(&session, &tool, &tmp, taken_pw).await;
     sftp.remove_file(tmp.clone()).await.log_debug(
         "files",
         "the temporary file was not removed and stays beside the target",
@@ -489,7 +494,9 @@ pub async fn server_tools_status(
 }
 
 /// Run an install command on the server (one-click path). A leading `sudo` is fed
-/// the password via stdin; non-sudo commands (pip/brew) run as-is. Streams output
+/// the session's sudo password via stdin (ADR 0073: taken, saved or the login's —
+/// the dialog gets it going first with `sudo_check`); non-sudo commands
+/// (pip/brew) run as-is. Streams output
 /// live over `install://out/{id}` (Phase 20.14) so the dialog console fills in as the
 /// install runs, and also returns the full output so the one-shot contract holds.
 #[tauri::command]
@@ -498,11 +505,19 @@ pub async fn run_tool_install(
     state: State<'_, AppState>,
     session_id: String,
     command: String,
-    sudo_password: Option<String>,
 ) -> AppResult<String> {
     let session = session_arc(&state, &session_id).await?;
     let cmd = format!("{} 2>&1", servertools::sudoize(&command));
-    let pw = sync::sudo_stdin(secret_str(&sudo_secret(sudo_password)));
+    let pw = if servertools::needs_sudo(&command) {
+        match super::sudo::sudo_password(&state, &session_id, &session).await? {
+            Some(pw) => sync::sudo_stdin(Some(&pw)),
+            // sudo wants none: nothing on stdin, so an unexpected question fails
+            // at once instead of reading an empty password.
+            None => Zeroizing::new(Vec::new()),
+        }
+    } else {
+        Zeroizing::new(Vec::new())
+    };
     let event = ssh::install_output_event(&session_id);
     let failed = crate::diag::FirstFailure::new("editor", "emit the install's output");
     session

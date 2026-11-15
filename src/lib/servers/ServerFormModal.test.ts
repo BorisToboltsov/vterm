@@ -41,6 +41,7 @@ function server(p: Partial<ServerProfile> & { id: string; alias: string }): Serv
     authMethod: "password",
     keyPath: null,
     hasSavedPassword: true,
+    hasSavedSudo: false,
     group: "Prod",
     tags: ["web", "eu"],
     prod: null,

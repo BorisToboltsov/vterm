@@ -27,6 +27,7 @@ const web: ServerProfile = {
   authMethod: "password",
   keyPath: null,
   hasSavedPassword: true,
+  hasSavedSudo: false,
   group: "web",
   tags: [],
   prod: false,

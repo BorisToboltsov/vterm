@@ -280,6 +280,11 @@ pub fn build_status(manager: &str, have: &HashSet<String>) -> ToolsStatus {
     }
 }
 
+/// Whether an install command runs under sudo (its first word).
+pub fn needs_sudo(command: &str) -> bool {
+    command.starts_with("sudo ")
+}
+
 /// Rewrite the leading `sudo ` of an install command to read its password from
 /// stdin (`sudo -S`), for the one-click install path. Later `sudo`s in the same
 /// command reuse sudo's cached credential. Non-sudo commands (pip/brew) unchanged.

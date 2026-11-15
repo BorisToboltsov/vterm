@@ -59,7 +59,7 @@ describe("SftpPanel: whom the files are under", () => {
     api.sftpList.mockClear();
     api.shellUser.mockResolvedValue(report("deploy", "deploy"));
     await userEvent.click(screen.getByTestId("fileuser-confirm"));
-    expect(api.sftpOpenAs).toHaveBeenCalledWith("s1", "deploy", null);
+    expect(api.sftpOpenAs).toHaveBeenCalledWith("s1", "deploy");
     // Under the new user the listing is another one, and so is what the row says.
     await waitFor(() => expect(api.sftpList).toHaveBeenCalled());
     await screen.findByTestId("sftp-fileuser-back");

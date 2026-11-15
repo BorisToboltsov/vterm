@@ -158,7 +158,11 @@ export function passwordViolations(store: string, panel: string): string[] {
     }
     if (/settings\.\w+\s*=[^=][^;]*password/i.test(src)) out.push(`the ${name} keeps the password in the settings`);
   }
-  if (!/password: spec\.password/.test(fnBody(code(store), "runOnHost"))) out.push("the password does not reach recipeRun");
+  // ADR 0073: a password typed for the run goes to its servers' sudo check
+  // alone — not remembered — and never rides the run itself.
+  const run = fnBody(code(store), "runOnHost");
+  if (!/sudoCheck\(sid, spec\.password, false\)/.test(run)) out.push("the typed password does not reach the check, or is kept");
+  if (/password: spec\.password/.test(run)) out.push("the password rides the run itself");
   return out;
 }
 
@@ -233,9 +237,12 @@ describe("scenarios guard — catches what it exists for", () => {
     const panel = read(PANEL);
     expect(passwordViolations(`${store}\ndiag.info("scenarios", "run", { password: spec.password });`, panel)).toHaveLength(1);
     expect(passwordViolations(store, `${panel}\nsettings.scenarioTab = ask.password;`)).toHaveLength(1);
-    expect(passwordViolations(mutate(store, "      password: spec.password,", "      password: null,"), panel)).toContain(
-      "the password does not reach recipeRun",
+    expect(passwordViolations(mutate(store, "sudoCheck(sid, spec.password, false)", "sudoCheck(sid, spec.password, true)"), panel)).toContain(
+      "the typed password does not reach the check, or is kept",
     );
+    expect(
+      passwordViolations(mutate(store, "      elevation: spec.elevation,\n", "      elevation: spec.elevation,\n      password: spec.password,\n"), panel),
+    ).toContain("the password rides the run itself");
   });
 
   it("a save that replaces, a write of the build's text by hand", () => {

@@ -59,6 +59,25 @@ describe("GroupEditDialog", () => {
     expect(onsudo).toHaveBeenCalledExactlyOnceWith("pw");
   });
 
+  it("sudo without a typed password: each server's own is tried first", async () => {
+    const onsudo = vi.fn();
+    render(GroupEditDialog, { props: { ask: ask(), onsudo } });
+    await fireEvent.click(screen.getByTestId("group-edit-sudo"));
+    expect(onsudo).toHaveBeenCalledExactlyOnceWith("");
+  });
+
+  it("says on each row what sudo answered, and offers it no more where it refused", () => {
+    const withSudo = (sudo: NonNullable<Extract<EditAsk["hosts"][number]["edit"], { kind: "denied" }>["sudo"]>) =>
+      ask({ hosts: [{ id: "db", label: "db-1", prod: true, edit: { kind: "denied", sudo }, picked: false }] });
+    const { unmount } = render(GroupEditDialog, { props: { ask: withSudo({ kind: "password", tried: "saved" }) } });
+    expect(screen.getByTestId("group-edit-host").textContent).toContain("keychain no longer works");
+    expect(screen.getByTestId("group-edit-sudo")).toBeInTheDocument();
+    unmount();
+    render(GroupEditDialog, { props: { ask: withSudo({ kind: "refused", why: "not-allowed", said: "Sorry, user u may not run sudo on db." }) } });
+    expect(screen.getByTestId("group-edit-host").textContent).toContain("No sudo rights — Sorry, user u may not run sudo on db.");
+    expect(screen.queryByTestId("group-edit-sudo")).toBeNull();
+  });
+
   it("offers nothing to apply when the edit is too large or the source was not saved", () => {
     const { unmount } = render(GroupEditDialog, { props: { ask: ask({ hunks: null }) } });
     expect(screen.getByTestId("group-edit-too-large")).toBeTruthy();

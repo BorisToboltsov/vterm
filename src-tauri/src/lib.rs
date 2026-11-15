@@ -37,6 +37,7 @@ mod servertools;
 mod sftp;
 mod ssh;
 mod store;
+mod sudo;
 mod sync;
 mod tabcontent;
 mod textenc;
@@ -400,7 +401,8 @@ pub fn run() {
             commands::sftp::sftp_create_file,
             commands::sftp::sftp_read_text,
             commands::sftp::sftp_write_access,
-            commands::sftp::sftp_check_sudo,
+            commands::sudo::sudo_route,
+            commands::sudo::sudo_check,
             commands::sftp::sftp_read_bytes,
             localfile::read_local_bytes,
             commands::sftp::sftp_write_text,

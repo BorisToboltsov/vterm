@@ -101,6 +101,8 @@ export function remapServers(
       username: s.username.trim() === "" ? s.username : replaced(s.username, logins),
       keyPath: replacedPath(s.keyPath, keys),
       hasSavedPassword: mine?.hasSavedPassword ?? false,
+      // The keychain is this machine's: a sudo password is "saved" only here.
+      hasSavedSudo: mine?.hasSavedSudo ?? false,
       proxy: s.proxy
         ? {
             ...s.proxy,

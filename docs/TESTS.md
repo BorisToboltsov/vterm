@@ -302,8 +302,15 @@ docker compose -f e2e/docker-compose.ssh.yml down
 ```sh
 docker compose -f e2e/docker-compose.sudo.yml up -d --build --wait
 cargo test --manifest-path src-tauri/Cargo.toml --lib live_fileuser -- --ignored
+cargo test --manifest-path src-tauri/Cargo.toml --lib live_sudo -- --ignored
 docker compose -f e2e/docker-compose.sudo.yml down
 ```
+
+`live_sudo` в [sudo.rs](../src-tauri/src/sudo.rs) на том же образе сверяет разбор ответов sudo
+(ADR 0073) с тем, что sudo отвечает на самом деле. Каждому ответу — свой аккаунт: `tester` (нужен
+пароль), `nopass` (NOPASSWD), `plain` (нет прав), `limited` (только `id`: пароль верен, `cp`
+запрещён), `ttyonly` (`requiretty`). Ещё он проверяет порядок сохранённых паролей (каждый раз за
+сессию) и шаги сохранения от root: отказ `cat | head` виден в stderr, копия `.bak` создаётся.
 
 `hidepid` требует привилегированного контейнера и в compose не входит: запустите образ с
 `--privileged`, выполните в нём `mount -o remount,hidepid=2 /proc` и назовите порт в

@@ -263,6 +263,21 @@ Uppercase-микротекст — `text-caption uppercase tracking-wider` (и �
 - **Три ответа** ([UnsavedCloseDialog](../src/lib/editor/UnsavedCloseDialog.svelte)) — порядок
   «Отмена» (текстовая) · «Не сохранять» (контурная `border-danger text-danger`) · «Сохранить»
   (`bg-accent`, справа — основное действие).
+- **sudo** (ADR 0073) — одно поле на все места, где спрашивается sudo
+  ([SudoField](../src/lib/sudo/SudoField.svelte)), в одном из четырёх состояний:
+  - проверка — `text-xs text-muted`;
+  - чей пароль пойдёт — значок `key` 13 `text-accent` и строка `text-xs text-text`;
+  - пароль — `PasswordInput`, над ним причина вопроса `rounded border border-bad/50 px-2 py-1 text-xs
+    text-bad`, под ним галочка «Запомнить в keychain для user@сервер» `text-xs text-muted`;
+  - отказ — блок `rounded border border-bad/50 px-2.5 py-2 text-xs`: название `font-medium text-bad`,
+    объяснение `text-muted`, «Ответ сервера:» `font-mono text-meta text-muted`.
+
+  Окно редактора ([SudoPrompt](../src/lib/sudo/SudoPrompt.svelte)) добавляет строку «user@сервер · путь»
+  `text-xs text-muted` и на проде полосу `border-bad/50 bg-bad/10 text-bad`. Значок у «Сохранить» —
+  `rounded border px-1.5 py-0.5 text-caption`, тон по состоянию: `border-transparent text-muted`
+  (проверка), `border-accent/50 text-accent` (пройдёт без ввода, значок `key` 11), `border-warn/50
+  text-warn` (нужен пароль), `border-bad/50 text-bad` (отказ, значок `lock` 11, без нажатия). Правка от
+  root — чип `rounded bg-warn/15 px-1.5 py-0.5 text-caption text-warn` с текстом `root` рядом с путём.
 - **Тосты** ([Toast.svelte](../src/lib/ui/Toast.svelte) + [стор](../src/lib/stores/toasts.svelte.ts))
   — контейнер снизу-справа, тон по типу: error → `danger` (`alert`), success → `ok` (`check`),
   info → `accent` (`info`); авто-дисмисс по `TOAST_TTL` (у критичных сообщений TTL = 0).

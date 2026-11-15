@@ -118,7 +118,7 @@ describe("a tab's packet", () => {
     setTabStatus(sid, "connected");
     // Editors: one with unsaved edits, opened as root.
     const ed = addScratchEditor(sid, "notes.txt", { kind: "plain", label: "Text" }, "draft");
-    setEditorSudo(sid, ed, "s3cret");
+    setEditorSudo(sid, ed);
     // The conversation, and a chip waiting in the composer.
     const chat = getChat(sid);
     chat.messages.push({ role: "user", content: "why is nginx down?" });
@@ -168,7 +168,6 @@ describe("a tab's packet", () => {
       name: "notes.txt",
       content: "draft",
       sudo: true,
-      sudoPassword: "s3cret",
     });
     expect(isDirty(ws.editors[0])).toBe(true);
 

@@ -2,7 +2,9 @@
   // Install a server tool (Phase 12.8): shows the resolved command and offers two
   // transparent paths — type it into the active terminal (user runs + sees output),
   // or run it here via sudo (password fed over stdin). Opened from Settings and the
-  // lint "not installed" CTA.
+  // lint "not installed" CTA. What sudo will take is asked when the dialog opens
+  // (ADR 0073): nothing to type when it wants no password or one is saved; a typed
+  // one goes to `sudoCheck` once, and the install runs with the session's.
   //
   // Phase 20.14: a long `apt install` used to only flip the button label, feeling
   // dead. Now the sudo path streams live output into a terminal-style console
@@ -10,8 +12,9 @@
   // and ends on an explicit success state; the parent auto-refreshes the catalogue.
   import Modal from "../ui/Modal.svelte";
   import Icon from "../ui/Icon.svelte";
-  import PasswordInput from "../ui/PasswordInput.svelte";
-  import { runToolInstall, installOutputEvent } from "../api";
+  import SudoField from "../sudo/SudoField.svelte";
+  import { fieldAfter, fieldState, sudoAnswer, type SudoFieldState } from "../sudo/sudo";
+  import { runToolInstall, installOutputEvent, sudoCheck, sudoRoute } from "../api";
   import { commandNeedsSudo, type ToolStatus } from "./servertools";
   import { notifyError, notifySuccess } from "../stores/toasts.svelte";
   import { listen } from "@tauri-apps/api/event";
@@ -21,6 +24,7 @@
     open = false,
     sessionId,
     tool,
+    who = "",
     onRunInTerminal,
     onInstalled,
     onclose,
@@ -28,6 +32,8 @@
     open?: boolean;
     sessionId: string;
     tool: ToolStatus | null;
+    /** `user@server` a typed sudo password would be remembered for. */
+    who?: string;
     /** Type the command into the active terminal (parent owns the terminal). */
     onRunInTerminal: (command: string) => void;
     /** Called after a sudo install finishes, so the catalogue can refresh. */
@@ -36,6 +42,8 @@
   } = $props();
 
   let sudoPw = $state("");
+  let remember = $state(true);
+  let field = $state<SudoFieldState>({ kind: "checking" });
   let installing = $state(false);
   let done = $state(false);
   let consoleText = $state("");
@@ -44,12 +52,40 @@
   const command = $derived(tool?.command ?? "");
   const needsSudo = $derived(command ? commandNeedsSudo(command) : false);
 
-  // Fresh tool (or reopen) → clear the previous run's console + success state.
+  // Fresh tool (or reopen) → clear the previous run's console + success state,
+  // and ask what sudo will take: no password typed for nothing.
   $effect(() => {
     void tool;
     consoleText = "";
     done = false;
+    sudoPw = "";
+    field = { kind: "checking" };
+    if (!open || !needsSudo || !sessionId) return;
+    const sid = sessionId;
+    void sudoRoute(sid)
+      .then((route) => {
+        if (sid === sessionId) field = fieldState(route);
+      })
+      .catch(() => {
+        if (sid === sessionId) field = { kind: "type", note: null };
+      });
   });
+
+  /** sudo going for the install: at once, or with the typed password. False — not now. */
+  async function sudoReady(): Promise<boolean> {
+    if (field.kind === "refused" || (field.kind === "type" && !sudoPw)) return false;
+    const typed = field.kind === "type" ? sudoPw : null;
+    try {
+      await sudoCheck(sessionId, typed, typed !== null && remember);
+      return true;
+    } catch (e) {
+      const answer = sudoAnswer(e);
+      if (answer) field = fieldAfter(answer);
+      else notifyError(String(e), { source: "editor", sessionId });
+      sudoPw = "";
+      return false;
+    }
+  }
 
   // Keep the console pinned to the newest output as it streams in.
   $effect(() => {
@@ -64,6 +100,7 @@
 
   async function installViaSudo() {
     if (!command || installing) return;
+    if (needsSudo && !(await sudoReady())) return;
     installing = true;
     done = false;
     consoleText = "";
@@ -71,7 +108,7 @@
       consoleText += e.payload;
     });
     try {
-      await runToolInstall(sessionId, command, needsSudo ? sudoPw : undefined);
+      await runToolInstall(sessionId, command);
       done = true;
       notifySuccess(t("servertools.installDone", { name: tool?.name ?? "" }), { source: "editor", sessionId: sessionId });
       onInstalled?.();
@@ -96,12 +133,9 @@
       class="mb-3 overflow-x-auto rounded border border-edge bg-panel px-2 py-1.5 text-xs text-text">{command}</pre>
 
     {#if needsSudo && !installing && !done}
-      <PasswordInput
-        testid="install-sudo-password"
-        class="mb-3"
-        placeholder={t("editor.sudoPassword")}
-        bind:value={sudoPw}
-      />
+      <div class="mb-3">
+        <SudoField {field} {who} testid="install-sudo" bind:password={sudoPw} bind:remember />
+      </div>
     {/if}
 
     {#if installing || done}
@@ -142,6 +176,7 @@
         </button>
         <button
           class="rounded bg-green-600 px-3 py-1 text-sm font-medium text-white hover:bg-green-500 disabled:opacity-40"
+          disabled={needsSudo && (field.kind === "refused" || field.kind === "checking" || (field.kind === "type" && !sudoPw))}
           onclick={installViaSudo}
         >
           {t("servertools.installSudo")}

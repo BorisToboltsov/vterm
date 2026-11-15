@@ -28,10 +28,12 @@ import {
   recipeSave,
   recipesScan,
   sftpCancel,
+  sudoCheck,
   type Elevation,
   type RecipeScan,
 } from "../api";
 import { diag, orNull, swallow, swallowed } from "../api/diag";
+import { REFUSAL_TITLE, sudoAnswer, triedNote, type SudoAnswer } from "../sudo/sudo";
 import { parentOf, joinPath } from "../files/fspath";
 import { currentLocale, DEFAULT_LOCALE, isLocale, resolve, type MessageKey } from "../i18n";
 import { loadYaml, parseYaml } from "../pipeline/yamldoc";
@@ -276,8 +278,16 @@ export interface RecipeRunSpec {
   servers: { server: ServerProfile; prod: boolean }[];
   mode: RecipeMode;
   elevation: Elevation;
-  /** The sudo password, kept only for this run. */
+  /** A sudo password typed for this run, kept only for it: given to a server's
+   *  sudo only where its own — saved, or its login's — does not work (ADR 0073). */
   password: string | null;
+}
+
+/** What sudo answered on a host, as the host's line says it. */
+function sudoSummary(answer: SudoAnswer): string {
+  if (answer.kind === "refused") return `${resolve(currentLocale(), REFUSAL_TITLE[answer.why])}${answer.said ? ` — ${answer.said}` : ""}`;
+  if (answer.kind === "wrong") return resolve(currentLocale(), "sudo.wrongPassword");
+  return resolve(currentLocale(), triedNote(answer.tried) ?? "sudo.badge.password");
 }
 
 /** The session of a server: one already open, or one the page opens for the run. */
@@ -300,16 +310,27 @@ async function runOnHost(runId: string, host: RunHost, spec: RecipeRunSpec, ensu
     patchHost(runId, host.serverId, { state: "stopped", sessionId: sid });
     return;
   }
-  const exec = (mode: RecipeMode) =>
+  const run = (mode: RecipeMode) =>
     recipeRun(sid, {
       name: spec.name,
       mode,
       script: recipeScript(spec.recipe.text, meta, spec.values, mode),
       elevation: spec.elevation,
-      password: spec.password,
       timeoutSecs: mode === "check" ? CHECK_SECS : APPLY_SECS,
       cancelId: host.cancelId,
     });
+  // sudo with a password: the server's own first; the typed one only where sudo
+  // still asks for one. sudo's refusal comes back before the script ran.
+  const exec = async (mode: RecipeMode) => {
+    try {
+      return await run(mode);
+    } catch (e) {
+      const answer = sudoAnswer(e);
+      if (answer?.kind !== "password" || !spec.password) throw e;
+      await sudoCheck(sid, spec.password, false);
+      return run(mode);
+    }
+  };
   try {
     if (spec.mode === "check" || meta.check) {
       patchHost(runId, host.serverId, { state: "checking", sessionId: sid });
@@ -343,7 +364,12 @@ async function runOnHost(runId: string, host: RunHost, spec: RecipeRunSpec, ensu
     });
   } catch (e) {
     const text = String(e);
-    patchHost(runId, host.serverId, /cancelled/.test(text) ? { state: "stopped" } : { state: "failed", summary: text });
+    const answer = sudoAnswer(e);
+    patchHost(
+      runId,
+      host.serverId,
+      /cancelled/.test(text) ? { state: "stopped" } : { state: "failed", summary: answer ? sudoSummary(answer) : text },
+    );
   }
 }
 

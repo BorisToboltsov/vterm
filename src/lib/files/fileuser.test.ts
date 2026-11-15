@@ -85,17 +85,14 @@ describe("fileUserRow", () => {
 });
 
 describe("fileUserFailure", () => {
-  it("reads each marker of the backend", () => {
-    expect(fileUserFailure("sudo-password: sudo asks for a password")).toEqual({ kind: "needPassword" });
-    expect(fileUserFailure("sudo-rejected: sudo did not accept the password")).toEqual({ kind: "wrongPassword" });
-    expect(fileUserFailure("sudo-refused: plain is not in the sudoers file.")).toEqual({
-      kind: "refused",
-      reason: "plain is not in the sudoers file.",
+  it("sudo's answers are read by the one reader of them, the rest by what they are", () => {
+    expect(fileUserFailure("sudo-password: nothing")).toEqual({ kind: "sudo", answer: { kind: "password", tried: "nothing" } });
+    expect(fileUserFailure("sudo-rejected: sudo did not accept the password")).toEqual({ kind: "sudo", answer: { kind: "wrong" } });
+    expect(fileUserFailure("sudo-refused: not-allowed: plain is not in the sudoers file.")).toEqual({
+      kind: "sudo",
+      answer: { kind: "refused", why: "not-allowed", said: "plain is not in the sudoers file." },
     });
     expect(fileUserFailure("sftp-server-missing: no sftp-server program found")).toEqual({ kind: "noServer" });
-  });
-
-  it("gives anything else as it was said", () => {
     expect(fileUserFailure("SFTP init failed: eof")).toEqual({ kind: "other", text: "SFTP init failed: eof" });
     expect(fileUserFailure(new Error("x"))).toEqual({ kind: "other", text: "Error: x" });
   });

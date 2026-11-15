@@ -19,6 +19,7 @@ const server = (id: string, over: Partial<ServerProfile> = {}): ServerProfile =>
   authMethod: "key",
   keyPath: "/Users/boris/.ssh/id_ed25519",
   hasSavedPassword: true,
+  hasSavedSudo: false,
   group: null,
   tags: [],
   prod: false,
@@ -109,6 +110,17 @@ describe("remapServers", () => {
     expect(b.hasSavedPassword).toBe(false);
     expect(c.hasSavedPassword).toBe(false);
     expect(c.proxy?.hasSavedPassword).toBe(false);
+  });
+
+  it("a sudo password is saved only where this keychain has one — never by the archive's word", () => {
+    const [a, b] = remapServers(
+      [server("a", { hasSavedSudo: true }), server("b", { hasSavedSudo: true })],
+      {},
+      {},
+      [server("a", { hasSavedSudo: true })],
+    );
+    expect(a.hasSavedSudo).toBe(true);
+    expect(b.hasSavedSudo).toBe(false);
   });
 
   it("does not change the backup it was given", () => {

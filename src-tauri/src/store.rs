@@ -450,6 +450,7 @@ mod tests {
             auth_method: AuthMethod::Password,
             key_path: None,
             has_saved_password: false,
+            has_saved_sudo: false,
             group: Some("Prod".into()),
             tags: vec!["web".into()],
             prod: None,

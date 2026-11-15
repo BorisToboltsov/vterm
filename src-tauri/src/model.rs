@@ -68,6 +68,11 @@ pub struct ServerProfile {
     pub key_path: Option<String>,
     #[serde(default)]
     pub has_saved_password: bool,
+    /// Whether a sudo password is saved in the keychain for this server (ADR
+    /// 0073): a hint for the form, set when sudo took one with "remember", cleared
+    /// with the server's other secrets.
+    #[serde(default)]
+    pub has_saved_sudo: bool,
     /// Optional group/folder for organizing the server list.
     #[serde(default)]
     pub group: Option<String>,
@@ -202,6 +207,7 @@ mod tests {
             auth_method: AuthMethod::Key,
             key_path: Some("/home/u/.ssh/id_ed25519".into()),
             has_saved_password: true,
+            has_saved_sudo: false,
             group: Some("Prod/EU".into()),
             tags: vec!["web".into(), "eu".into()],
             prod: Some(true),

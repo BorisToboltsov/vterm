@@ -7,7 +7,8 @@
 // its open editors, its AI conversation, what its dock panels remember, and the
 // few per-session facts the page keeps. The packet goes through the backend
 // (IPC, in memory, handed out once) — never through `localStorage`: it carries
-// the tab's typed password and the editors' sudo passwords.
+// the tab's typed password. (A sudo password it never carries: it stays with the
+// session, in the backend — ADR 0073.)
 //
 // Pure: building the packet out of the stores and applying it is the page's
 // job; the rules are here, tested without a window.

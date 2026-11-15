@@ -13,6 +13,7 @@ function server(notes = ""): ServerProfile {
     authMethod: "password",
     keyPath: null,
     hasSavedPassword: false,
+    hasSavedSudo: false,
     group: null,
     tags: [],
     prod: null,
