@@ -8,7 +8,10 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 // to a server — a plan read once saved, and the folders of those runs removed.
 
 const env = vi.hoisted(() => ({
-  runs: [] as { sid: string; mode: string; script: string; elevation: string; password: string | null; cancelId: string }[],
+  runs: [] as { sid: string; mode: string; script: string; elevation: string; cancelId: string }[],
+  /** sids whose own sudo password does not work: the run asks for one first. */
+  sudoWants: new Set<string>(),
+  checks: [] as { sid: string; password: string | null; remember: boolean }[],
   answer: (_sid: string, _mode: string): { stdout: string; stderr: string; exitCode: number } => ({ stdout: "", stderr: "", exitCode: 0 }),
   cancelled: [] as string[],
   cleaned: [] as string[],
@@ -33,12 +36,19 @@ const env = vi.hoisted(() => ({
 }));
 
 vi.mock("../api", () => ({
-  recipeRun: vi.fn(async (sid: string, r: { mode: string; script: string; elevation: string; password: string | null; cancelId: string }) => {
+  recipeRun: vi.fn(async (sid: string, r: { mode: string; script: string; elevation: string; cancelId: string }) => {
+    if (r.elevation === "sudoPassword" && env.sudoWants.has(sid)) throw "sudo-password: nothing";
     env.runs.push({ sid, ...r });
     await env.gate;
     return env.answer(sid, r.mode);
   }),
   sftpCancel: vi.fn(async (id: string) => void env.cancelled.push(id)),
+  sudoCheck: vi.fn(async (sid: string, password: string | null, remember: boolean) => {
+    env.checks.push({ sid, password, remember });
+    if (password === "pw") env.sudoWants.delete(sid);
+    else throw "sudo-rejected: sudo did not accept the password";
+    return { via: "typed", rememberFailed: false };
+  }),
   iacCleanup: vi.fn(async (_sid: string, dir: string) => void env.cleaned.push(dir)),
   iacTemp: vi.fn(async (_sid: string, files: { name: string; text: string }[]) => {
     env.temps.push({ files });
@@ -129,6 +139,10 @@ const server = (id: string, prod = false): ServerProfile => ({
   authMethod: "key",
   keyPath: null,
   hasSavedPassword: false,
+  hasSavedSudo: false,
+  logins: [],
+  defaultLogin: "",
+  askLogin: false,
   group: null,
   tags: [],
   prod,
@@ -150,6 +164,8 @@ async function untilDone(id: string) {
 
 beforeEach(() => {
   env.runs.length = 0;
+  env.sudoWants.clear();
+  env.checks.length = 0;
   env.cancelled.length = 0;
   env.cleaned.length = 0;
   env.temps.length = 0;
@@ -181,11 +197,35 @@ describe("a recipe run", () => {
       ["s-b", "check"],
       ["s-b", "apply"],
     ]);
-    // The parameters are exported at the top of the script; the password goes beside it.
+    // The parameters are exported at the top of the script; the password never
+    // rides the run — each server's sudo had its own here (ADR 0073).
     expect(env.runs[0].script).toContain("export DOCKER_USER='deploy'");
     expect(env.runs[0].script).toContain("export VTERM_MODE='check'");
-    expect(env.runs[0].password).toBe("pw");
+    expect(Object.keys(env.runs[0])).not.toContain("password");
+    expect(env.checks).toEqual([]);
     expect(env.runs[0].cancelId).toBe(`recipe:${id}:a`);
+  });
+
+  it("the typed sudo password goes only to the servers whose own does not work, never remembered", async () => {
+    env.sudoWants.add("s-b");
+    const id = await startRecipeRun(
+      { recipe: docker, name: "x", values: { DOCKER_USER: "u" }, servers: [{ server: server("a"), prod: false }, { server: server("b"), prod: false }], mode: "apply", elevation: "sudoPassword", password: "pw" },
+      async (s) => `s-${s}`,
+    );
+    await untilDone(id);
+    expect(env.checks).toEqual([{ sid: "s-b", password: "pw", remember: false }]);
+    expect(recipeRuns()[0].hosts.map((h) => h.state)).toEqual(["skipped", "skipped"]);
+  });
+
+  it("where sudo wants a password and none was typed, the host says so in words, not a marker", async () => {
+    env.sudoWants.add("s-a");
+    const id = await startRecipeRun(
+      { recipe: docker, name: "x", values: { DOCKER_USER: "u" }, servers: [{ server: server("a"), prod: false }], mode: "apply", elevation: "sudoPassword", password: null },
+      async (s) => `s-${s}`,
+    );
+    await untilDone(id);
+    expect(recipeRuns()[0].hosts[0]).toMatchObject({ state: "failed", summary: "sudo password needed" });
+    expect(env.checks).toEqual([]);
   });
 
   it("a check only says, and a server that could not be reached or answered badly is a failure", async () => {

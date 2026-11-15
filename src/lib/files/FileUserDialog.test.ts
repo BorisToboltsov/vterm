@@ -3,7 +3,11 @@ import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const sftpOpenAs = vi.fn();
-vi.mock("../api", () => ({ sftpOpenAs: (...a: unknown[]) => sftpOpenAs(...a) }));
+const sudoCheck = vi.fn();
+vi.mock("../api", () => ({
+  sftpOpenAs: (...a: unknown[]) => sftpOpenAs(...a),
+  sudoCheck: (...a: unknown[]) => sudoCheck(...a),
+}));
 
 import FileUserDialog, { type FileUserAsk } from "./FileUserDialog.svelte";
 
@@ -26,6 +30,8 @@ const confirm = () => userEvent.click(screen.getByTestId("fileuser-confirm"));
 
 beforeEach(() => {
   sftpOpenAs.mockReset();
+  sudoCheck.mockReset();
+  sudoCheck.mockResolvedValue({ via: "typed", rememberFailed: false });
 });
 
 describe("FileUserDialog", () => {
@@ -39,12 +45,13 @@ describe("FileUserDialog", () => {
     const { ondone } = open();
     expect(screen.queryByTestId("fileuser-password")).toBeNull();
     await confirm();
-    expect(sftpOpenAs).toHaveBeenCalledWith("s1", "deploy", null);
+    expect(sftpOpenAs).toHaveBeenCalledWith("s1", "deploy");
+    expect(sudoCheck).not.toHaveBeenCalled();
     expect(ondone).toHaveBeenCalledTimes(1);
   });
 
-  it("asks for the password when sudo wants it, and sends it only then", async () => {
-    sftpOpenAs.mockRejectedValueOnce("sudo-password: sudo asks for a password");
+  it("asks for the password when sudo wants it, and hands it to the check only then", async () => {
+    sftpOpenAs.mockRejectedValueOnce("sudo-password: nothing");
     sftpOpenAs.mockResolvedValueOnce(undefined);
     const { ondone } = open();
     await confirm();
@@ -53,29 +60,39 @@ describe("FileUserDialog", () => {
     expect(screen.getByTestId("fileuser-confirm")).toBeDisabled();
     await userEvent.type(screen.getByTestId("fileuser-password"), "s3cret");
     await confirm();
-    expect(sftpOpenAs).toHaveBeenLastCalledWith("s1", "deploy", "s3cret");
+    expect(sudoCheck).toHaveBeenCalledWith("s1", "s3cret", true);
+    expect(sftpOpenAs).toHaveBeenLastCalledWith("s1", "deploy");
     expect(ondone).toHaveBeenCalledTimes(1);
   });
 
+  it("says when the saved sudo password no longer works", async () => {
+    sftpOpenAs.mockRejectedValueOnce("sudo-password: saved");
+    open();
+    await confirm();
+    expect(screen.getByTestId("fileuser-note").textContent).toContain("keychain");
+  });
+
   it("a wrong password says so, clears the field and stays", async () => {
-    sftpOpenAs.mockRejectedValueOnce("sudo-password: sudo asks for a password");
-    sftpOpenAs.mockRejectedValueOnce("sudo-rejected: sudo did not accept the password");
+    sftpOpenAs.mockRejectedValueOnce("sudo-password: nothing");
+    sudoCheck.mockRejectedValueOnce("sudo-rejected: sudo did not accept the password");
     const { ondone } = open();
     await confirm();
     await userEvent.type(screen.getByTestId("fileuser-password"), "wrong");
     await confirm();
-    expect(screen.getByTestId("fileuser-failure").textContent).toContain("did not accept");
+    expect(screen.getByTestId("fileuser-note").textContent).toContain("did not take");
     expect((screen.getByTestId("fileuser-password") as HTMLInputElement).value).toBe("");
     expect(ondone).not.toHaveBeenCalled();
   });
 
   it("a refusal carries what sudo said, and the way that needs no sudo", async () => {
-    sftpOpenAs.mockRejectedValue("sudo-refused: plain is not in the sudoers file.");
+    sftpOpenAs.mockRejectedValue("sudo-refused: not-allowed: plain is not in the sudoers file.");
     open();
     await confirm();
-    const text = screen.getByTestId("fileuser-failure").textContent;
+    const text = screen.getByTestId("fileuser-refused").textContent;
+    expect(text).toContain("No sudo rights");
     expect(text).toContain("plain is not in the sudoers file.");
-    expect(text).toContain("separate connection");
+    expect(screen.getByTestId("fileuser-without-sudo").textContent).toContain("separate connection");
+    expect(screen.getByTestId("fileuser-confirm")).toBeDisabled();
   });
 
   it("names a server with no sftp-server, and passes anything else on as it is", async () => {

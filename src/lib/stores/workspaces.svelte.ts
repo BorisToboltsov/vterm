@@ -12,7 +12,7 @@
 // (unreachable) or a view with no document (an empty zone) cannot exist.
 
 import type { EditorLang } from "../editor/editorlang";
-import type { TextFile, WriteResult } from "../types";
+import type { SudoRoute, TextFile, WriteResult } from "../types";
 import {
   closeView,
   loadViews,
@@ -61,7 +61,8 @@ export interface EditorDoc {
   readOnly: boolean;
   /** Advisory access to the parent directory used by an ordinary SFTP save. */
   writeAccess: "checking" | "writable" | "restricted" | "unknown";
-  /** Last failed save; the buffer remains editable and can be exported. */
+  /** Last failed save; the buffer remains editable and can be exported.
+   *  `sudo` — sudo would not: the reason is in `sudoRoute` (ADR 0073). */
   saveIssue: "none" | "permission" | "sudo" | "other";
   /** True while the initial content is being fetched. */
   loading: boolean;
@@ -71,12 +72,21 @@ export interface EditorDoc {
    * showing a load that is not happening.
    */
   awaiting?: boolean;
+  /**
+   * A file carried here from another tab of the same server, logged in as
+   * someone else ("Open as admin", ADR 0074): its edits and the version they
+   * were made on. Filled once the connection is open — not read again, so a
+   * save still checks against the version the edits started from.
+   */
+  carried?: Pick<EditorDoc, "content" | "baseContent" | "baseSha256" | "eol" | "encoding" | "mode">;
   /** Load error message, or null. */
   loadError: string | null;
-  /** Opened/saved with sudo (root-owned file); save reuses it. */
+  /** Opened/saved with sudo (root-owned file); save reuses it. The password is
+   *  the session's, in the backend — the window never holds one (ADR 0073). */
   sudo: boolean;
-  /** sudo password (in-memory only, never persisted) when `sudo` is set. */
-  sudoPassword: string;
+  /** What is known of sudo for a file the login user cannot write: what saving
+   *  it will take, or why sudo will not (`sudo_route`). Null — not asked yet. */
+  sudoRoute: SudoRoute | null;
   /** 1-based line to scroll to on open (e.g. from a grep hit), or null. */
   gotoLine: number | null;
   /** 1-based column on that line (`x.c:42:5` in terminal output), or null: the line's start. */
@@ -132,7 +142,6 @@ export interface OpenEditorOpts {
   /** Open beside the terminal while no file is shown (`openView`, v1.35). */
   beside?: boolean;
   sudo?: boolean;
-  sudoPassword?: string;
   gotoLine?: number;
   gotoColumn?: number;
   gitBase?: string;
@@ -214,7 +223,7 @@ export function restoreWorkspace(sessionId: string, docs: readonly RestoredDoc[]
       awaiting: true,
       loadError: null,
       sudo: false,
-      sudoPassword: "",
+      sudoRoute: null,
       gotoLine: null,
     }),
   );
@@ -222,6 +231,25 @@ export function restoreWorkspace(sessionId: string, docs: readonly RestoredDoc[]
     ...workspacesState.map,
     [sessionId]: { editors, layout: loadViews(saved, editors.map((e) => e.id)) },
   };
+}
+
+/**
+ * Carry a file, edits and all, into a new connection to the same server under
+ * another login (ADR 0074): it waits there like a file of the previous launch,
+ * and is filled from what it carries once the connection is open.
+ */
+export function carryEditor(sessionId: string, doc: EditorDoc): void {
+  restoreWorkspace(sessionId, [{ id: doc.id, source: doc.source, path: doc.path, name: doc.name, lang: doc.lang }], null);
+  updateDoc(sessionId, doc.id, {
+    carried: {
+      content: doc.content,
+      baseContent: doc.baseContent,
+      baseSha256: doc.baseSha256,
+      eol: doc.eol,
+      encoding: doc.encoding,
+      mode: doc.mode,
+    },
+  });
 }
 
 /** The files of a connection still waiting for it to open (v1.36). */
@@ -296,7 +324,7 @@ export function addEditor(
     loading: true,
     loadError: null,
     sudo: opts.sudo ?? false,
-    sudoPassword: opts.sudoPassword ?? "",
+    sudoRoute: null,
     gotoLine: opts.gotoLine ?? null,
     gotoColumn: opts.gotoLine ? (opts.gotoColumn ?? null) : null,
     gitBase: opts.gitBase,
@@ -341,7 +369,7 @@ export function addScratchEditor(
     loading: false,
     loadError: null,
     sudo: false,
-    sudoPassword: "",
+    sudoRoute: null,
     gotoLine: null,
   };
   const ws = ensure(sessionId);
@@ -362,6 +390,7 @@ export function fillEditor(sessionId: string, id: string, file: TextFile, lang?:
   updateDoc(sessionId, id, {
     ...(lang ? { lang } : {}),
     awaiting: false,
+    carried: undefined,
     content: file.content,
     baseContent: file.content,
     baseSha256: file.sha256,
@@ -443,7 +472,7 @@ export function addPipelinesView(
     loading: false,
     loadError: null,
     sudo: false,
-    sudoPassword: "",
+    sudoRoute: null,
     gotoLine: null,
     pipelines: { targets: targets.map((t) => ({ ...t })) },
   };
@@ -493,7 +522,7 @@ export function addProjectView(
     loading: false,
     loadError: null,
     sudo: false,
-    sudoPassword: "",
+    sudoRoute: null,
     gotoLine: null,
     project: { kind, root, ask, askSeq: ask ? 1 : 0, library },
   };
@@ -501,9 +530,14 @@ export function addProjectView(
   return id;
 }
 
-/** Mark an editor as elevated (sudo) and remember its password for later saves. */
-export function setEditorSudo(sessionId: string, id: string, password: string): void {
-  updateDoc(sessionId, id, { sudo: true, sudoPassword: password, saveIssue: "none" });
+/** Mark an editor as elevated: read and saved as root, with the session's sudo. */
+export function setEditorSudo(sessionId: string, id: string): void {
+  updateDoc(sessionId, id, { sudo: true, saveIssue: "none" });
+}
+
+/** What is known of sudo for an editor's file (ADR 0073). */
+export function setEditorSudoRoute(sessionId: string, id: string, route: SudoRoute | null): void {
+  updateDoc(sessionId, id, { sudoRoute: route });
 }
 
 export function setEditorWriteAccess(

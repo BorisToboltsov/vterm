@@ -46,7 +46,7 @@ const doc = (targets: { path: string; isDir: boolean }[], source: "sftp" | "loca
   loading: false,
   loadError: null,
   sudo: false,
-  sudoPassword: "",
+  sudoRoute: null,
   gotoLine: null,
   pipelines: { targets },
 });

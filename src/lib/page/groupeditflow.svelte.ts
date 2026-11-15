@@ -9,7 +9,8 @@
 // What the patch does is `editor/linepatch.ts`; what a member's state means is
 // `editor/groupedit.ts`.
 
-import { annotateRecording, isFileChangedError, sftpReadText, sftpWriteText } from "../api";
+import { annotateRecording, isFileChangedError, sftpReadText, sftpWriteText, sudoCheck } from "../api";
+import { sudoAnswer } from "../sudo/sudo";
 import { writtenByCall } from "../api/call";
 import { diag } from "../api/diag";
 import { t } from "../i18n";
@@ -20,6 +21,7 @@ import {
   patchHost,
   pickedAtFirst,
   readFailure,
+  sudoCanTry,
   writable,
   type EditAsk,
   type EditHost,
@@ -45,8 +47,6 @@ export interface GroupEditDeps {
 export function createGroupEditFlow(deps: GroupEditDeps) {
   let ask = $state<EditAsk | null>(null);
   let asked = 0;
-  // The sudo password typed into the dialog: in memory, for this dialog only.
-  let sudoPassword = "";
 
   function others(sid: string): string[] | null {
     const group = deps.groupOf(sid);
@@ -60,15 +60,33 @@ export function createGroupEditFlow(deps: GroupEditDeps) {
     ask = { ...ask, hosts: ask.hosts.map((h) => (h.id === id ? { ...h, ...change } : h)) };
   }
 
-  async function read(n: number, id: string, path: string, hunks: Hunk[], sudo: boolean) {
+  /** What a failed read becomes on the member's row: sudo's answer, or the reason. */
+  function failedRead(e: unknown, sudo: boolean): HostEdit {
+    // `call()` wrote the refusal; the dialog says it on the member's row.
+    writtenByCall();
+    const answer = sudo ? sudoAnswer(e) : null;
+    return answer ? { kind: "denied", sudo: answer } : readFailure(String(e));
+  }
+
+  /**
+   * Read the member's copy. Through sudo, each server's own sudo password goes
+   * first — what its session took, none, its saved one, its login's (ADR 0073);
+   * `typed` only where sudo still asks for one, through `sudoCheck`.
+   */
+  async function read(n: number, id: string, path: string, hunks: Hunk[], sudo: boolean, typed = "") {
     let edit: HostEdit;
     try {
-      const file = await sftpReadText(id, path, deps.maxBytes(), sudo, sudo ? sudoPassword : undefined);
-      edit = patchHost(file, hunks, sudo);
+      edit = patchHost(await sftpReadText(id, path, deps.maxBytes(), sudo), hunks, sudo);
     } catch (e) {
-      // `call()` wrote the refusal; the dialog says it on the member's row.
-      writtenByCall();
-      edit = readFailure(String(e));
+      edit = failedRead(e, sudo);
+      if (sudo && typed && edit.kind === "denied" && edit.sudo && edit.sudo.kind !== "refused") {
+        try {
+          await sudoCheck(id, typed, false);
+          edit = patchHost(await sftpReadText(id, path, deps.maxBytes(), true), hunks, true);
+        } catch (again) {
+          edit = failedRead(again, true);
+        }
+      }
     }
     setHost(n, id, { edit, picked: pickedAtFirst(edit) });
   }
@@ -76,7 +94,6 @@ export function createGroupEditFlow(deps: GroupEditDeps) {
   function close() {
     asked++;
     ask = null;
-    sudoPassword = "";
   }
 
   return {
@@ -94,7 +111,6 @@ export function createGroupEditFlow(deps: GroupEditDeps) {
       const rest = others(sid);
       if (!rest || doc.source !== "sftp") return;
       const n = ++asked;
-      sudoPassword = "";
       const hunks = hunksOf(doc.baseContent, doc.content);
       ask = {
         lead: sid,
@@ -117,17 +133,17 @@ export function createGroupEditFlow(deps: GroupEditDeps) {
       ask = { ...ask, hosts: ask.hosts.map((h) => (h.id === id && writable(h.edit) ? { ...h, picked: !h.picked } : h)) };
     },
 
-    /** Read again through sudo where the file could not be read as this user. */
+    /** Read again through sudo where the file could not be read as this user —
+     *  each server with its own sudo password, `password` where none works. */
     sudo(password: string) {
       const a = ask;
       if (!a || !a.hunks || a.writing || a.done) return;
-      sudoPassword = password;
       const n = asked;
       const hunks = a.hunks;
       for (const h of a.hosts) {
-        if (h.edit.kind !== "denied") continue;
+        if (!sudoCanTry(h.edit)) continue;
         setHost(n, h.id, { edit: { kind: "reading" } });
-        void read(n, h.id, a.path, hunks, true);
+        void read(n, h.id, a.path, hunks, true, password);
       }
     },
 
@@ -154,7 +170,6 @@ export function createGroupEditFlow(deps: GroupEditDeps) {
         try {
           await sftpWriteText(h.id, a.path, text, file.eol, file.sha256, {
             sudo,
-            sudoPassword: sudo ? sudoPassword : undefined,
             backup: deps.backup(),
             encoding: file.encoding,
           });
@@ -187,7 +202,6 @@ export function createGroupEditFlow(deps: GroupEditDeps) {
         { code: "group-edit" },
       );
       if (n === asked && ask) ask = { ...ask, writing: false, done: true };
-      sudoPassword = "";
     },
 
     /** A tab closed: a dialog about its file goes with it. */

@@ -3,8 +3,10 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
 // Editor write access (v1.24): whether a save will land is asked ahead of
-// editing, a refused save keeps the buffer and puts the way out next to Save —
-// sudo or a copy on this computer — and that copy never lands on another file.
+// editing — and what saving it through sudo will take (ADR 0073) — a refused save
+// keeps the buffer and puts the way out next to Save — sudo or a copy on this
+// computer — a sudo that will not write says why, and that copy never lands on
+// another file.
 // The flow half — the access probe on open, the sudo password checked before it
 // is kept, a refused save marked rather than answered with a dialog — is the
 // editor flow's (page/editorflow), held by its behaviour tests. What is left here
@@ -17,7 +19,9 @@ const local = read("src-tauri/src/localfile.rs");
 function problems(editorSource: string, localSource: string): string[] {
   const out: string[] = [];
   if (!editorSource.includes('doc.writeAccess === "restricted"') ||
-      !editorSource.includes('t("editor.writeNeedsAccess")')) out.push("no early warning by Save");
+      !editorSource.includes("sudoBadge(doc.sudoRoute)")) out.push("no early warning by Save");
+  if (!editorSource.includes("REFUSAL_TITLE[refusal.why]") ||
+      !editorSource.includes("REFUSAL_HINT[refusal.why]")) out.push("a sudo refusal is not said by Save");
   if (!editorSource.includes('doc.saveIssue === "permission"') ||
       !editorSource.includes('t("editor.saveWithSudo")') ||
       !editorSource.includes('t("editor.saveCopy")')) out.push("no recovery actions by Save");
@@ -37,6 +41,10 @@ describe("editor write access contract", () => {
   it("detects live violations of the warning, the recovery and copy safety", () => {
     expect(problems(editor.replace('t("editor.saveWithSudo")', 't("editor.save")'), local)).toContain(
       "no recovery actions by Save",
+    );
+    expect(problems(editor.replace("sudoBadge(doc.sudoRoute)", "null"), local)).toContain("no early warning by Save");
+    expect(problems(editor.replace("REFUSAL_TITLE[refusal.why]", '"editor.saveFailed"'), local)).toContain(
+      "a sudo refusal is not said by Save",
     );
     expect(problems(editor, local.replace("options.write(true).create_new(true);", "options.write(true).create(true);"))).toContain(
       "local copy can overwrite another file",

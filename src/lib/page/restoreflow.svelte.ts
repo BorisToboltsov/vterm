@@ -49,6 +49,8 @@ import {
   awaitingDocs,
   failEditor,
   fillEditor,
+  setEditorContent,
+  type EditorDoc,
   restoreWorkspace,
   setEditorWriteAccess,
   startLoading,
@@ -65,14 +67,16 @@ import {
   type WaitFacts,
 } from "../tabs/tabrestore";
 import { submitLine } from "../terminal/terminput";
-import type { ServerProfile } from "../types";
+import type { ServerProfile, TabLogin, TextFile } from "../types";
 import type { TermSnapshot } from "../windows/tabhandoff";
 
 /** What the page tells the restore flow, each read when it is needed. */
 export interface RestoreDeps {
   servers: () => ServerProfile[];
   /** Ask for the secret of a waiting tab's server; the answer connects that tab in place. */
-  askSecret: (server: ServerProfile, label: string, sessionId: string) => void;
+  askSecret: (server: ServerProfile, label: string, sessionId: string, login?: TabLogin) => void;
+  /** The tab's login is gone from its server's profile (ADR 0074): ask which. */
+  pickLogin?: (server: ServerProfile, sessionId: string) => void;
   /** What a session's terminal holds, as it is kept across a restart (`Terminal.keepsake`). */
   keepsake?: (sessionId: string) => Promise<TermSnapshot | null>;
   /** The theme's panel colour, for the windows opened again (so they never flash another). */
@@ -112,7 +116,7 @@ export function createRestoreFlow(deps: RestoreDeps) {
   async function settle(sessionId: string) {
     const asked = findTab(sessionId);
     if (asked?.waiting !== "checking") return;
-    const plan = await connectPlan(asked.serverId).catch(nullWrittenByCall);
+    const plan = await connectPlan(asked.serverId, asked.login).catch(nullWrittenByCall);
     // Closed, or opened by its button, while the keychain was being asked.
     const tab = findTab(sessionId);
     if (tab?.waiting !== "checking") return;
@@ -205,10 +209,38 @@ export function createRestoreFlow(deps: RestoreDeps) {
     await Promise.all(tabsState.list.map((tab) => keep(tab, now)));
   }
 
+  /**
+   * A file carried from another login's tab (ADR 0074): the version its edits
+   * were made on, then the edits — a save checks against that version, so a
+   * file changed meanwhile is a conflict, not a quiet overwrite.
+   */
+  function fillCarried(sessionId: string, doc: EditorDoc) {
+    const c = doc.carried!;
+    const base: TextFile = {
+      content: c.baseContent,
+      eol: c.eol,
+      size: c.baseContent.length,
+      mode: c.mode,
+      mtime: null,
+      sha256: c.baseSha256,
+      readOnly: false,
+      encoding: c.encoding,
+    };
+    fillEditor(sessionId, doc.id, base, editorLangWithDialect(doc.lang, c.baseContent));
+    setEditorContent(sessionId, doc.id, c.content);
+    void sftpWriteAccess(sessionId, doc.path)
+      .then((access) => setEditorWriteAccess(sessionId, doc.id, access))
+      .catch(() => setEditorWriteAccess(sessionId, doc.id, "unknown"));
+  }
+
   /** Read the files a connection had open, now that it is open. */
   async function openDocs(sessionId: string) {
     const maxBytes = settings.sftp.maxOpenMb * 1024 * 1024;
     for (const doc of awaitingDocs(sessionId)) {
+      if (doc.carried) {
+        fillCarried(sessionId, doc);
+        continue;
+      }
       startLoading(sessionId, doc.id);
       try {
         const file =
@@ -298,16 +330,18 @@ export function createRestoreFlow(deps: RestoreDeps) {
         reconnectTab(sessionId);
         return;
       }
+      const server = deps.servers().find((s) => s.id === tab.serverId);
       try {
-        const plan = await connectPlan(tab.serverId);
-        const server = deps.servers().find((s) => s.id === tab.serverId);
+        const plan = await connectPlan(tab.serverId, tab.login);
         if (plan.needsSecret && server) {
-          deps.askSecret(server, plan.secretLabel, sessionId);
+          deps.askSecret(server, plan.secretLabel, sessionId, tab.login);
           return;
         }
         reconnectTab(sessionId);
       } catch (e) {
-        notifyError(String(e), { source: "connection" });
+        // Its login was removed meanwhile: which one now is the user's to say.
+        if (String(e).includes("login-gone") && server && deps.pickLogin) deps.pickLogin(server, sessionId);
+        else notifyError(String(e), { source: "connection" });
       }
     },
 

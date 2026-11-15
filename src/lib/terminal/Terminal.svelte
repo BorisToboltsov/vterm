@@ -56,7 +56,7 @@
     writeToTerminal,
   } from "../api";
   import type { ConnPhase } from "../connect/connphase";
-  import type { AuthPromptRequest } from "../types";
+  import type { AuthPromptRequest, TabLogin } from "../types";
   import type { TermSnapshot } from "../windows/tabhandoff";
   import { cutBlocks, RESTORE_SCROLLBACK, separatorLine } from "../tabs/tabcontent";
   import type { RestoredOutput } from "../stores/tabs.svelte";
@@ -75,6 +75,7 @@
   let {
     sessionId,
     serverId,
+    login,
     secret,
     remember,
     local = false,
@@ -106,6 +107,8 @@
   }: {
     sessionId: string;
     serverId: string;
+    /** Which login of the server it connects with (ADR 0074); absent — the default. */
+    login?: TabLogin;
     secret: string | null;
     remember: boolean;
     /** Local-shell PTY tab instead of an SSH connection. */
@@ -1079,6 +1082,7 @@
         const outcome = await connectSession(
           sessionId,
           serverId,
+          login,
           secret,
           remember,
           term.cols,

@@ -546,8 +546,8 @@ describe("centre layout guard — catches what it exists for", () => {
       pageViolations(
         mutate(
           page,
-          "const sessionId = openTabStore(server.id, server.alias, null, false);\n      place?.(sessionId);",
-          "place?.(openTabStore(server.id, server.alias, null, false));",
+          "const sessionId = openTabStore(server.id, server.alias, null, false, undefined, choice);\n      place?.(sessionId);",
+          "place?.(openTabStore(server.id, server.alias, null, false, undefined, choice));",
         ),
         terminal,
       ),

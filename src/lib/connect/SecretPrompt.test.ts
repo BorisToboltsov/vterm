@@ -23,6 +23,10 @@ const server: ServerProfile = {
   authMethod: "password",
   keyPath: null,
   hasSavedPassword: false,
+  hasSavedSudo: false,
+  logins: [],
+  defaultLogin: "",
+  askLogin: false,
   group: null,
   tags: [],
   prod: null,
@@ -79,7 +83,7 @@ describe("SecretPrompt", () => {
     await tick();
     await userEvent.type(screen.getByTestId("secret-input"), "hunter2");
     await userEvent.click(screen.getByTestId("secret-connect"));
-    expect(openTab).toHaveBeenCalledWith("s1", "Prod", "hunter2", true);
+    expect(openTab).toHaveBeenCalledWith("s1", "Prod", "hunter2", true, undefined, undefined);
   });
 
   it("honours the box being unchecked — the default is an offer, not a decision", async () => {
@@ -89,7 +93,7 @@ describe("SecretPrompt", () => {
     await userEvent.click(rememberBox());
     await userEvent.type(screen.getByTestId("secret-input"), "hunter2");
     await userEvent.click(screen.getByTestId("secret-connect"));
-    expect(openTab).toHaveBeenCalledWith("s1", "Prod", "hunter2", false);
+    expect(openTab).toHaveBeenCalledWith("s1", "Prod", "hunter2", false, undefined, undefined);
   });
 
   it("tells the caller which tab it opened — and nothing if the prompt is cancelled", async () => {
@@ -126,7 +130,7 @@ describe("SecretPrompt", () => {
     await userEvent.click(rememberBox());
     await userEvent.type(screen.getByTestId("secret-input"), "hunter2");
     await userEvent.click(screen.getByTestId("secret-connect"));
-    expect(connectTabWith).toHaveBeenCalledExactlyOnceWith("sess-waiting", "hunter2", false);
+    expect(connectTabWith).toHaveBeenCalledExactlyOnceWith("sess-waiting", "hunter2", false, undefined);
     expect(openTab).not.toHaveBeenCalled();
   });
 
@@ -141,7 +145,7 @@ describe("SecretPrompt", () => {
     await userEvent.type(screen.getByTestId("secret-input"), "hunter2");
     await userEvent.click(screen.getByTestId("secret-connect"));
     expect(connectTabWith).not.toHaveBeenCalled();
-    expect(openTab).toHaveBeenCalledWith("s1", "Prod", "hunter2", true);
+    expect(openTab).toHaveBeenCalledWith("s1", "Prod", "hunter2", true, undefined, undefined);
   });
 
   it("re-arms the default for the next server instead of remembering the last choice", async () => {

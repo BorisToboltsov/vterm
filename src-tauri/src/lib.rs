@@ -37,6 +37,7 @@ mod servertools;
 mod sftp;
 mod ssh;
 mod store;
+mod sudo;
 mod sync;
 mod tabcontent;
 mod textenc;
@@ -92,12 +93,20 @@ pub(crate) struct AppState {
     /// backend's own answer to "is this a prod / AI-disabled server" (`ai_exec`),
     /// read against the current profile, not the flags the tab was opened with.
     session_servers: Mutex<HashMap<String, String>>,
+    /// Whom each SSH session logged in as (ADR 0074): its user and its keychain
+    /// scope — where sudo's saved passwords are looked for.
+    session_logins: Mutex<HashMap<String, model::ResolvedLogin>>,
 }
 
 impl AppState {
     /// The local shell PTY registered under `session_id`, if this is a local tab.
     pub(crate) fn local_pty(&self, session_id: &str) -> Option<Arc<pty::LocalPty>> {
         self.local_ptys.locked().get(session_id).cloned()
+    }
+
+    /// Whom an SSH session logged in as (ADR 0074).
+    pub(crate) fn session_login(&self, session_id: &str) -> Option<model::ResolvedLogin> {
+        self.session_logins.locked().get(session_id).cloned()
     }
 
     /// The current profile of the server an SSH session was opened for.
@@ -162,6 +171,7 @@ pub(crate) async fn end_session(app: &AppHandle, session_id: &str) {
     state.metrics_samples.clear_session(session_id);
     state.id_names.locked().remove(session_id);
     state.session_servers.locked().remove(session_id);
+    state.session_logins.locked().remove(session_id);
 }
 
 /// [`session_arc`] for code that has the app's handle, not a command's state.
@@ -260,6 +270,7 @@ pub fn run() {
         pending_opens: Mutex::new(initial_files),
         id_names: Mutex::new(HashMap::new()),
         session_servers: Mutex::new(HashMap::new()),
+        session_logins: Mutex::new(HashMap::new()),
     };
 
     let app = tauri::Builder::default()
@@ -364,6 +375,8 @@ pub fn run() {
             servers::set_server_path_sync,
             servers::delete_server,
             servers::forget_secrets,
+            servers::forget_login_secret,
+            servers::add_server_login,
             servers::save_server_secret,
             servers::save_proxy_secret,
             folders::list_folders,
@@ -400,7 +413,8 @@ pub fn run() {
             commands::sftp::sftp_create_file,
             commands::sftp::sftp_read_text,
             commands::sftp::sftp_write_access,
-            commands::sftp::sftp_check_sudo,
+            commands::sudo::sudo_route,
+            commands::sudo::sudo_check,
             commands::sftp::sftp_read_bytes,
             localfile::read_local_bytes,
             commands::sftp::sftp_write_text,

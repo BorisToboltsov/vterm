@@ -65,6 +65,12 @@ describe("pure helpers", () => {
     });
     // On a local tab → another local shell.
     expect(newTabAction({ kind: "local", serverId: "" })).toEqual({ kind: "local" });
+    // Another tab of the same login (ADR 0074).
+    expect(newTabAction({ kind: "ssh", serverId: "srv-1", login: { id: "dep" } })).toEqual({
+      kind: "ssh",
+      serverId: "srv-1",
+      login: { id: "dep" },
+    });
     // Nothing open → local shell.
     expect(newTabAction(null)).toEqual({ kind: "local" });
     expect(newTabAction(undefined)).toEqual({ kind: "local" });

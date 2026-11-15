@@ -41,6 +41,10 @@ function server(p: Partial<ServerProfile> & { id: string; alias: string }): Serv
     authMethod: "password",
     keyPath: null,
     hasSavedPassword: true,
+    hasSavedSudo: false,
+    logins: [],
+    defaultLogin: "",
+    askLogin: false,
     group: "Prod",
     tags: ["web", "eu"],
     prod: null,
@@ -810,5 +814,96 @@ describe("ServerFormModal path sync", () => {
     await userEvent.click(screen.getByTestId("save-server"));
     await waitFor(() => expect(addServer).toHaveBeenCalledOnce());
     expect(addServer).toHaveBeenCalledWith(expect.objectContaining({ pathSync: "auto" }));
+  });
+});
+
+describe("ServerFormModal logins (ADR 0074)", () => {
+  beforeEach(() => {
+    addServer.mockReset();
+    updateServer.mockReset();
+    saveServerSecret.mockReset();
+    updateServer.mockImplementation(async (id: string) => ({ id, alias: "Prod" }));
+    addServer.mockResolvedValue({ id: "s1", alias: "Prod" });
+    saveServerSecret.mockImplementation(async (id: string) => ({ id, alias: "Prod" }));
+  });
+
+  const deploy = {
+    id: "dep",
+    username: "deploy",
+    authMethod: "password" as const,
+    keyPath: null,
+    hasSavedPassword: true,
+    hasSavedSudo: false,
+  };
+
+  it("a server of one login shows only its fields and «Add login»", async () => {
+    const { comp } = renderForm();
+    comp.openEdit(server({ id: "s1", alias: "Prod" }));
+    await tick();
+    expect(screen.queryByTestId("extra-logins")).toBeNull();
+    expect(screen.queryByTestId("login-on-connect")).toBeNull();
+    expect(screen.getByTestId("login-add")).toBeInTheDocument();
+  });
+
+  it("keeps the other logins with their ids, the default and «Ask», and saves a typed secret under its login", async () => {
+    const { comp } = renderForm();
+    comp.openEdit(server({ id: "s1", alias: "Prod", logins: [deploy], defaultLogin: "dep" }));
+    await tick();
+    expect(screen.getByTestId("login-row").textContent).toContain("deploy");
+    // A new login, its user and password typed.
+    await userEvent.click(screen.getByTestId("login-add"));
+    const users = screen.getAllByTestId("login-user");
+    await userEvent.type(users[users.length - 1], "admin");
+    await userEvent.type(screen.getByTestId("login-secret"), "s3cret");
+    // «Ask» on connect.
+    await userEvent.click(within(screen.getByTestId("login-on-connect")).getByText("Ask"));
+    await userEvent.click(screen.getByTestId("save-server"));
+    await waitFor(() => expect(updateServer).toHaveBeenCalledOnce());
+    const payload = updateServer.mock.calls[0][1];
+    expect(payload.logins).toEqual([
+      { id: "dep", username: "deploy", authMethod: "password", keyPath: null },
+      expect.objectContaining({ username: "admin", authMethod: "password" }),
+    ]);
+    expect(payload.defaultLogin).toBe("dep");
+    expect(payload.askLogin).toBe(true);
+    const newId = payload.logins[1].id;
+    await waitFor(() => expect(saveServerSecret).toHaveBeenCalledWith("s1", "s3cret", newId));
+  });
+
+  it("the star moves the default; removing the default falls back to the first", async () => {
+    const { comp } = renderForm();
+    comp.openEdit(server({ id: "s1", alias: "Prod", logins: [deploy] }));
+    await tick();
+    await userEvent.click(screen.getByTestId("login-default"));
+    expect(screen.getByTestId("login-default").getAttribute("aria-pressed")).toBe("true");
+    expect(screen.getByTestId("login-default-first").getAttribute("aria-pressed")).toBe("false");
+    await userEvent.click(screen.getByTestId("login-row"));
+    await userEvent.click(screen.getByTestId("login-remove"));
+    await userEvent.click(screen.getByTestId("save-server"));
+    await waitFor(() => expect(updateServer).toHaveBeenCalledOnce());
+    expect(updateServer.mock.calls[0][1]).toMatchObject({ logins: [], defaultLogin: "", askLogin: false });
+  });
+
+  it("a login without a user is not saved, and says so", async () => {
+    const { comp } = renderForm();
+    comp.openEdit(server({ id: "s1", alias: "Prod" }));
+    await tick();
+    await userEvent.click(screen.getByTestId("login-add"));
+    await userEvent.click(screen.getByTestId("save-server"));
+    expect(updateServer).not.toHaveBeenCalled();
+    expect(screen.getByText("A login needs a user name")).toBeInTheDocument();
+  });
+
+  it("a copy of the server copies its logins as new ones, their secrets left behind", async () => {
+    const { comp } = renderForm();
+    comp.openDuplicate(server({ id: "s1", alias: "Prod", logins: [deploy], defaultLogin: "dep" }));
+    await tick();
+    await userEvent.click(screen.getByTestId("save-server"));
+    await waitFor(() => expect(addServer).toHaveBeenCalledOnce());
+    const payload = addServer.mock.calls[0][0];
+    expect(payload.logins).toHaveLength(1);
+    expect(payload.logins[0].id).not.toBe("dep");
+    expect(payload.logins[0].username).toBe("deploy");
+    expect(payload.defaultLogin).toBe(payload.logins[0].id);
   });
 });

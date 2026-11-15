@@ -579,8 +579,9 @@ Git, Docker, k8s, сетевые пробы и метрики — **один к�
 
 - **Рецепт доходит до сервера только фиксированной обёрткой** (`scenarios::run_command`): скрипт и
   пароль sudo — через stdin, никогда в командной строке; скрипт — во временный файл `umask 077`,
-  который обёртка удаляет при любом исходе, и исполняется с закрытым stdin. Пароль — только в памяти
-  прогона, в `Zeroizing`; ни в событие, ни в сообщение, ни в настройки. В запись — имя рецепта и
+  который обёртка удаляет при любом исходе, и исполняется с закрытым stdin. Пароль — сессии (ADR
+  0073), введённый — в `sudo_check` без «запомнить» и только там, где свой не подошёл; ни в событие,
+  ни в сообщение, ни в настройки. В запись — имя рецепта и
   ответ (`[script]`), не скрипт. Сессия — SSH самого vterm. Гейты
   `a_recipes_script_and_password_never_reach_a_command_line`, `scenarios.guard`.
 - **Проект запускает пользователь, приложение только смотрит.** `ansible-playbook` и `terraform
@@ -740,10 +741,16 @@ Git, Docker, k8s, сетевые пробы и метрики — **один к�
   статус, окончательный — результат записи; отказ оставляет правки и показывает рядом с
   «Сохранить» sudo и локальную копию; копия — только `create_new`, в исходной кодировке. Гейт
   `editoraccess.guard`.
-- **sudo-правка:** пароль только в памяти и через stdin (`sudo -S -p ''`, `run_command_stdin`);
-  строку stdin собирает только `sync::sudo_stdin` в `Zeroizing`, нет пароля — `None`, а не
-  `""`. Успех — маркер `__VTERM_OK__`; отказ — `isPermissionError` (`permission denied` и `no
-  such file`).
+- **Пароль sudo знает только бэкенд** (ADR 0073): окно отдаёт введённый один раз — в `sudo_check`;
+  подошедший помнит сессия (`SudoMemo`), каждый шаг sudo берёт его оттуда. Без ввода — что sudo взял,
+  без пароля (`-n`, не пустой Enter), сохранённый `vterm:sudo`, пароль входа — каждый сохранённый
+  раз за сессию: ошибка считается faillock'ом. Пароль — только через stdin (`sync::sudo_stdin` в
+  `Zeroizing`); в keychain — после согласия sudo. Гейты
+  `a_sudo_password_reaches_the_backend_only_through_the_check`, живые `live_sudo`.
+- **Ответ sudo читает один `sudo::answer`** (под `LC_ALL=C`): нужен пароль, неверный, отказ с причиной
+  и словами сервера — окно называет причину, а не «нужны права». Чтение `sudo cat | head` смотрит на
+  stderr: у конвейера код `head`. Повышение без ввода на проде — после явного «да». Гейт
+  `editoraccess.guard`, тест `editorflow.svelte.test.ts`.
 - **Расписка о записи отражает сервер, а не намерение** (`WriteResult`); ошибку `set_metadata`
   не глушить. Поведение сервера — живые тесты `live_sftp`.
 - **Синхронизация: хэши считает бэкенд, diff — чистый TS.** `sftp_hash_tree` через SSH exec
@@ -871,8 +878,13 @@ Git, Docker, k8s, сетевые пробы и метрики — **один к�
 - **Создание профиля подтверждается записью:** `add_server` публикует профиль в памяти только
   после записи `servers.json`; форма закрывается до ожидания keychain, сбой секрета — ошибкой
   отдельно. Гейт `servercreation.guard`.
-- **Секрет proxy/jump host** — в keychain под `{id}::proxy`; чистится в
-  `delete_all`/`forget_secrets`.
+- **Секрет proxy/jump host** — в keychain под `{id}::proxy`; пароль sudo — под `vterm:sudo/{id}`
+  (`hasSavedSudo` — подсказка формы); оба чистятся в `delete_all`/`forget_secrets`.
+- **Секреты — у логина, логин — у вкладки** (ADR 0074). Первый логин — поля профиля (id `""`), прочие —
+  `logins`; область keychain — `secrets::login_scope`, у первого — id сервера. Вкладка держит свой
+  `login` с открытия (в слоте, в пакете, в ⌘T); исчезнувший не подменяется — `login-gone` и выбор.
+  Разовый логин ничего не сохраняет; отказ входа забывает пароль только этого логина; пароль sudo
+  сессии — её логина. Гейт `every_login_reads_its_own_secrets`, `backupimport.guard`.
 - **Копии секретов — в `zeroize::Zeroizing`, не логируются.** Host-key по умолчанию — не
   «accept».
 - **После входа подключение уже не проваливается:** сохранение секрета и `hasSavedPassword` —
@@ -1412,6 +1424,8 @@ Git, Docker, k8s, сетевые пробы и метрики — **один к�
 | `login_answers_come_only_from_the_plan` · `nothing_after_login_can_fail_the_connection` (Rust) | Ответы `keyboard-interactive` — только из `kbdauth::merge`; после входа нет `?` |
 | `what_the_git_panel_runs_is_allowed` · `what_the_docker_panel_runs_is_allowed` · `what_the_k8s_panel_runs_is_allowed` (Rust) | Политики argv драйверов пускают формы фронта и ничего опасного |
 | `what_the_checks_of_a_project_run_is_allowed` · `a_recipes_script_and_password_never_reach_a_command_line` (Rust) | Проверки проекта — только чтение того, что он такое, без state; рецепт и пароль sudo — через stdin фиксированной обёртки |
+| `a_sudo_password_reaches_the_backend_only_through_the_check` (Rust) | Пароль sudo принимает из окна только `sudo_check`; сохранённый читает только `commands/sudo.rs` |
+| `every_login_reads_its_own_secrets` (Rust) | Подключение читает и пишет секреты по области логина, не по id сервера; разовый логин не сохраняет ничего |
 | `what_the_ci_panel_runs_is_allowed` · `the_ci_panel_reaches_only_the_runs_of_a_repository` (Rust) | Политика CI пускает формы фронта и только пути прогонов: другие команды и эндпоинты, неявная запись, опция, читающая файл, — отказ |
 | `the_cluster_is_changed_only_in_the_shapes_the_panel_offers` · `a_secrets_value_is_never_read_by_any_road` (Rust) | kubectl меняет кластер только откатом Deployment и запуском CronJob; Secret читается только шаблоном ключей, без `describe` и `--raw` |
 | `a_compose_command_reads_only_the_definition_its_stack_was_brought_up_from` · `a_compose_argv_is_held_to_its_stack_before_it_runs` (Rust) | Каталог, файлы и env-файл compose — из меток стека, и сверка идёт до исполнения |

@@ -35,6 +35,7 @@ import {
 import { isLive, type Tab } from "../stores/tabs.svelte";
 import { notifyError, notifyInfo, notifySuccess } from "../stores/toasts.svelte";
 import type { ServerProfile } from "../types";
+import { tabLoginName } from "../servers/logins";
 
 /** What the page tells the recording flow, each read when it is needed. */
 export interface RecordingDeps {
@@ -100,7 +101,9 @@ export function createRecordingFlow(deps: RecordingDeps) {
       if (srv) {
         env.connectedHost = srv.host;
         env.port = srv.port;
-        if (srv.username) env.username = srv.username;
+        // Whom this tab logged in as (ADR 0074), not the server's first login.
+        const user = tabLoginName(srv, tab.login);
+        if (user) env.username = user;
       }
       try {
         const m = await readMetrics(tab.sessionId);

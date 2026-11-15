@@ -91,12 +91,8 @@
       problem = t("scenarios.recipe.noServers");
       return;
     }
-    if (elevation === "sudoPassword" && !password) {
-      problem = t("scenarios.recipe.noPassword");
-      return;
-    }
     problem = "";
-    onrun({ values: { ...values }, serverIds: [...picked], mode, elevation, password: elevation === "sudoPassword" ? password : null });
+    onrun({ values: { ...values }, serverIds: [...picked], mode, elevation, password: elevation === "sudoPassword" && password ? password : null });
   }
 
   const lines = $derived(recipe.text.replace(/\r\n?/g, "\n").split("\n"));
@@ -196,7 +192,7 @@
             <label class="flex items-center gap-1"><input type="radio" name="elev-{recipe.id}" value={id} bind:group={elevation} />{label}</label>
           {/each}
           {#if elevation === "sudoPassword"}
-            <PasswordInput bind:value={password} placeholder={t("scenarios.recipe.passwordHint")} class="w-48" inputClass="w-full rounded border border-edge bg-panel px-2 py-0.5 text-xs text-text outline-none focus:border-accent" />
+            <PasswordInput bind:value={password} placeholder={t("sudo.passwordOptional")} class="w-72" inputClass="w-full rounded border border-edge bg-panel px-2 py-0.5 text-xs text-text outline-none focus:border-accent" />
           {/if}
         </section>
 

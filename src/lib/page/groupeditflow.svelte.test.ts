@@ -3,15 +3,22 @@ import type { TextFile } from "../types";
 
 const server = vi.hoisted(() => ({
   files: {} as Record<string, string | Error>,
-  reads: [] as [string, boolean, string | undefined][],
+  reads: [] as [string, boolean][],
   writes: [] as unknown[][],
   failWrite: null as Error | null,
+  /** Servers whose own sudo password does not work: a read through sudo asks for one. */
+  sudoWants: new Set<string>(),
+  /** Servers whose sudo will not, whatever the password. */
+  sudoRefuses: new Set<string>(),
+  checks: [] as [string, string | null, boolean][],
 }));
 vi.mock("../api", () => ({
   isFileChangedError: (e: unknown) => String(e).includes("file-changed"),
   annotateRecording: vi.fn(async () => {}),
-  sftpReadText: vi.fn(async (id: string, _path: string, _max: number, sudo?: boolean, password?: string) => {
-    server.reads.push([id, !!sudo, password]);
+  sftpReadText: vi.fn(async (id: string, _path: string, _max: number, sudo?: boolean) => {
+    server.reads.push([id, !!sudo]);
+    if (sudo && server.sudoRefuses.has(id)) throw "sudo-refused: not-allowed: Sorry, user deploy may not run sudo on db.";
+    if (sudo && server.sudoWants.has(id)) throw "sudo-password: nothing";
     const f = server.files[id];
     if (f instanceof Error && !(sudo && f.message === "Permission denied")) throw f;
     const content = f instanceof Error ? "a\nb\nc\nd\ne\n" : f;
@@ -26,6 +33,12 @@ vi.mock("../api", () => ({
       encoding: "windows-1251",
     };
     return file;
+  }),
+  sudoCheck: vi.fn(async (id: string, password: string | null, remember: boolean) => {
+    server.checks.push([id, password, remember]);
+    if (password !== "pw") throw "sudo-rejected: sudo did not accept the password";
+    server.sudoWants.delete(id);
+    return { via: "typed", rememberFailed: false };
   }),
   sftpWriteText: vi.fn(async (...args: unknown[]) => {
     if (server.failWrite) throw server.failWrite;
@@ -67,6 +80,9 @@ describe("editing a file on the group", () => {
     server.reads = [];
     server.writes = [];
     server.failWrite = null;
+    server.sudoWants.clear();
+    server.sudoRefuses.clear();
+    server.checks = [];
     saved = true;
     saves = 0;
     heard = captureDiag();
@@ -86,19 +102,49 @@ describe("editing a file on the group", () => {
     ]);
   });
 
-  it("reads again through sudo where it could not, and writes there through sudo", async () => {
+  it("reads again through sudo where it could not — the server's own sudo first — and writes there through sudo", async () => {
     const flow = createGroupEditFlow(deps());
     flow.open("lead", doc());
     await settle();
-    flow.sudo("pw");
+    flow.sudo("");
     await settle();
-    expect(server.reads.at(-1)).toEqual(["db", true, "pw"]);
+    expect(server.reads.at(-1)).toEqual(["db", true]);
+    expect(server.checks).toEqual([]);
     const db = flow.ask?.hosts.find((h) => h.id === "db");
     expect(db?.edit).toMatchObject({ kind: "patched", outcome: "clean", sudo: true });
     expect(db?.picked).toBe(true);
     await flow.apply(doc());
     const dbWrite = server.writes.find((w) => w[0] === "db");
-    expect(dbWrite?.[5]).toMatchObject({ sudo: true, sudoPassword: "pw" });
+    expect(dbWrite?.[5]).toEqual({ sudo: true, backup: true, encoding: "windows-1251" });
+  });
+
+  it("the typed password goes only where the server's own does not work, and is not remembered", async () => {
+    server.sudoWants.add("db");
+    const flow = createGroupEditFlow(deps());
+    flow.open("lead", doc());
+    await settle();
+    flow.sudo("");
+    await settle();
+    expect(flow.ask?.hosts.find((h) => h.id === "db")?.edit).toEqual({ kind: "denied", sudo: { kind: "password", tried: "nothing" } });
+    flow.sudo("pw");
+    await settle();
+    expect(server.checks).toEqual([["db", "pw", false]]);
+    expect(flow.ask?.hosts.find((h) => h.id === "db")?.edit).toMatchObject({ kind: "patched", sudo: true });
+  });
+
+  it("a server whose sudo will not is said on its row and not tried again", async () => {
+    server.sudoRefuses.add("db");
+    const flow = createGroupEditFlow(deps());
+    flow.open("lead", doc());
+    await settle();
+    flow.sudo("pw");
+    await settle();
+    expect(flow.ask?.hosts.find((h) => h.id === "db")?.edit).toMatchObject({ kind: "denied", sudo: { kind: "refused", why: "not-allowed" } });
+    const reads = server.reads.length;
+    flow.sudo("pw");
+    await settle();
+    expect(server.reads.length).toBe(reads);
+    expect(server.checks).toEqual([]);
   });
 
   it("saves the source first, then writes each ticked copy against the hash it was read with", async () => {
@@ -108,7 +154,7 @@ describe("editing a file on the group", () => {
     await flow.apply(doc());
     expect(saves).toBe(1);
     expect(server.writes).toEqual([
-      ["web2", "/etc/app.conf", EDITED, "lf", "sha-web2", { sudo: false, sudoPassword: undefined, backup: true, encoding: "windows-1251" }],
+      ["web2", "/etc/app.conf", EDITED, "lf", "sha-web2", { sudo: false, backup: true, encoding: "windows-1251" }],
     ]);
     expect(flow.ask?.done).toBe(true);
     expect(flow.ask?.hosts[0].edit).toEqual({ kind: "written" });

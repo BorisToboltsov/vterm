@@ -37,6 +37,8 @@ export interface ServerProfile {
   keyPath: string | null;
   /** Whether a password is stored for this profile in the OS keychain. */
   hasSavedPassword: boolean;
+  /** Whether a sudo password is stored for this server in the keychain (ADR 0073). */
+  hasSavedSudo: boolean;
   /** Optional group/folder for organizing the server list. */
   group: string | null;
   /** Free-form tags for filtering/search. */
@@ -65,6 +67,58 @@ export interface ServerProfile {
   icon: string;
   /** Colour key tinting the pictogram (see servericons.ts); "" = muted. */
   iconColor: string;
+  /** The server's other logins (ADR 0074); the profile's own `username`/
+   *  `authMethod`/`keyPath` are its first login, id `""`. */
+  logins: ServerLogin[];
+  /** The login a plain "Connect" uses: `""` — the first; an id of `logins`. */
+  defaultLogin: string;
+  /** Ask which login on every connect. */
+  askLogin: boolean;
+}
+
+/** Another login of a server (mirrors model.rs `ServerLogin`). */
+export interface ServerLogin {
+  id: string;
+  username: string;
+  authMethod: AuthMethod;
+  keyPath: string | null;
+  hasSavedPassword: boolean;
+  hasSavedSudo: boolean;
+}
+
+/** Which login a tab connects with (model.rs `LoginChoice`): a saved one
+ *  (`""` — the profile's own), or a user typed for this connection only. */
+export type TabLogin = { id: string } | { once: string };
+
+/** Why sudo will not, whatever the password (mirrors sudo.rs `Refusal`). */
+export type SudoRefusal =
+  | "not-allowed"
+  | "command-refused"
+  | "no-sudo"
+  | "needs-tty"
+  | "account-locked"
+  | "password-expired"
+  | "no-answer"
+  | "other";
+
+/** Which saved password sudo already turned down this session (sudo.rs `Tried`). */
+export type SudoTried = "nothing" | "saved" | "login";
+
+/** Where the password sudo took came from (sudo.rs `Via`). */
+export type SudoVia = "none" | "typed" | "saved" | "login";
+
+/** What is known of sudo on a session before a password is tried (sudo.rs `Route`). */
+export type SudoRoute =
+  | { kind: "ready"; via: SudoVia }
+  | { kind: "saved"; from: "saved" | "login" }
+  | { kind: "password"; tried: SudoTried }
+  | { kind: "refused"; why: SudoRefusal; said: string };
+
+/** A check that got sudo going (commands/sudo.rs `SudoChecked`). */
+export interface SudoChecked {
+  via: SudoVia;
+  /** The typed password was not saved in the keychain: it will be asked again. */
+  rememberFailed: boolean;
 }
 
 /** A remote file/directory entry from SFTP (mirrors sftp.rs FileEntry). */
@@ -149,6 +203,10 @@ export interface NewServerProfile {
   pathSync: string | null;
   icon: string;
   iconColor: string;
+  /** The other logins (ADR 0074); a new one's id is named by the form. */
+  logins: Pick<ServerLogin, "id" | "username" | "authMethod" | "keyPath">[];
+  defaultLogin: string;
+  askLogin: boolean;
 }
 
 /** Metadata about a stored session recording (from its asciicast header). */

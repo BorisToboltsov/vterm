@@ -44,6 +44,7 @@
   import { notifyError, notifySuccess } from "../stores/toasts.svelte";
   import Icon from "../ui/Icon.svelte";
   import { t } from "../i18n";
+  import { REFUSAL_HINT, REFUSAL_TITLE, sudoBadge } from "../sudo/sudo";
 
   let {
     sessionId,
@@ -53,6 +54,8 @@
     onCheckSudo,
     onSaveWithSudo,
     onSaveCopy,
+    openAs = [],
+    onOpenAs,
     onDismissSaveIssue,
     onLintMissing,
     groupServers = null,
@@ -70,6 +73,9 @@
     onCheckSudo?: () => void;
     onSaveWithSudo?: () => void;
     onSaveCopy?: () => void;
+    /** The server's other logins this file can be opened as when sudo will not (ADR 0074). */
+    openAs?: { id: string; username: string }[];
+    onOpenAs?: (loginId: string) => void;
     onDismissSaveIssue?: () => void;
     /** Server linter isn't installed — let the page offer to install it. */
     onLintMissing?: (tool: string) => void;
@@ -350,9 +356,9 @@
     try {
       const res = await lintRemote(sessionId, doc.content, doc.lang.kind, {
         name: doc.name,
-        // sshd -t needs root to read host keys — reuse the same sudo password the
-        // file was opened-as-root with (never a fresh prompt just to lint).
-        sudoPassword: doc.sudo ? doc.sudoPassword : undefined,
+        // sshd -t needs root to read host keys — under sudo when the file is
+        // edited as root, with what sudo took (never a fresh prompt just to lint).
+        sudo: doc.sudo,
       });
       if (!res.found) {
         lintMessages = null;
@@ -530,6 +536,19 @@
   });
 
   onDestroy(() => view?.destroy());
+
+  /** The colour of the sudo badge's tone, from the theme's tokens. */
+  const BADGE_TONE = {
+    muted: "border-transparent text-muted",
+    accent: "border-accent/50 text-accent",
+    warn: "border-warn/50 text-warn",
+    danger: "border-bad/50 text-bad",
+  } as const;
+
+  /** sudo will not: the Save button offers the copy instead (the change is kept). */
+  const sudoRefused = $derived(
+    doc.source === "sftp" && !doc.sudo && doc.writeAccess === "restricted" && doc.sudoRoute?.kind === "refused",
+  );
 </script>
 
 <div class="flex h-full flex-col">
@@ -545,14 +564,32 @@
         {t("editor.readOnly")}
       </span>
     {/if}
+    {#if doc.sudo}
+      <!-- Edited and saved as root (ADR 0073): never quietly. -->
+      <span
+        class="shrink-0 rounded bg-warn/15 px-1.5 py-0.5 text-caption text-warn"
+        data-testid="editor-root"
+        use:tooltip={t("sudo.rootHint")}
+      >{t("sudo.root")}</span>
+    {/if}
     <div class="ml-auto flex shrink-0 items-center gap-2">
       {#if doc.source === "sftp" && !doc.sudo && doc.writeAccess === "restricted"}
-        <button
-          class="shrink-0 rounded border border-warn/50 px-1.5 py-0.5 text-caption text-warn hover:bg-edge"
-          use:tooltip={t("editor.checkSudo")}
-          aria-label={t("editor.checkSudo")}
-          onclick={() => onCheckSudo?.()}
-        >{t("editor.writeNeedsAccess")}</button>
+        <!-- What saving it will take (ADR 0073): asked on open, not found at Save. -->
+        {@const badge = sudoBadge(doc.sudoRoute)}
+        {#if badge.acts}
+          <button
+            class="shrink-0 rounded border px-1.5 py-0.5 text-caption hover:bg-edge {BADGE_TONE[badge.tone]}"
+            data-testid="editor-sudo-badge"
+            use:tooltip={t("sudo.elevate")}
+            onclick={() => onCheckSudo?.()}
+          >{#if doc.sudoRoute?.kind === "saved"}<Icon name="key" size={11} class="mr-1 inline" />{/if}{t(badge.key)}</button>
+        {:else}
+          <span
+            class="shrink-0 rounded border px-1.5 py-0.5 text-caption {BADGE_TONE[badge.tone]}"
+            data-testid="editor-sudo-badge"
+            use:tooltip={doc.sudoRoute?.kind === "refused" ? `${t(REFUSAL_HINT[doc.sudoRoute.why])} ${doc.sudoRoute.said}`.trim() : t(badge.key)}
+          >{#if doc.sudoRoute?.kind === "refused"}<Icon name="lock" size={11} class="mr-1 inline" />{/if}{t(badge.key)}</span>
+        {/if}
       {:else if doc.source === "sftp" && !doc.sudo && doc.writeAccess === "checking"}
         <span class="shrink-0 text-caption text-muted">{t("editor.accessChecking")}</span>
       {:else if doc.source === "sftp" && !doc.sudo && doc.writeAccess === "unknown"}
@@ -707,34 +744,69 @@
           {t("groupEdit.button")}
         </button>
       {/if}
-      <button
-        class="flex items-center gap-1 rounded px-2 py-0.5 text-muted hover:bg-edge hover:text-text disabled:opacity-40"
-        use:tooltip={t("editor.save")}
-        aria-label={t("editor.save")}
-        disabled={doc.readOnly || saving || doc.content === doc.baseContent}
-        onclick={() => onsave?.()}
-      >
-        <Icon name="save" size={13} />
-        {t("editor.save")}
-      </button>
+      {#if sudoRefused}
+        <!-- sudo will not write it: the way out is the copy, not a Save that cannot land. -->
+        <button
+          class="flex items-center gap-1 rounded px-2 py-0.5 text-muted hover:bg-edge hover:text-text disabled:opacity-40"
+          data-testid="editor-save-copy"
+          disabled={doc.content === doc.baseContent}
+          onclick={() => onSaveCopy?.()}
+        >
+          <Icon name="copy" size={13} />
+          {t("editor.saveCopy")}
+        </button>
+      {:else}
+        <button
+          class="flex items-center gap-1 rounded px-2 py-0.5 text-muted hover:bg-edge hover:text-text disabled:opacity-40"
+          use:tooltip={t("editor.save")}
+          aria-label={t("editor.save")}
+          disabled={doc.readOnly || saving || doc.content === doc.baseContent}
+          onclick={() => onsave?.()}
+        >
+          <Icon name="save" size={13} />
+          {t("editor.save")}
+        </button>
+      {/if}
     </div>
     {#if doc.saveIssue !== "none"}
+      {@const refusal = doc.saveIssue === "sudo" && doc.sudoRoute?.kind === "refused" ? doc.sudoRoute : null}
       <div
         class="absolute right-1 top-full z-30 mt-1 w-64 max-w-[calc(100%-0.5rem)] rounded border border-edge bg-panel-alt p-3 shadow-lg"
         role="alert"
       >
         <div class="flex items-start justify-between gap-2">
-          <strong class="text-xs text-text">{doc.saveIssue === "sudo" ? t("editor.sudoUnavailable") : t("editor.saveFailed")}</strong>
+          <strong class="text-xs {refusal ? 'text-bad' : 'text-text'}" data-testid="editor-save-issue">
+            {refusal ? t(REFUSAL_TITLE[refusal.why]) : t("editor.saveFailed")}
+          </strong>
           <button
             class="text-muted hover:text-text"
             aria-label={t("common.dismiss")}
             onclick={() => onDismissSaveIssue?.()}
           ><Icon name="close" size={13} /></button>
         </div>
+        {#if refusal}
+          <p class="mt-1 text-xs text-muted">{t(REFUSAL_HINT[refusal.why])}</p>
+        {/if}
         <p class="mt-1 text-xs text-muted">{t("editor.changesKept")}</p>
+        {#if refusal?.said}
+          <details class="mt-1 text-meta text-muted">
+            <summary class="cursor-pointer text-accent">{t("sudo.serverSaid")}</summary>
+            <p class="mt-1 break-words font-mono" data-testid="editor-sudo-said">{refusal.said}</p>
+          </details>
+        {/if}
         <div class="mt-3 flex flex-wrap gap-2">
           {#if doc.saveIssue === "permission" && doc.source === "sftp" && !doc.sudo}
             <button class="rounded bg-accent px-2 py-1 text-caption text-panel-alt" onclick={() => onSaveWithSudo?.()}>{t("editor.saveWithSudo")}</button>
+          {/if}
+          {#if refusal}
+            <!-- sudo will not here: the same file under another login of the server (ADR 0074). -->
+            {#each openAs.slice(0, 2) as l (l.id)}
+              <button
+                class="flex items-center gap-1 rounded bg-accent px-2 py-1 text-caption text-panel-alt"
+                data-testid="editor-open-as"
+                onclick={() => onOpenAs?.(l.id)}
+              ><Icon name="users" size={12} />{t("logins.openAs", { user: l.username })}</button>
+            {/each}
           {/if}
           <button class="rounded border border-edge px-2 py-1 text-caption text-text hover:bg-edge" onclick={() => onSaveCopy?.()}>{t("editor.saveCopy")}</button>
         </div>

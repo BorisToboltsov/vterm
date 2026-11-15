@@ -48,6 +48,7 @@ import {
   type TabDrop,
 } from "../layout/splitlayout";
 import type { TabAttach } from "../tabs/tabattach";
+import type { TabLogin } from "../types";
 import type { TermSnapshot } from "../windows/tabhandoff";
 import type { SavedTab, WaitReason } from "../tabs/tabrestore";
 
@@ -59,6 +60,9 @@ export interface Tab {
   serverId: string;
   /** Snapshot of the server alias at open time (UI falls back to it). */
   alias: string;
+  /** Which login the tab connects with (ADR 0074); absent — the server's default
+   *  one, whatever it is at the time. */
+  login?: TabLogin;
   /** Just-typed secret, or null to use the keychain (unused for local). */
   secret: string | null;
   remember: boolean;
@@ -192,7 +196,7 @@ export const monitoredSessionId = (
 ): string | null => (tab && isMonitorable(tab) ? tab.sessionId : null);
 
 /** What a Cmd/Ctrl+T should open (Phase 20.15). */
-export type NewTabAction = { kind: "ssh"; serverId: string } | { kind: "local" };
+export type NewTabAction = { kind: "ssh"; serverId: string; login?: TabLogin } | { kind: "local" };
 
 /**
  * Decide what Cmd/Ctrl+T opens: a fresh tab of the active server when the active
@@ -201,9 +205,10 @@ export type NewTabAction = { kind: "ssh"; serverId: string } | { kind: "local" }
  * the DOM/store; the page resolves the server id and does the actual open (ADR 0003).
  */
 export function newTabAction(
-  activeTab: Pick<Tab, "kind" | "serverId"> | null | undefined,
+  activeTab: Pick<Tab, "kind" | "serverId" | "login"> | null | undefined,
 ): NewTabAction {
-  if (activeTab?.kind === "ssh") return { kind: "ssh", serverId: activeTab.serverId };
+  // Another tab of the same server is another tab of the same login (ADR 0074).
+  if (activeTab?.kind === "ssh") return { kind: "ssh", serverId: activeTab.serverId, ...(activeTab.login ? { login: activeTab.login } : {}) };
   return { kind: "local" };
 }
 
@@ -338,12 +343,14 @@ export function openTab(
   secret: string | null,
   remember: boolean,
   attach?: TabAttach,
+  login?: TabLogin,
 ): string {
   const tab: Tab = {
     sessionId: crypto.randomUUID(),
     kind: "ssh",
     serverId,
     alias,
+    ...(login ? { login } : {}),
     secret,
     remember,
     status: "connecting",
@@ -455,9 +462,9 @@ export function reconnectTab(sessionId: string): void {
  * tab whose server asks for a password stays in its pane instead of being
  * replaced by a new tab somewhere else.
  */
-export function connectTabWith(sessionId: string, secret: string, remember: boolean): void {
+export function connectTabWith(sessionId: string, secret: string | null, remember: boolean, login?: TabLogin): void {
   if (!list.some((t) => t.sessionId === sessionId)) return;
-  list = list.map((t) => (t.sessionId === sessionId ? { ...t, secret, remember } : t));
+  list = list.map((t) => (t.sessionId === sessionId ? { ...t, secret, remember, ...(login ? { login } : {}) } : t));
   reconnectTab(sessionId);
 }
 
@@ -500,6 +507,7 @@ export function openRestored(
         gen: 0,
       };
       if (s.attach) tab.attach = s.attach;
+      if (s.login) tab.login = s.login;
       if (waiting !== null) tab.waiting = waiting;
       if (s.shellCwd) tab.startDir = s.shellCwd;
       const replay = extras.replay?.(s.id);

@@ -46,24 +46,29 @@ vi.mock("../api/diag", () => ({
     diag.level = level;
     return diagStateOf();
   },
-  diagQuery: async () => ({
-    events: [
-      { at: Date.now(), level: "warn", source: "docker", server: "prod-db", text: "poll failed: exec channel failed", count: 4 },
-      { at: Date.now() - 1, level: "error", source: "connection", text: "login failed", shown: true, fields: { method: "password" } },
-      {
-        at: Date.now() - 2,
-        level: "info",
-        source: "settings",
-        text: "diagnostics threshold changed: info -> warn (only warnings and errors are written from now on)",
-        code: "threshold",
-        fields: { from: "info", to: "warn" },
-      },
-    ],
-    more: true,
-    counts: { level: { warn: 1, error: 1 }, source: { docker: 1, connection: 1 }, server: { "prod-db": 1 } },
-    total: 40,
-    unreadable: 0,
-  }),
+  // One clock reading for the three: read three times, a slow runner's clock
+  // moved between the calls and the order of the events with it.
+  diagQuery: async () => {
+    const now = Date.now();
+    return {
+      events: [
+        { at: now, level: "warn", source: "docker", server: "prod-db", text: "poll failed: exec channel failed", count: 4 },
+        { at: now - 1, level: "error", source: "connection", text: "login failed", shown: true, fields: { method: "password" } },
+        {
+          at: now - 2,
+          level: "info",
+          source: "settings",
+          text: "diagnostics threshold changed: info -> warn (only warnings and errors are written from now on)",
+          code: "threshold",
+          fields: { from: "info", to: "warn" },
+        },
+      ],
+      more: true,
+      counts: { level: { warn: 1, error: 1 }, source: { docker: 1, connection: 1 }, server: { "prod-db": 1 } },
+      total: 40,
+      unreadable: 0,
+    };
+  },
   diagSetSize: async (sizeMb: number) => {
     diag.sizes.push(sizeMb);
     diag.sizeMb = sizeMb;

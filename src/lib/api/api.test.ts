@@ -86,7 +86,7 @@ describe("invoke wrappers pass the right command + args", () => {
   });
 
   it("connectSession spreads the options object into flat args", async () => {
-    await api.connectSession("sess", "srv", "pw", true, 80, 24, {
+    await api.connectSession("sess", "srv", { id: "dep" }, "pw", true, 80, 24, {
       termType: "xterm-256color",
       connectTimeout: 10,
       keepaliveInterval: 15,
@@ -95,6 +95,7 @@ describe("invoke wrappers pass the right command + args", () => {
     expect(invoke).toHaveBeenCalledWith("connect_session", {
       sessionId: "sess",
       serverId: "srv",
+      login: { id: "dep" },
       secret: "pw",
       remember: true,
       cols: 80,
@@ -157,11 +158,14 @@ describe("invoke wrappers pass the right command + args", () => {
       sessionId: "sess",
       path: "/etc/app.conf",
     });
-    await api.sftpCheckSudo("sess", "password");
-    expect(invoke).toHaveBeenCalledWith("sftp_check_sudo", {
+    await api.sudoCheck("sess", "password", true);
+    expect(invoke).toHaveBeenCalledWith("sudo_check", {
       sessionId: "sess",
       password: "password",
+      remember: true,
     });
+    await api.sudoRoute("sess");
+    expect(invoke).toHaveBeenCalledWith("sudo_route", { sessionId: "sess" });
     await api.saveEditorCopy("/tmp/app.conf", "data\n", "crlf", "utf-8-bom");
     expect(invoke).toHaveBeenCalledWith("save_editor_copy", {
       path: "/tmp/app.conf",
@@ -251,26 +255,23 @@ describe("invoke wrappers pass the right command + args", () => {
   it("server tools commands", async () => {
     await api.serverToolsStatus("sess");
     expect(invoke).toHaveBeenCalledWith("server_tools_status", { sessionId: "sess" });
-    await api.runToolInstall("sess", "sudo apt-get install -y shellcheck", "pw");
+    await api.runToolInstall("sess", "sudo apt-get install -y shellcheck");
     expect(invoke).toHaveBeenCalledWith("run_tool_install", {
       sessionId: "sess",
       command: "sudo apt-get install -y shellcheck",
-      sudoPassword: "pw",
     });
   });
 
-  it("sftpReadText/WriteText forward sudo + backup options", async () => {
-    await api.sftpReadText("s", "/etc/sudoers", 2048, true, "pw");
+  it("sftpReadText/WriteText forward sudo + backup options, and never a password", async () => {
+    await api.sftpReadText("s", "/etc/sudoers", 2048, true);
     expect(invoke).toHaveBeenCalledWith("sftp_read_text", {
       sessionId: "s",
       path: "/etc/sudoers",
       maxBytes: 2048,
       sudo: true,
-      sudoPassword: "pw",
     });
     await api.sftpWriteText("s", "/etc/hosts", "x\n", "lf", "sha", {
       sudo: true,
-      sudoPassword: "pw",
       backup: true,
     });
     expect(invoke).toHaveBeenCalledWith("sftp_write_text", {
@@ -280,7 +281,6 @@ describe("invoke wrappers pass the right command + args", () => {
       eol: "lf",
       expectedSha256: "sha",
       sudo: true,
-      sudoPassword: "pw",
       backup: true,
     });
   });
@@ -348,6 +348,9 @@ describe("remaining invoke wrappers", () => {
     invoke.mockResolvedValue(undefined);
     const cases: [Promise<unknown>, string, Record<string, unknown>][] = [
       [api.forgetSecrets("id1"), "forget_secrets", { id: "id1" }],
+      [api.forgetLoginSecret("id1"), "forget_login_secret", { id: "id1", login: "" }],
+      [api.forgetLoginSecret("id1", "dep"), "forget_login_secret", { id: "id1", login: "dep" }],
+      [api.addServerLogin("id1", "ops"), "add_server_login", { serverId: "id1", username: "ops" }],
       [api.listFolders(), "list_folders", undefined as never],
       [api.readClipboardText(), "read_clipboard_text", undefined as never],
       [
@@ -372,7 +375,8 @@ describe("remaining invoke wrappers", () => {
       [api.tabContentKeepOnly([]), "tab_content_keep_only", { sessionIds: [] }],
       [api.shellExists("pwsh.exe"), "shell_exists", { program: "pwsh.exe" }],
       [api.deleteFolder("Prod"), "delete_folder", { path: "Prod" }],
-      [api.connectPlan("id1"), "connect_plan", { id: "id1" }],
+      [api.connectPlan("id1"), "connect_plan", { id: "id1", login: null }],
+      [api.connectPlan("id1", { once: "ops" }), "connect_plan", { id: "id1", login: { once: "ops" } }],
       [api.resizePty("s", 80, 24), "resize_pty", { sessionId: "s", cols: 80, rows: 24 }],
       [api.disconnect("s"), "disconnect", { sessionId: "s" }],
       [api.fetchMetrics("s"), "fetch_metrics", { sessionId: "s" }],

@@ -5,14 +5,17 @@
 
 import type { TextFile } from "../types";
 import { applyHunks, type Hunk, type Outcome } from "./linepatch";
+import type { SudoAnswer } from "../sudo/sudo";
 
 /** Where a member stands. */
 export type HostEdit =
   | { kind: "reading" }
   /** No file at that path there. Nothing is created on a server without being asked. */
   | { kind: "missing" }
-  /** The file could not be read as this user — sudo can. */
-  | { kind: "denied" }
+  /** The file could not be read as this user — sudo can. `sudo` — what sudo
+   *  answered a read through it (ADR 0073): a password still wanted, a wrong
+   *  one, or its refusal; absent — not tried yet. */
+  | { kind: "denied"; sudo?: SudoAnswer }
   /** Read, but not as text (binary, too large) or another failure — with its reason. */
   | { kind: "failed"; error: string }
   /** Read and patched. `text` — what would be written; null for a conflict. */
@@ -50,6 +53,12 @@ export interface EditAsk {
 }
 
 /** What a failed read says about the member's file. */
+/** Whether a read through sudo is worth trying on this copy: no read access,
+ *  and sudo has not refused it outright. */
+export function sudoCanTry(h: HostEdit): boolean {
+  return h.kind === "denied" && h.sudo?.kind !== "refused";
+}
+
 export function readFailure(error: string): HostEdit {
   if (/no such file|not found|does not exist/i.test(error)) return { kind: "missing" };
   if (/permission denied/i.test(error)) return { kind: "denied" };

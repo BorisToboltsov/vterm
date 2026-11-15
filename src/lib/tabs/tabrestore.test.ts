@@ -130,6 +130,25 @@ describe("reading a slot back", () => {
     expect(read?.tabs).toEqual(tabs.map((t) => savedTab(t)));
   });
 
+  it("a tab comes back with the login it connected with — who, never a secret (ADR 0074)", () => {
+    const tabs = [tab({ login: { id: "dep" } }), tab({ sessionId: "s2", login: { once: "ops" } }), tab({ sessionId: "s3" })];
+    const read = parseSavedWindow(slot(tabs));
+    expect(read?.tabs.map((t) => t.login)).toEqual([{ id: "dep" }, { once: "ops" }, undefined]);
+    expect(savedTab(tab({ kind: "local", serverId: "", login: { id: "dep" } })).login).toBeUndefined();
+  });
+
+  it("a login the backend would not take is left out, the tab comes back with the default", () => {
+    const raw = slot([tab({ login: { id: "dep" } })]) as { tabs: { login: unknown }[] };
+    raw.tabs[0].login = { id: "a::b" };
+    expect(parseSavedWindow(raw)?.tabs[0].login).toBeUndefined();
+    raw.tabs[0].login = { once: "a b" };
+    expect(parseSavedWindow(raw)?.tabs[0].login).toBeUndefined();
+    raw.tabs[0].login = "dep";
+    expect(parseSavedWindow(raw)?.tabs[0].login).toBeUndefined();
+    raw.tabs[0].login = { id: "" };
+    expect(parseSavedWindow(raw)?.tabs[0].login).toEqual({ id: "" });
+  });
+
   it("is not a slot: another version, no tab list, not an object", () => {
     expect(parseSavedWindow(null)).toBeNull();
     expect(parseSavedWindow("tabs")).toBeNull();
@@ -333,7 +352,7 @@ describe("where a tab was (v1.36)", () => {
     loading: false,
     loadError: null,
     sudo: false,
-    sudoPassword: "",
+    sudoRoute: null,
     gotoLine: null,
     ...over,
   });
@@ -367,7 +386,7 @@ describe("where a tab was (v1.36)", () => {
 
   it("a file opened through sudo, a diff against a commit and an unsaved buffer stay behind", () => {
     const editors = [
-      doc({ id: "a", sudo: true, sudoPassword: "hunter2" }),
+      doc({ id: "a", sudo: true }),
       doc({ id: "b", gitBase: "old text" }),
       doc({ id: "c", path: "script.sh", name: "script.sh", baseSha256: "" }),
       doc({ id: "d", source: "local", path: "C:\\Users\\me\\notes.txt", name: "notes.txt" }),

@@ -83,6 +83,12 @@ describe("sshErrorView", () => {
     expect(v.phase).toBe("proxyAuthenticating");
   });
 
+  it("a login removed from the profile asks for another, not a retry (ADR 0074)", () => {
+    const v = sshErrorView("Error: login-gone: this login is no longer in the server's profile", "connecting");
+    expect(v.titleKey).toBe("logins.gone");
+    expect(v.action).toBe("pickLogin");
+  });
+
   it("maps a cancelled login to a plain reconnect, not a failure to retype", () => {
     const v = sshErrorView("Error: auth-cancelled: login cancelled", "authenticating");
     expect(v.titleKey).toBe("connecting.authCancelled");

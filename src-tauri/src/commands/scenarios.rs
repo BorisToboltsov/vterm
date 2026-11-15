@@ -10,7 +10,7 @@ use crate::scenarios::{self, Elevation, TempChunk, TempFile};
 use crate::{exec, register_cancel, session_arc, AppState};
 use tauri::State;
 
-/// Run a recipe on an SSH session: the script on stdin (with the sudo
+/// Run a recipe on an SSH session: the script on stdin (with the session's sudo
 /// password's line before it when `elevation` asks for one), through the fixed
 /// wrapper of `scenarios::run_command`. `name` and `mode` only label the run
 /// for the recording and the diagnostics — the script itself is never written
@@ -25,12 +25,21 @@ pub async fn recipe_run(
     mode: String,
     script: String,
     elevation: Elevation,
-    password: Option<String>,
     timeout_secs: u64,
     cancel_id: String,
 ) -> AppResult<exec::ExecOutput> {
-    let password = password.map(zeroize::Zeroizing::new);
     let session = session_arc(&state, &session_id).await?;
+    // sudo with a password: the session's (ADR 0073) — typed into the run's form
+    // and given to `sudo_check` first, saved, or the login's. sudo that wants
+    // none runs the recipe as `sudo -n`.
+    let (elevation, password) = if elevation == Elevation::SudoPassword {
+        match super::sudo::sudo_password(&state, &session_id, &session).await? {
+            Some(pw) => (Elevation::SudoPassword, Some(pw)),
+            None => (Elevation::Sudo, None),
+        }
+    } else {
+        (elevation, None)
+    };
     let stdin = scenarios::run_stdin(elevation, password.as_deref().map(String::as_str), &script)?;
     let timeout = timeout_secs.clamp(1, scenarios::MAX_RUN_SECS);
     let cancel = register_cancel(&state, &cancel_id);

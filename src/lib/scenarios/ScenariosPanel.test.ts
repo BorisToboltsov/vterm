@@ -69,6 +69,10 @@ const server = (id: string, prod = false): ServerProfile => ({
   authMethod: "key",
   keyPath: null,
   hasSavedPassword: false,
+  hasSavedSudo: false,
+  logins: [],
+  defaultLogin: "",
+  askLogin: false,
   group: "web",
   tags: [],
   prod,
@@ -167,7 +171,7 @@ describe("Scenarios panel", () => {
     await waitFor(() => expect(env.runs.filter((r) => r.mode === "apply")).toHaveLength(2));
   });
 
-  it("asks for a required value and a sudo password before a run", async () => {
+  it("asks for a required value before a run — a sudo password it does not demand", async () => {
     show();
     await fireEvent.click(await screen.findByText("Greet"));
     const detail = await screen.findByTestId("recipe-detail");
@@ -176,8 +180,10 @@ describe("Scenarios panel", () => {
     expect(within(detail).getByRole("alert")).toHaveTextContent("«Who» is needed");
     await fireEvent.input(within(detail).getByLabelText(/Who/), { target: { value: "me" } });
     await fireEvent.click(within(detail).getByLabelText("sudo with a password"));
+    // Empty: each server's saved sudo password, or its login's (ADR 0073).
+    expect(within(detail).getByPlaceholderText(/Leave empty/)).toBeInTheDocument();
     await fireEvent.click(within(detail).getByTestId("recipe-run"));
-    expect(within(detail).getByRole("alert")).toHaveTextContent("Enter the sudo password");
+    expect(within(detail).queryByRole("alert")).toBeNull();
   });
 
   it("every recipe of «Mine» is edited and deleted, the shipped ones too; a folder's is copied into «Mine»", async () => {

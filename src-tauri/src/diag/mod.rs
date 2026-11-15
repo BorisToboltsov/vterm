@@ -1140,7 +1140,9 @@ mod tests {
 
     #[test]
     fn a_field_is_a_secret_by_its_words_not_by_a_letter_run() {
-        for secret in [
+        // Field names, not values — and named so: CodeQL reads a variable called
+        // `secret` that reaches a panic message as a secret written to a log.
+        for field_name in [
             "password",
             "db_password",
             "accessToken",
@@ -1149,7 +1151,10 @@ mod tests {
             "private_key",
             "cookie",
         ] {
-            assert!(is_secret_field(secret), "{secret}");
+            assert!(
+                is_secret_field(field_name),
+                "a field named {field_name} reads as a secret's"
+            );
         }
         for plain in ["tokens_in", "passed", "keys", "path", "bypass", "key_id"] {
             assert!(!is_secret_field(plain), "{plain}");

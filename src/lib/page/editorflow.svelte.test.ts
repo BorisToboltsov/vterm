@@ -12,7 +12,8 @@ const api = vi.hoisted(() => {
     sftpWriteText: vi.fn(),
     writeLocalText: vi.fn(),
     sftpWriteAccess: vi.fn(async () => "writable"),
-    sftpCheckSudo: vi.fn(async () => true),
+    sudoCheck: vi.fn(async () => ({ via: "typed", rememberFailed: false })),
+    sudoRoute: vi.fn(async () => ({ kind: "password", tried: "nothing" }) as unknown),
     nginxConfigFiles: vi.fn(async () => [] as string[]),
     pickSavePath: vi.fn(async () => null as string | null),
     saveEditorCopy: vi.fn(async () => {}),
@@ -31,7 +32,7 @@ import { settings } from "../settings/settings.svelte";
 import { findEditorByPath, getWorkspace, removeWorkspace, setEditorContent } from "../stores/workspaces.svelte";
 import { panes } from "../layout/splitlayout";
 import type { Tab } from "../stores/tabs.svelte";
-import type { TextFile } from "../types";
+import type { ServerProfile, TextFile } from "../types";
 
 const SID = "s1";
 const file = (content: string, over: Partial<TextFile> = {}): TextFile =>
@@ -40,10 +41,14 @@ const file = (content: string, over: Partial<TextFile> = {}): TextFile =>
 /** Let the promises the flow started settle. */
 const settled = () => new Promise((r) => setTimeout(r, 0));
 
-function harness(kind: "ssh" | "local" = "ssh") {
+function harness(kind: "ssh" | "local" = "ssh", prod = false) {
   let flow!: EditorFlow;
+  const server = { id: "srv", alias: "web", username: "deploy", prod, tags: [] } as unknown as ServerProfile;
   const cleanup = $effect.root(() => {
-    flow = createEditorFlow({ findTab: (id) => (id === SID ? ({ sessionId: SID, kind } as Tab) : null) });
+    flow = createEditorFlow({
+      findTab: (id) => (id === SID ? ({ sessionId: SID, kind } as Tab) : null),
+      serverOf: (id) => (id === SID ? server : null),
+    });
   });
   flushSync();
   return { flow, cleanup };
@@ -118,16 +123,60 @@ describe("editor flow: opening", () => {
     api.sftpReadText.mockRejectedValueOnce(new api.Denied("permission denied"));
     const { flow, cleanup } = harness();
     await flow.openFile(SID, "/etc/shadow", "shadow", { gotoLine: 3, gotoColumn: 9 });
+    await settled();
     expect(doc("/etc/shadow")).toBeNull();
-    expect(flow.sudo).toEqual({ kind: "open", sid: SID, path: "/etc/shadow", name: "shadow", gotoLine: 3, gotoColumn: 9 });
+    expect(flow.sudo).toMatchObject({ kind: "open", sid: SID, path: "/etc/shadow", gotoLine: 3, gotoColumn: 9, mode: "type" });
     flow.sudoPassword = "pw";
     await flow.confirmSudo();
     await settled();
-    expect(api.sftpReadText).toHaveBeenLastCalledWith(SID, "/etc/shadow", expect.any(Number), true, "pw");
-    expect(doc("/etc/shadow")).toMatchObject({ sudo: true, sudoPassword: "pw", gotoLine: 3, gotoColumn: 9 });
+    // The typed password goes to the check once — remembered by default — and
+    // the read as root takes the session's, never a password of its own.
+    expect(api.sudoCheck).toHaveBeenCalledWith(SID, "pw", true);
+    expect(api.sftpReadText).toHaveBeenLastCalledWith(SID, "/etc/shadow", expect.any(Number), true);
+    expect(doc("/etc/shadow")).toMatchObject({ sudo: true, gotoLine: 3, gotoColumn: 9 });
+    expect(Object.keys(doc("/etc/shadow")!)).not.toContain("sudoPassword");
     // Opened as root: no probe of the user's own access.
     expect(api.sftpWriteAccess).not.toHaveBeenCalled();
     expect(flow.sudoPassword).toBe("");
+    cleanup();
+  });
+
+  it("with sudo that needs no typing, a file it cannot read opens as root at once", async () => {
+    api.sftpReadText.mockRejectedValueOnce(new api.Denied("permission denied"));
+    api.sudoRoute.mockResolvedValueOnce({ kind: "saved", from: "saved" });
+    api.sudoCheck.mockResolvedValueOnce({ via: "saved", rememberFailed: false });
+    const { flow, cleanup } = harness();
+    await flow.openFile(SID, "/etc/shadow", "shadow");
+    await settled();
+    expect(flow.sudo).toBeNull();
+    expect(api.sudoCheck).toHaveBeenCalledWith(SID, null, false);
+    expect(doc("/etc/shadow")).toMatchObject({ sudo: true });
+    cleanup();
+  });
+
+  it("on prod the same takes one explicit yes, naming whose password goes", async () => {
+    api.sftpReadText.mockRejectedValueOnce(new api.Denied("permission denied"));
+    api.sudoRoute.mockResolvedValueOnce({ kind: "saved", from: "login" });
+    const { flow, cleanup } = harness("ssh", true);
+    await flow.openFile(SID, "/etc/shadow", "shadow");
+    await settled();
+    expect(flow.sudo).toMatchObject({ kind: "open", mode: "confirm", source: "login" });
+    expect(flow.sudoWho(SID)).toEqual({ who: "deploy@web", prod: true });
+    expect(api.sudoCheck).not.toHaveBeenCalled();
+    await flow.confirmSudo();
+    await settled();
+    expect(api.sudoCheck).toHaveBeenCalledWith(SID, null, false);
+    expect(doc("/etc/shadow")).toMatchObject({ sudo: true });
+    cleanup();
+  });
+
+  it("a file the user cannot write learns at once what saving it will take", async () => {
+    api.sftpWriteAccess.mockResolvedValueOnce("restricted");
+    api.sudoRoute.mockResolvedValueOnce({ kind: "refused", why: "not-allowed", said: "Sorry, user deploy may not run sudo on web." });
+    const { flow, cleanup } = harness();
+    await flow.openFile(SID, "/etc/app.conf", "app.conf");
+    await settled();
+    expect(doc("/etc/app.conf")?.sudoRoute).toEqual({ kind: "refused", why: "not-allowed", said: "Sorry, user deploy may not run sudo on web." });
     cleanup();
   });
 
@@ -188,33 +237,105 @@ describe("editor flow: saving", () => {
     cleanup();
   });
 
-  it("'save with sudo' checks the password before keeping it, and only then writes", async () => {
+  it("'save with sudo': a wrong password stays in the prompt, said there; a right one writes", async () => {
     const { flow, cleanup } = await opened();
     setEditorContent(SID, doc("/etc/app.conf")!.id, "edited");
-    api.sftpCheckSudo.mockResolvedValueOnce(false);
+    api.sudoCheck.mockRejectedValueOnce("sudo-rejected: sudo did not accept the password");
     flow.askSudo(SID, doc("/etc/app.conf")!, "save");
+    await settled();
     flow.sudoPassword = "wrong";
     await flow.confirmSudo();
     expect(api.sftpWriteText).not.toHaveBeenCalled();
     expect(doc("/etc/app.conf")?.sudo).toBe(false);
-    expect(toasts.notifyError).toHaveBeenCalledTimes(1);
-    flow.askSudo(SID, doc("/etc/app.conf")!, "save");
+    expect(flow.sudo).toMatchObject({ kind: "save", mode: "type", note: "sudo.wrongPassword" });
+    expect(flow.sudoPassword).toBe("");
+    expect(toasts.notifyError).not.toHaveBeenCalled();
+    flow.sudoRemember = false;
     flow.sudoPassword = "right";
     await flow.confirmSudo();
     await settled();
-    expect(api.sftpCheckSudo).toHaveBeenLastCalledWith(SID, "right");
-    expect(api.sftpWriteText).toHaveBeenCalledWith(SID, "/etc/app.conf", "edited", "lf", "sha-a", expect.objectContaining({ sudo: true, sudoPassword: "right" }));
+    expect(api.sudoCheck).toHaveBeenLastCalledWith(SID, "right", false);
+    expect(api.sftpWriteText).toHaveBeenCalledWith(SID, "/etc/app.conf", "edited", "lf", "sha-a", expect.objectContaining({ sudo: true }));
+    expect(flow.sudo).toBeNull();
     cleanup();
   });
 
-  it("a check that fails on an edited file says so by Save rather than in a toast", async () => {
+  it("no sudo rights, asked ahead of editing: said plainly — not «write access needed» again", async () => {
+    const { flow, cleanup } = await opened();
+    api.sudoCheck.mockRejectedValueOnce("sudo-refused: not-allowed: Sorry, user deploy may not run sudo on web.");
+    api.sudoRoute.mockResolvedValueOnce({ kind: "ready", via: "none" });
+    flow.askSudo(SID, doc("/etc/app.conf")!, "check");
+    await settled();
+    expect(doc("/etc/app.conf")?.sudoRoute).toMatchObject({ kind: "refused", why: "not-allowed" });
+    expect(toasts.notifyError).toHaveBeenCalledWith(expect.stringContaining("No sudo rights"), expect.objectContaining({ source: "editor" }));
+    expect(toasts.notifyError).toHaveBeenCalledWith(expect.stringContaining("may not run sudo"), expect.anything());
+    expect(flow.sudo).toBeNull();
+    cleanup();
+  });
+
+  it("the same on an edited file is said by Save, with the edits kept", async () => {
     const { flow, cleanup } = await opened();
     setEditorContent(SID, doc("/etc/app.conf")!.id, "edited");
-    api.sftpCheckSudo.mockResolvedValueOnce(false);
+    api.sudoRoute.mockResolvedValueOnce({ kind: "ready", via: "none" });
+    api.sudoCheck.mockRejectedValueOnce("sudo-refused: not-allowed: Sorry, user deploy may not run sudo on web.");
     flow.askSudo(SID, doc("/etc/app.conf")!, "check");
-    await flow.confirmSudo();
-    expect(doc("/etc/app.conf")?.saveIssue).toBe("sudo");
+    await settled();
+    expect(doc("/etc/app.conf")).toMatchObject({ saveIssue: "sudo", content: "edited" });
     expect(toasts.notifyError).not.toHaveBeenCalled();
+    cleanup();
+  });
+
+  it("a file sudo will not write is not offered a Save that cannot land", async () => {
+    api.sftpWriteAccess.mockResolvedValueOnce("restricted");
+    api.sudoRoute.mockResolvedValueOnce({ kind: "refused", why: "no-sudo", said: "" });
+    const { flow, cleanup } = await opened();
+    setEditorContent(SID, doc("/etc/app.conf")!.id, "edited");
+    flow.save(SID, doc("/etc/app.conf")!);
+    await settled();
+    expect(api.sftpWriteText).not.toHaveBeenCalled();
+    expect(doc("/etc/app.conf")?.saveIssue).toBe("sudo");
+    cleanup();
+  });
+
+  it("Save of a file the user cannot write goes through sudo when sudo needs no typing", async () => {
+    api.sftpWriteAccess.mockResolvedValueOnce("restricted");
+    api.sudoRoute.mockResolvedValueOnce({ kind: "saved", from: "saved" });
+    api.sudoCheck.mockResolvedValueOnce({ via: "saved", rememberFailed: false });
+    const { flow, cleanup } = await opened();
+    setEditorContent(SID, doc("/etc/app.conf")!.id, "edited");
+    flow.save(SID, doc("/etc/app.conf")!);
+    await settled();
+    expect(api.sudoCheck).toHaveBeenCalledWith(SID, null, false);
+    expect(api.sftpWriteText).toHaveBeenCalledWith(SID, "/etc/app.conf", "edited", "lf", "sha-a", expect.objectContaining({ sudo: true }));
+    expect(doc("/etc/app.conf")).toMatchObject({ sudo: true, sudoRoute: { kind: "ready", via: "saved" } });
+    cleanup();
+  });
+
+  it("a save as root whose password was changed meanwhile asks again, saying why", async () => {
+    api.sftpReadText.mockResolvedValueOnce(file("a"));
+    const { flow, cleanup } = harness();
+    await flow.openFile(SID, "/etc/app.conf", "app.conf", { sudo: true });
+    await settled();
+    setEditorContent(SID, doc("/etc/app.conf")!.id, "edited");
+    api.sftpWriteText.mockRejectedValueOnce("sudo-password: saved");
+    flow.save(SID, doc("/etc/app.conf")!);
+    await settled();
+    expect(flow.sudo).toMatchObject({ kind: "save", mode: "type", note: "sudo.triedSaved" });
+    expect(doc("/etc/app.conf")).toMatchObject({ content: "edited", saveIssue: "none" });
+    cleanup();
+  });
+
+  it("a password sudo took but the keychain did not keep is said, and the save goes on", async () => {
+    const { flow, cleanup } = await opened();
+    setEditorContent(SID, doc("/etc/app.conf")!.id, "edited");
+    api.sudoCheck.mockResolvedValueOnce({ via: "typed", rememberFailed: true });
+    flow.askSudo(SID, doc("/etc/app.conf")!, "save");
+    await settled();
+    flow.sudoPassword = "pw";
+    await flow.confirmSudo();
+    await settled();
+    expect(toasts.notifyInfo).toHaveBeenCalledWith(expect.stringContaining("keychain"), expect.anything());
+    expect(api.sftpWriteText).toHaveBeenCalled();
     cleanup();
   });
 

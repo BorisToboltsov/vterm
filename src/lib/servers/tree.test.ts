@@ -22,6 +22,10 @@ function srv(p: Partial<ServerProfile> & { id: string }): ServerProfile {
     authMethod: "password",
     keyPath: null,
     hasSavedPassword: false,
+    hasSavedSudo: false,
+    logins: [],
+    defaultLogin: "",
+    askLogin: false,
     group: null,
     tags: [],
     prod: null,
@@ -106,6 +110,14 @@ describe("filterServers", () => {
   });
   it("returns nothing when no field matches", () => {
     expect(filterServers(servers, "zzz")).toEqual([]);
+  });
+  it("finds a server by any of its logins (ADR 0074)", () => {
+    const multi = srv({
+      id: "m",
+      alias: "App",
+      logins: [{ id: "d", username: "deployer", authMethod: "password", keyPath: null, hasSavedPassword: false, hasSavedSudo: false }],
+    });
+    expect(filterServers([...servers, multi], "deployer").map((s) => s.id)).toEqual(["m"]);
   });
   it("finds a flag-only prod server by the word its badge shows", () => {
     const list = [srv({ id: "p", prod: true }), srv({ id: "n", prod: false, tags: ["web"] })];

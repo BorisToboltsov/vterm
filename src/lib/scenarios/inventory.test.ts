@@ -20,6 +20,10 @@ function server(p: Partial<ServerProfile>): ServerProfile {
     authMethod: "key",
     keyPath: null,
     hasSavedPassword: false,
+    hasSavedSudo: false,
+    logins: [],
+    defaultLogin: "",
+    askLogin: false,
     group: null,
     tags: [],
     prod: false,
@@ -151,6 +155,35 @@ describe("servers of the catalog as an inventory", () => {
     expect(inv.text).toContain('ansible_ssh_common_args: "-o ProxyCommand=\\"ssh -i /k -p 2200 -W %h:%p j@jump.lan\\""');
     expect(inv.text).toContain('ansible_ssh_common_args: "-o ProxyJump=j@jump.lan:22"');
     expect(inv.text).not.toMatch(/password/i);
+  });
+
+  it("writes each server's default login, not its first (ADR 0074)", () => {
+    const s = server({
+      id: "m",
+      alias: "multi",
+      username: "root",
+      authMethod: "key",
+      keyPath: "/root-key",
+      logins: [{ id: "dep", username: "deploy", authMethod: "password", keyPath: null, hasSavedPassword: false, hasSavedSudo: false }],
+      defaultLogin: "dep",
+    });
+    const inv = catalogInventory([s], true);
+    expect(inv.text).toContain('ansible_user: "deploy"');
+    expect(inv.text).not.toContain("/root-key");
+    expect(inv.asksPassword).toEqual(["m"]);
+  });
+
+  it("matches a host to the server any of whose logins it names", () => {
+    const twin = (id: string, user: string, other?: string) =>
+      server({
+        id,
+        alias: id,
+        host: "10.9.9.9",
+        username: user,
+        logins: other ? [{ id: "x", username: other, authMethod: "password", keyPath: null, hasSavedPassword: false, hasSavedSudo: false }] : [],
+      });
+    const servers = [twin("a", "root"), twin("b", "root", "deploy")];
+    expect(matchServer({ name: "h", address: "10.9.9.9", port: 22, user: "deploy" } as never, servers)?.id).toBe("b");
   });
 
   it("leaves this computer's paths out of a run on another host", () => {

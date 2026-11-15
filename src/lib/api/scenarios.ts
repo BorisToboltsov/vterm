@@ -66,9 +66,10 @@ export function recipeDelete(path: string): Promise<void> {
 
 /**
  * Run a recipe on an SSH session. The script (with its parameters exported at
- * its top) and the sudo password go on stdin, never on a command line; `name`
- * and `mode` label the run in the recording. `sftpCancel(cancelId)` stops it.
- * Never throws on a non-zero exit.
+ * its top) and the session's sudo password (ADR 0073: a typed one goes to
+ * `sudoCheck` first) go on stdin, never on a command line; `name` and `mode`
+ * label the run in the recording. `sftpCancel(cancelId)` stops it. Never throws
+ * on a non-zero exit; throws a sudo marker when sudo would not start.
  */
 export function recipeRun(
   sessionId: string,
@@ -77,7 +78,6 @@ export function recipeRun(
     mode: "check" | "apply";
     script: string;
     elevation: Elevation;
-    password: string | null;
     timeoutSecs: number;
     cancelId: string;
   },

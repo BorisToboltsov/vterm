@@ -13,6 +13,10 @@ function srv(p: Partial<ServerProfile> & { id: string; alias: string }): ServerP
     authMethod: "password",
     keyPath: null,
     hasSavedPassword: false,
+    hasSavedSudo: false,
+    logins: [],
+    defaultLogin: "",
+    askLogin: false,
     group: null,
     tags: [],
     prod: null,
@@ -81,8 +85,51 @@ describe("ServerTree — background context menu", () => {
     expect(search).toHaveValue("");
     expect(screen.getByTestId("server-row")).toHaveTextContent("web");
     await fireEvent.contextMenu(screen.getByTestId("server-row"));
-    expect(screen.getByRole("menuitem", { name: "Connect" })).toBeInTheDocument();
+    expect(screen.getByRole("menuitem", { name: /^Connect(?! as)/ })).toBeInTheDocument();
     expect(screen.queryByRole("menuitem", { name: "New folder" })).toBeNull();
+  });
+});
+
+describe("ServerTree — logins of a server (ADR 0074)", () => {
+  const withLogins = () =>
+    srv({
+      id: "a",
+      alias: "web",
+      logins: [{ id: "dep", username: "deploy", authMethod: "password", keyPath: null, hasSavedPassword: true, hasSavedSudo: false }],
+      defaultLogin: "dep",
+    });
+
+  it("Connect names whom it logs in as; «Connect as» lists the others and «Other login…»", async () => {
+    const onConnectAs = vi.fn();
+    const onConnect = vi.fn();
+    render(ServerTree, { ...baseProps(), servers: [withLogins()], onConnect, onConnectAs });
+    await fireEvent.contextMenu(screen.getByTestId("server-row"));
+    expect(screen.getByRole("menuitem", { name: /^Connect(?! as)/ }).textContent).toContain("deploy");
+    await fireEvent.click(screen.getByRole("menuitem", { name: /Connect as/ }));
+    // The default is Connect itself; the first login is among the others.
+    await fireEvent.click(screen.getByRole("menuitem", { name: /root/ }));
+    expect(onConnectAs).toHaveBeenCalledWith(expect.objectContaining({ id: "a" }), { id: "" });
+    await fireEvent.contextMenu(screen.getByTestId("server-row"));
+    await fireEvent.click(screen.getByRole("menuitem", { name: /Connect as/ }));
+    await fireEvent.click(screen.getByRole("menuitem", { name: /Other login/ }));
+    expect(onConnectAs).toHaveBeenLastCalledWith(expect.objectContaining({ id: "a" }), "pick");
+    expect(onConnect).not.toHaveBeenCalled();
+  });
+
+  it("⌥↵ and ⌥ + double-click ask which login; plain ones connect with the default", async () => {
+    const onConnectAs = vi.fn();
+    const onConnect = vi.fn();
+    render(ServerTree, { ...baseProps(), servers: [withLogins()], selectedId: "a", onConnect, onConnectAs });
+    const row = screen.getByTestId("server-row");
+    await fireEvent.dblClick(row, { altKey: true });
+    expect(onConnectAs).toHaveBeenCalledWith(expect.objectContaining({ id: "a" }), "pick");
+    await fireEvent.dblClick(row);
+    expect(onConnect).toHaveBeenCalledOnce();
+    await fireEvent.click(row);
+    await fireEvent.keyDown(screen.getByRole("tree"), { key: "Enter", altKey: true });
+    expect(onConnectAs).toHaveBeenCalledTimes(2);
+    await fireEvent.keyDown(screen.getByRole("tree"), { key: "Enter" });
+    expect(onConnect).toHaveBeenCalledTimes(2);
   });
 });
 

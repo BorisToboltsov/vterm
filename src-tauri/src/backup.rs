@@ -359,6 +359,16 @@ pub fn check_catalog(servers: &[ServerProfile]) -> AppResult<()> {
                 s.id
             )));
         }
+        // Each login's id names its keychain scope (ADR 0074): plain and once.
+        let mut logins = std::collections::HashSet::new();
+        for l in &s.logins {
+            if !crate::model::valid_login_id(&l.id) || !logins.insert(l.id.as_str()) {
+                return Err(AppError::Message(format!(
+                    "backup import: server {} has a login id that cannot be used: {}",
+                    s.id, l.id
+                )));
+            }
+        }
     }
     Ok(())
 }
@@ -378,6 +388,7 @@ mod tests {
             auth_method: AuthMethod::Key,
             key_path: Some("/home/u/.ssh/id_ed25519".into()),
             has_saved_password: false,
+            has_saved_sudo: false,
             group: Some("Prod".into()),
             tags: vec!["web".into()],
             prod: None,
@@ -390,6 +401,9 @@ mod tests {
             notes: String::new(),
             icon: String::new(),
             icon_color: String::new(),
+            logins: Vec::new(),
+            default_login: String::new(),
+            ask_login: false,
         }
     }
 

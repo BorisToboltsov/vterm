@@ -7,6 +7,7 @@
   import FilterField from "../ui/FilterField.svelte";
   import Icon from "../ui/Icon.svelte";
   import type { ServerProfile } from "../types";
+  import { defaultUser } from "../servers/logins";
 
   let {
     servers,
@@ -72,7 +73,7 @@
           <input type="checkbox" checked={selected.includes(s.id)} onchange={() => toggle(s.id)} />
           <span class="min-w-0 truncate text-text">{s.alias}</span>
           {#if prod}<span class="rounded bg-danger/15 px-1 text-caption text-danger">prod</span>{/if}
-          <span class="min-w-0 truncate text-meta text-muted">{s.username}@{s.host}{s.port === 22 ? "" : `:${s.port}`}</span>
+          <span class="min-w-0 truncate text-meta text-muted">{defaultUser(s)}@{s.host}{s.port === 22 ? "" : `:${s.port}`}</span>
           {#if !hideStatus}
             <span class="ml-auto shrink-0 text-caption {connected.has(s.id) ? 'text-ok' : 'text-muted'}">
               {connected.has(s.id) ? t("scenarios.targets.open") : t("scenarios.targets.willConnect")}

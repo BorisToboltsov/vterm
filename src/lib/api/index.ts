@@ -4,6 +4,7 @@ export * from "./core";
 export * from "./servers";
 export * from "./session";
 export * from "./files";
+export * from "./sudo";
 export * from "./recording";
 export * from "./ai";
 export * from "./git";

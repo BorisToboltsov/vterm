@@ -450,6 +450,7 @@ mod tests {
             auth_method: AuthMethod::Password,
             key_path: None,
             has_saved_password: false,
+            has_saved_sudo: false,
             group: Some("Prod".into()),
             tags: vec!["web".into()],
             prod: None,
@@ -462,6 +463,9 @@ mod tests {
             notes: String::new(),
             icon: String::new(),
             icon_color: String::new(),
+            logins: Vec::new(),
+            default_login: String::new(),
+            ask_login: false,
         }
     }
 

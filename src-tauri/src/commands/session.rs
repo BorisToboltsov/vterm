@@ -3,7 +3,7 @@
 
 use crate::error::{AppError, AppResult};
 use crate::locks::Locked;
-use crate::model::{AuthMethod, ProxyKind};
+use crate::model::{AuthMethod, LoginChoice, ProxyKind};
 use crate::ssh::{ConnectOptions, Credential, HostKeyPolicy, Proxy, ProxyJump, ProxyTcpAuth};
 use crate::{appwin, end_session, localfile, pty, secrets, session_arc, ssh, store, AppState};
 use serde::Serialize;
@@ -21,7 +21,11 @@ pub struct ConnectPlan {
 }
 
 #[tauri::command]
-pub fn connect_plan(id: String, state: State<AppState>) -> AppResult<ConnectPlan> {
+pub fn connect_plan(
+    id: String,
+    login: Option<LoginChoice>,
+    state: State<AppState>,
+) -> AppResult<ConnectPlan> {
     let profile = state
         .servers
         .locked()
@@ -29,19 +33,21 @@ pub fn connect_plan(id: String, state: State<AppState>) -> AppResult<ConnectPlan
         .find(|s| s.id == id)
         .cloned()
         .ok_or(AppError::UnknownServer)?;
+    // The login asked for (ADR 0074): a one-off one keeps nothing in the keychain.
+    let login = profile.resolve_login(login.as_ref())?;
+    let saved_password = || login.scope.as_deref().and_then(secrets::get_password);
+    let saved_passphrase = || login.scope.as_deref().and_then(secrets::get_passphrase);
 
-    let plan = match profile.auth_method {
+    let plan = match login.auth_method {
         AuthMethod::Password => ConnectPlan {
-            needs_secret: secrets::get_password(&id).is_none(),
+            needs_secret: saved_password().is_none(),
             secret_label: "Password".to_string(),
         },
         AuthMethod::Key => {
             // Resolve the same way connect_session will (explicit path, else a
             // default in ~/.ssh) so we prompt for a passphrase iff that key needs one.
-            let needs = match ssh::resolve_key_path(profile.key_path.as_deref()) {
-                Some(path) => {
-                    ssh::key_is_encrypted(&path) && secrets::get_passphrase(&id).is_none()
-                }
+            let needs = match ssh::resolve_key_path(login.key_path.as_deref()) {
+                Some(path) => ssh::key_is_encrypted(&path) && saved_passphrase().is_none(),
                 None => false,
             };
             ConnectPlan {
@@ -83,6 +89,7 @@ pub async fn connect_session(
     windows: State<'_, appwin::Windows>,
     session_id: String,
     server_id: String,
+    login: Option<LoginChoice>,
     secret: Option<String>,
     remember: bool,
     cols: u32,
@@ -100,23 +107,25 @@ pub async fn connect_session(
 
     // Wrap the just-typed secret so vterm's own in-memory copy is wiped on drop.
     let secret = secret.map(zeroize::Zeroizing::new);
+    // Whom the tab logs in as (ADR 0074) and where that login's secrets are.
+    let login = profile.resolve_login(login.as_ref())?;
 
-    let cred = match profile.auth_method {
+    let cred = match login.auth_method {
         AuthMethod::Password => {
             let password = secret
                 .clone()
-                .or_else(|| secrets::get_password(&server_id))
+                .or_else(|| login.scope.as_deref().and_then(secrets::get_password))
                 .ok_or_else(|| "password required".to_string())?;
             Credential::Password(password)
         }
         AuthMethod::Key => {
             // No explicit key path → fall back to a default key in ~/.ssh/.
-            let path = ssh::resolve_key_path(profile.key_path.as_deref()).ok_or_else(|| {
+            let path = ssh::resolve_key_path(login.key_path.as_deref()).ok_or_else(|| {
                 "no SSH key set and none found in ~/.ssh — pick a private key file".to_string()
             })?;
             let passphrase = secret
                 .clone()
-                .or_else(|| secrets::get_passphrase(&server_id));
+                .or_else(|| login.scope.as_deref().and_then(secrets::get_passphrase));
             Credential::Key { path, passphrase }
         }
     };
@@ -207,7 +216,7 @@ pub async fn connect_session(
         session_id.clone(),
         &profile.host,
         profile.port,
-        &profile.username,
+        &login.username,
         cred,
         opts,
     )
@@ -251,23 +260,28 @@ pub async fn connect_session(
     // authenticated connection whenever the keychain was unavailable (Linux
     // without a Secret Service), and the user could not connect at all.
     let mut outcome = ConnectOutcome::default();
-    if remember {
-        if let Some(s) = &secret {
-            let saved = match profile.auth_method {
-                AuthMethod::Password => secrets::set_password(&server_id, s).and_then(|()| {
-                    let snapshot = {
-                        let mut servers = state.servers.locked();
-                        if let Some(p) = servers.iter_mut().find(|p| p.id == server_id) {
-                            p.has_saved_password = true;
-                        }
-                        servers.clone()
-                    };
-                    store::save_servers(&snapshot)
-                }),
-                AuthMethod::Key => secrets::set_passphrase(&server_id, s),
-            };
-            outcome.remember_failed = remember_failure(saved);
-        }
+    // A one-off login (no scope) keeps nothing: there is nowhere it belongs.
+    if let (true, Some(s), Some(scope), Some(login_id)) =
+        (remember, &secret, &login.scope, &login.login_id)
+    {
+        let saved = match login.auth_method {
+            AuthMethod::Password => secrets::set_password(scope, s).and_then(|()| {
+                let snapshot = {
+                    let mut servers = state.servers.locked();
+                    if let Some((password, _)) = servers
+                        .iter_mut()
+                        .find(|p| p.id == server_id)
+                        .and_then(|p| p.login_hints_mut(login_id))
+                    {
+                        *password = true;
+                    }
+                    servers.clone()
+                };
+                store::save_servers(&snapshot)
+            }),
+            AuthMethod::Key => secrets::set_passphrase(scope, s),
+        };
+        outcome.remember_failed = remember_failure(saved);
     }
 
     // The tab was closed while we were logging in: nobody would ever end this
@@ -280,6 +294,10 @@ pub async fn connect_session(
         .session_servers
         .locked()
         .insert(session_id.clone(), server_id);
+    state
+        .session_logins
+        .locked()
+        .insert(session_id.clone(), login);
     state
         .sessions
         .lock()
@@ -508,5 +526,58 @@ mod tests {
         assert!(!program_on_path("vterm-definitely-not-a-real-program-xyz"));
         // An explicit path that does not exist is not resolved.
         assert!(!program_on_path("/no/such/dir/nope-shell"));
+    }
+}
+
+#[cfg(test)]
+mod login_gate {
+    /// The body of `fn name` in `src`, up to its closing brace.
+    fn body<'a>(src: &'a str, name: &str) -> &'a str {
+        let at = src.find(&format!("fn {name}(")).expect(name);
+        let rest = &src[at..];
+        &rest[..rest.find("\n}\n").map_or(rest.len(), |e| e + 2)]
+    }
+
+    /// What reads a login's secrets by the server's id instead of the login's scope.
+    fn reads_by_server_id(src: &str) -> Vec<&'static str> {
+        ["connect_plan", "connect_session"]
+            .into_iter()
+            .filter(|f| {
+                let b = body(src, f);
+                [
+                    "get_password(&id)",
+                    "get_passphrase(&id)",
+                    "get_password(&server_id)",
+                    "get_passphrase(&server_id)",
+                ]
+                .iter()
+                .any(|r| b.contains(r))
+            })
+            .collect()
+    }
+
+    /// ADR 0074: each login reads and writes its own secrets — its keychain
+    /// scope — never the server's first login's by the server id, and a one-off
+    /// login keeps nothing.
+    #[test]
+    fn every_login_reads_its_own_secrets() {
+        let src = include_str!("session.rs");
+        assert_eq!(reads_by_server_id(src), Vec::<&str>::new());
+        let connect = body(src, "connect_session");
+        assert!(
+            connect.contains("resolve_login("),
+            "the login is resolved before anything is read"
+        );
+        assert!(
+            connect.contains("Some(scope)"),
+            "remembering needs the login's scope"
+        );
+        // The check sees what it is for.
+        let leaking = src.replacen(
+            ".or_else(|| login.scope.as_deref().and_then(secrets::get_password))",
+            ".or_else(|| secrets::get_password(&server_id))",
+            1,
+        );
+        assert_eq!(reads_by_server_id(&leaking), ["connect_session"]);
     }
 }

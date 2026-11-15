@@ -9,6 +9,8 @@
 // taking on a user is a button and a question. Going back drops rights and is a
 // button alone.
 
+import { sudoAnswer, type SudoAnswer } from "../sudo/sudo";
+
 /** What the backend reports (`shell_user`). */
 export interface ShellUserReport {
   /** Whom the file panel works as. */
@@ -57,20 +59,18 @@ export const SHELL_USER_POLL_MS = 15_000;
 /** How long after an Enter it asks: `su` takes a moment to start the shell. */
 export const AFTER_ENTER_MS = 1_000;
 
-/** What became of asking to work as someone. */
+/** What became of asking to work as someone: sudo's answer (`sudoAnswer`, ADR
+ *  0073), no `sftp-server` to run, or something else in its own words. */
 export type FileUserFailure =
-  | { kind: "needPassword" }
-  | { kind: "wrongPassword" }
-  | { kind: "refused"; reason: string }
+  | { kind: "sudo"; answer: SudoAnswer }
   | { kind: "noServer" }
   | { kind: "other"; text: string };
 
 /** Reads the backend's markers (`AppError`). */
 export function fileUserFailure(e: unknown): FileUserFailure {
+  const answer = sudoAnswer(e);
+  if (answer) return { kind: "sudo", answer };
   const text = String(e);
-  if (text.startsWith("sudo-password:")) return { kind: "needPassword" };
-  if (text.startsWith("sudo-rejected:")) return { kind: "wrongPassword" };
-  if (text.startsWith("sudo-refused:")) return { kind: "refused", reason: text.slice("sudo-refused:".length).trim() };
   if (text.startsWith("sftp-server-missing:")) return { kind: "noServer" };
   return { kind: "other", text };
 }

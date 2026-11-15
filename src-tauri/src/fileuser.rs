@@ -21,7 +21,7 @@
 
 use crate::error::{AppError, AppResult};
 use crate::git::shell_quote;
-use crate::ssh::{answered, exec_on, ExecOutcome};
+use crate::ssh::{answered, exec_on};
 use russh::client::{self, Handle};
 use russh_sftp::client::SftpSession;
 use serde::Serialize;
@@ -273,32 +273,6 @@ fn server_command(user: &str, with_password: bool, server: &str) -> String {
     )
 }
 
-/// Why `sudo` said no. The messages are `LC_ALL=C`, and they only choose between
-/// outcomes: whatever is not recognised is reported as it was said.
-pub fn sudo_refusal(outcome: &ExecOutcome, with_password: bool) -> AppError {
-    if outcome.timed_out {
-        return AppError::SudoRefused("sudo did not answer".into());
-    }
-    let said = outcome.stderr.to_lowercase();
-    if said.contains("a password is required") {
-        return AppError::SudoPasswordRequired;
-    }
-    if with_password
-        && (said.contains("incorrect password")
-            || said.contains("try again")
-            || said.contains("no password was provided"))
-    {
-        return AppError::SudoPasswordRejected;
-    }
-    let reason = outcome
-        .stderr
-        .lines()
-        .map(str::trim)
-        .find(|l| !l.is_empty())
-        .map_or_else(|| format!("exit {}", outcome.exit_code), str::to_string);
-    AppError::SudoRefused(reason)
-}
-
 /// An SFTP session as `user`, or why not. The password, when there is one, goes
 /// over stdin and nowhere else.
 pub(crate) async fn open_as<H: client::Handler>(
@@ -307,7 +281,10 @@ pub(crate) async fn open_as<H: client::Handler>(
     password: Option<&str>,
 ) -> AppResult<SftpSession> {
     if !valid_user(user) {
-        return Err(AppError::SudoRefused(format!("not a user name: {user}")));
+        return Err(AppError::SudoRefused {
+            why: crate::sudo::Refusal::Other,
+            said: format!("not a user name: {user}"),
+        });
     }
     let with_password = password.is_some();
     let stdin = password.map(|p| crate::sync::sudo_stdin(Some(p)));
@@ -323,7 +300,7 @@ pub(crate) async fn open_as<H: client::Handler>(
     )
     .await?;
     if check.timed_out || check.exit_code != 0 {
-        return Err(sudo_refusal(&check, with_password));
+        return Err(crate::sudo::answer(&check, with_password));
     }
     let found = exec_on(handle, &server_probe(), &[], 10, None).await?;
     let server = found.stdout.trim();
@@ -596,47 +573,6 @@ mod tests {
         };
         assert!(free.stdin().is_empty());
     }
-
-    fn said(stderr: &str, exit_code: i32) -> ExecOutcome {
-        ExecOutcome {
-            stdout: String::new(),
-            stderr: stderr.into(),
-            exit_code,
-            timed_out: false,
-        }
-    }
-
-    #[test]
-    fn a_refusal_tells_what_is_needed_from_what_is_not_allowed() {
-        assert!(matches!(
-            sudo_refusal(&said("sudo: a password is required\n", 1), false),
-            AppError::SudoPasswordRequired
-        ));
-        for words in [
-            "Sorry, try again.\nsudo: 1 incorrect password attempt\n",
-            "sudo: no password was provided\n",
-        ] {
-            assert!(matches!(
-                sudo_refusal(&said(words, 1), true),
-                AppError::SudoPasswordRejected
-            ));
-        }
-        let denied = sudo_refusal(&said("plain is not in the sudoers file.\n", 1), true);
-        assert_eq!(
-            denied.to_string(),
-            "sudo-refused: plain is not in the sudoers file."
-        );
-        assert_eq!(
-            sudo_refusal(&said("", 127), false).to_string(),
-            "sudo-refused: exit 127"
-        );
-        let mut slow = said("", -1);
-        slow.timed_out = true;
-        assert!(matches!(
-            sudo_refusal(&slow, false),
-            AppError::SudoRefused(_)
-        ));
-    }
 }
 
 /// Against a real sshd with real `su` and `sudo`: what `ps` shows for them, and
@@ -894,7 +830,7 @@ mod live_fileuser {
         let tester = connect("tester", "testpass").await;
         assert!(matches!(
             open_as(&tester, "deploy", None).await.err(),
-            Some(AppError::SudoPasswordRequired)
+            Some(AppError::SudoPasswordRequired(crate::sudo::Tried::Nothing))
         ));
         assert!(matches!(
             open_as(&tester, "deploy", Some("wrong")).await.err(),
@@ -906,7 +842,7 @@ mod live_fileuser {
             .err()
             .unwrap();
         assert!(
-            matches!(&refused, AppError::SudoRefused(why) if why.contains("sudoers")),
+            matches!(&refused, AppError::SudoRefused { why: crate::sudo::Refusal::NotAllowed, said } if said.contains("sudoers")),
             "{refused}"
         );
     }

@@ -15,11 +15,6 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use zeroize::Zeroizing;
 
-/// Marker appended to a sudo command to confirm it succeeded (exit status isn't
-/// captured over the exec channel, so a wrong password / failure is detected by
-/// the marker's absence).
-const OK_MARKER: &str = "__VTERM_OK__";
-
 /// One file's hash, relative to the synced root (path uses `/` separators).
 #[derive(Serialize, Debug, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
@@ -264,17 +259,18 @@ pub fn lint_tmp_ext(name: &str) -> &'static str {
 }
 
 /// Run a linter on the staged temp file, returning combined stdout+stderr. sudo tools
-/// (`sshd -t`) run under `sudo -S` when a password is supplied (falling back to a
-/// best-effort non-root run otherwise); the rest run with `sbin` on `PATH`.
+/// (`sshd -t`) run under sudo when sudo already took a credential this session —
+/// `Some(None)` when it wants no password — and as a best-effort non-root run
+/// otherwise; the rest run with `sbin` on `PATH`.
 pub async fn run_lint(
     session: &SshSession,
     tool: &LintTool,
     tmp: &str,
-    password: Option<&str>,
+    password: Option<Option<&str>>,
 ) -> String {
     let core = lint_command(tool, tmp);
     let res = match (tool.sudo, password) {
-        (true, Some(pw)) if !pw.is_empty() => sudo_run(session, &core, Some(pw)).await,
+        (true, Some(taken)) => sudo_run(session, &core, taken).await,
         _ => {
             session
                 .run_command(&format!("PATH=\"{LINT_PATH}\" {core}"))
@@ -335,9 +331,9 @@ pub fn parse_nginx_config_files(out: &str) -> Vec<String> {
 /// this never surfaces an error just to decide syntax highlighting.
 pub async fn nginx_config_files_sudo(
     session: &SshSession,
-    password: &str,
+    password: Option<&str>,
 ) -> AppResult<Vec<String>> {
-    let out = sudo_run(session, NGINX_DUMP_PIPE, Some(password))
+    let out = sudo_run(session, NGINX_DUMP_PIPE, password)
         .await
         .unwrap_or_default();
     Ok(parse_nginx_config_files(&out))
@@ -835,11 +831,60 @@ pub fn sudo_stdin(password: Option<&str>) -> Zeroizing<Vec<u8>> {
     line
 }
 
-/// Run `inner` under `sudo -S`, feeding `password` on stdin (kept out of the
-/// process list). Returns stdout.
+/// `sudo` in front of a command, under `LC_ALL=C` so `crate::sudo::answer` reads
+/// what it says on any server. With a password it is read from stdin (`-S`);
+/// without one `-n`: a bare Enter would be an empty password, a wrong try in the
+/// server's auth log and a step towards faillock.
+pub(crate) fn sudo_prefix(password: Option<&str>) -> &'static str {
+    if password.is_some() {
+        "env LC_ALL=C sudo -S -p ''"
+    } else {
+        "env LC_ALL=C sudo -n"
+    }
+}
+
+/// What goes on the stdin of [`sudo_prefix`]: the password's line, or nothing.
+pub(crate) fn sudo_input(password: Option<&str>) -> Zeroizing<Vec<u8>> {
+    match password {
+        Some(pw) => sudo_stdin(Some(pw)),
+        None => Zeroizing::new(Vec::new()),
+    }
+}
+
+/// How long one sudo step may take (a `cp` of a large file over a slow disk).
+const SUDO_STEP_SECS: u64 = 120;
+
+/// Run `inner` under `sudo`, feeding `password` on stdin (kept out of the
+/// process list). Returns stdout — whatever sudo said is lost: only for the
+/// best-effort reads (lint, the nginx list) that fall back on their own.
 async fn sudo_run(session: &SshSession, inner: &str, password: Option<&str>) -> AppResult<String> {
-    let cmd = format!("sudo -S -p '' {inner}");
-    session.run_command_stdin(&cmd, &sudo_stdin(password)).await
+    let cmd = format!("{} {inner}", sudo_prefix(password));
+    session.run_command_stdin(&cmd, &sudo_input(password)).await
+}
+
+/// Run `inner` under sudo and say how it went: `Ok` with its stdout, sudo's
+/// refusal as `crate::sudo::answer` reads it, or — when sudo agreed and the
+/// command itself failed — what the command said.
+async fn sudo_step(session: &SshSession, inner: &str, password: Option<&str>) -> AppResult<String> {
+    let cmd = format!("{} {inner}", sudo_prefix(password));
+    let out = session
+        .exec_captured_stdin(&cmd, &sudo_input(password), SUDO_STEP_SECS)
+        .await?;
+    if !out.timed_out && out.exit_code == 0 {
+        return Ok(out.stdout);
+    }
+    Err(step_failure(&out, password.is_some()))
+}
+
+/// A failed sudo step: sudo's own refusal, or the command's failure in its words.
+pub(crate) fn step_failure(out: &crate::ssh::ExecOutcome, with_password: bool) -> AppError {
+    match crate::sudo::answer(out, with_password) {
+        AppError::SudoRefused {
+            why: crate::sudo::Refusal::Other,
+            said,
+        } => AppError::Message(said),
+        e => e,
+    }
 }
 
 /// Shell snippet that copies `path` to `<path>.bak` as root, preserving mode,
@@ -848,9 +893,10 @@ async fn sudo_run(session: &SshSession, inner: &str, password: Option<&str>) -> 
 ///
 /// `if … then … fi`, deliberately NOT `test -e X && cp …`. With `&&` a missing
 /// target — a brand-new file, nothing to copy — makes the whole command exit
-/// non-zero, [`OK_MARKER`] never prints, and "nothing to back up" becomes
-/// indistinguishable from "the copy failed". Since a failed backup now aborts the
-/// save, that conflation would refuse every first save of a new root-owned file.
+/// non-zero, and "nothing to back up" becomes indistinguishable from "the copy
+/// failed". Since a failed backup aborts the save, that conflation would refuse
+/// every first save of a new root-owned file. It is shell syntax, so sudo runs it
+/// through `sh -c` ([`sudo_backup_step`]).
 ///
 /// `cp -p` matters just as much: without it the copy lands at the caller's umask,
 /// so a 0600 secret-bearing config would be backed up world-readable.
@@ -860,16 +906,11 @@ pub fn sudo_backup_command(path: &str) -> String {
     format!("if test -e {quoted}; then cp -p -- {quoted} {bak}; fi")
 }
 
-/// Run `inner` under sudo and confirm success via [`OK_MARKER`].
-async fn sudo_ok(session: &SshSession, inner: &str, password: Option<&str>) -> AppResult<bool> {
-    let out = sudo_run(session, &format!("{inner} && printf {OK_MARKER}"), password).await?;
-    Ok(out.contains(OK_MARKER))
-}
-
-/// Validate sudo authentication early. Command-specific sudoers rules may still
-/// reject the later copy; the editor keeps the buffer if that happens.
-pub async fn check_sudo(session: &SshSession, password: &str) -> AppResult<bool> {
-    sudo_ok(session, "true", Some(password)).await
+/// [`sudo_backup_command`] as sudo runs it: through `sh -c`. sudo runs programs,
+/// and `if` is none — handed to sudo bare, the line was a syntax error of the
+/// login shell, and every save as root with "Keep a .bak copy" failed.
+pub fn sudo_backup_step(path: &str) -> String {
+    format!("sh -c {}", shell_quote(&sudo_backup_command(path)))
 }
 
 /// Read a root-owned file as text via `sudo cat` (Phase 12.6 "edit as root").
@@ -879,11 +920,21 @@ pub async fn sudo_read(
     max_bytes: u64,
     password: Option<&str>,
 ) -> AppResult<TextFile> {
-    if !sudo_ok(session, "true", password).await? {
-        return Err(AppError::Message("sudo authentication failed".into()));
+    // `head` caps what comes over, so the pipe's status is `head`'s: a refusal of
+    // sudo shows only on stderr, with nothing on stdout — not an empty file.
+    let cmd = format!(
+        "{} cat -- {} | head -c {}",
+        sudo_prefix(password),
+        shell_quote(path),
+        max_bytes + 1
+    );
+    let out = session
+        .exec_captured_stdin(&cmd, &sudo_input(password), SUDO_STEP_SECS)
+        .await?;
+    if let Some(e) = read_refusal(&out, password.is_some()) {
+        return Err(e);
     }
-    let cmd = format!("cat -- {} | head -c {}", shell_quote(path), max_bytes + 1);
-    let content = sudo_run(session, &cmd, password).await?;
+    let content = out.stdout;
     let bytes = content.as_bytes();
     if bytes.len() as u64 > max_bytes {
         return Err(AppError::Message("file too large to edit".into()));
@@ -907,6 +958,21 @@ pub async fn sudo_read(
     })
 }
 
+/// Why a `sudo cat | head` read failed, if it did: stdout empty and sudo — or
+/// `cat` — said something that is not the host-name warning sudo prints on a
+/// misnamed host. An empty file says nothing.
+pub(crate) fn read_refusal(out: &crate::ssh::ExecOutcome, with_password: bool) -> Option<AppError> {
+    if out.timed_out {
+        return Some(crate::sudo::answer(out, with_password));
+    }
+    let said = out
+        .stderr
+        .lines()
+        .map(str::trim)
+        .any(|l| !l.is_empty() && !l.to_lowercase().contains("unable to resolve host"));
+    (out.stdout.is_empty() && said).then(|| step_failure(out, with_password))
+}
+
 /// Write a root-owned file via sudo: stage a temp in the user's home (mode 0600),
 /// optionally back up, then `sudo cp` over the target (preserving its owner/perms).
 pub async fn sudo_write(
@@ -923,14 +989,16 @@ pub async fn sudo_write(
         expected_sha256,
         backup,
     } = *req;
-    if !sudo_ok(session, "true", password).await? {
-        return Err(AppError::Message("sudo authentication failed".into()));
-    }
-    // Conflict check (best-effort): hash the current content via sudo cat.
+    // Conflict check: hash the current content via sudo cat. Its refusal is the
+    // save's — the window tells which (no rights, cat not allowed, password).
     if let Some(expected) = expected_sha256 {
-        let cur = sudo_run(session, &format!("cat -- {}", shell_quote(path)), password)
-            .await
-            .unwrap_or_default();
+        let cur = match sudo_step(session, &format!("cat -- {}", shell_quote(path)), password).await
+        {
+            Ok(cur) => cur,
+            // A new file has nothing to compare: `cat` says so in its own words.
+            Err(AppError::Message(_)) => String::new(),
+            Err(e) => return Err(e),
+        };
         if !cur.is_empty() && sha256_hex(cur.as_bytes()) != expected {
             return Err(AppError::FileChangedOnServer);
         }
@@ -967,25 +1035,29 @@ pub async fn sudo_write(
     // "the copy failed". Now the absent-file case succeeds and a false marker
     // means the `cp` really did fail. `cp -p` carries mode/owner/timestamps, so
     // the copy is never more readable than what it copied.
-    if backup && !sudo_ok(session, &sudo_backup_command(path), password).await? {
-        sftp.remove_file(tmp)
-            .await
-            .log_debug("sync", "the sync's temporary file was not removed");
-        return Err(AppError::BackupFailed(format!(
-            "sudo cp -p {path} {path}.bak"
-        )));
+    if backup {
+        let backed = sudo_step(session, &sudo_backup_step(path), password).await;
+        if let Err(e) = backed {
+            sftp.remove_file(tmp.clone())
+                .await
+                .log_debug("sync", "the sync's temporary file was not removed");
+            return Err(match e {
+                // `cp` itself failed: the backup could not be made.
+                AppError::Message(said) => {
+                    AppError::BackupFailed(format!("sudo cp -p {path} {path}.bak: {said}"))
+                }
+                // sudo would not: that is the save's answer, not a backup fault.
+                e => e,
+            });
+        }
     }
 
     let cmd = format!("cp -- {} {}", shell_quote(&tmp), shell_quote(path));
-    let ok = sudo_ok(session, &cmd, password).await?;
+    let copied = sudo_step(session, &cmd, password).await;
     sftp.remove_file(tmp)
         .await
         .log_debug("sync", "the sync's temporary file was not removed");
-    if !ok {
-        return Err(AppError::Message(
-            "sudo write failed (check password / permissions)".into(),
-        ));
-    }
+    copied?;
     Ok(WriteResult {
         sha256: sha256_hex(bytes),
         size: bytes.len() as u64,
@@ -1031,6 +1103,56 @@ mod tests {
             path: path.into(),
             op: op.into(),
         }
+    }
+
+    fn said(stdout: &str, stderr: &str, exit_code: i32) -> crate::ssh::ExecOutcome {
+        crate::ssh::ExecOutcome {
+            stdout: stdout.into(),
+            stderr: stderr.into(),
+            exit_code,
+            timed_out: false,
+        }
+    }
+
+    #[test]
+    fn without_a_password_sudo_is_never_handed_an_empty_one() {
+        assert_eq!(sudo_prefix(None), "env LC_ALL=C sudo -n");
+        assert!(sudo_input(None).is_empty());
+        assert_eq!(sudo_prefix(Some("pw")), "env LC_ALL=C sudo -S -p ''");
+        assert_eq!(&sudo_input(Some("pw"))[..], b"pw\n");
+    }
+
+    #[test]
+    fn a_refused_read_is_not_an_empty_file() {
+        // `sudo cat | head` exits as `head` does: 0. What sudo said is on stderr.
+        let refused = said(
+            "",
+            "Sorry, user limited is not allowed to execute '/usr/bin/cat -- /etc/hostname' as root on h.\n",
+            0,
+        );
+        assert!(matches!(
+            read_refusal(&refused, true),
+            Some(AppError::SudoRefused {
+                why: crate::sudo::Refusal::CommandRefused,
+                ..
+            })
+        ));
+        assert!(
+            read_refusal(&said("", "", 0), true).is_none(),
+            "an empty file"
+        );
+        assert!(
+            read_refusal(&said("", "sudo: unable to resolve host box\n", 0), true).is_none(),
+            "an empty file on a misnamed host"
+        );
+        assert!(
+            read_refusal(&said("text", "sudo: unable to resolve host box\n", 0), true).is_none()
+        );
+        // `cat` itself failing is the command's words, not a sudo refusal.
+        assert!(matches!(
+            read_refusal(&said("", "cat: /etc/nope: No such file or directory\n", 0), true),
+            Some(AppError::Message(m)) if m.contains("No such file")
+        ));
     }
 
     #[test]
@@ -1102,6 +1224,13 @@ mod tests {
         // original it was meant to protect.
         assert!(cmd.contains("cp -p -- "));
         assert!(cmd.contains("'/etc/nginx/nginx.conf' '/etc/nginx/nginx.conf.bak'"));
+    }
+
+    #[test]
+    fn the_backup_under_sudo_is_run_by_a_shell_not_by_sudo() {
+        let step = sudo_backup_step("/etc/nginx/nginx.conf");
+        assert!(step.starts_with("sh -c 'if test -e "), "{step}");
+        assert!(step.ends_with("fi'"), "{step}");
     }
 
     #[test]

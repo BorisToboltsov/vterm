@@ -1,8 +1,10 @@
 //! Secret storage in the OS keychain via the `keyring` crate.
 //!
-//! Two kinds of secrets are stored per server id:
+//! Three kinds of secrets are stored per server id:
 //! - the login password (service `vterm:password`)
 //! - the private-key passphrase (service `vterm:passphrase`)
+//! - the sudo password, saved from the sudo prompt after sudo took it
+//!   (service `vterm:sudo`, ADR 0073) — read only by `sudo.rs`'s callers
 //!
 //! A server's proxy/jump host reuses the same two services under a proxy-scoped
 //! id (`{id}::proxy`) so the target and the jump host keep independent secrets.
@@ -15,6 +17,8 @@ use zeroize::Zeroizing;
 
 const PASSWORD_SERVICE: &str = "vterm:password";
 const PASSPHRASE_SERVICE: &str = "vterm:passphrase";
+/// The server's sudo password (ADR 0073). Never logged, never sent to a window.
+const SUDO_SERVICE: &str = "vterm:sudo";
 /// AI endpoint API key, keyed by endpoint id (Phase 17). Never logged.
 const AI_KEY_SERVICE: &str = "vterm:ai-key";
 /// Docker registry password, keyed by registry url (Phase 36). Never logged; fed
@@ -96,6 +100,38 @@ pub fn delete_passphrase(id: &str) -> AppResult<()> {
     delete(PASSPHRASE_SERVICE, id)
 }
 
+// ── sudo password (ADR 0073) ──────────────────────────────────────────────────
+
+pub fn get_sudo_password(id: &str) -> Option<Zeroizing<String>> {
+    read(SUDO_SERVICE, id)
+}
+pub fn set_sudo_password(id: &str, value: &str) -> AppResult<()> {
+    write(SUDO_SERVICE, id, value)
+}
+pub fn delete_sudo_password(id: &str) -> AppResult<()> {
+    delete(SUDO_SERVICE, id)
+}
+
+// ── Logins (ADR 0074) ─────────────────────────────────────────────────────────
+
+/// Keychain id of a login's secrets: the server's own for its first login (`""`),
+/// `{id}::login::{login}` for the others — each login keeps its password, key
+/// passphrase and sudo password apart.
+pub fn login_scope(server_id: &str, login_id: &str) -> String {
+    if login_id.is_empty() {
+        server_id.to_string()
+    } else {
+        format!("{server_id}::login::{login_id}")
+    }
+}
+
+/// Remove every secret of one login (removed from its profile).
+pub fn delete_login_all(server_id: &str, login_id: &str) -> AppResult<()> {
+    let scope = login_scope(server_id, login_id);
+    delete_login(&scope)?;
+    delete_sudo_password(&scope)
+}
+
 // ── Proxy / jump-host secrets ───────────────────────────────────────────────────
 
 /// Keychain id for a server's proxy secret — namespaced so the jump host's
@@ -156,10 +192,35 @@ pub fn delete_registry_password(url: &str) -> AppResult<()> {
     delete(REGISTRY_SERVICE, registry_key(url))
 }
 
-/// Remove all secrets for a server — its own and its proxy's (used when the
-/// profile is deleted or the user forgets its saved secrets).
-pub fn delete_all(id: &str) -> AppResult<()> {
+/// Remove the server's login secret — its password and key passphrase — and
+/// nothing else: the server turned the login down, which says nothing of its
+/// sudo password or its jump host's (ADR 0073).
+pub fn delete_login(id: &str) -> AppResult<()> {
+    delete_password(id)?;
+    delete_passphrase(id)
+}
+
+/// Remove all secrets for a server — its own (sudo's too), each of its other
+/// logins' (`logins`, ADR 0074) and its proxy's (used when the profile is deleted
+/// or the user forgets its saved secrets).
+pub fn delete_all(id: &str, logins: &[String]) -> AppResult<()> {
     delete_password(id)?;
     delete_passphrase(id)?;
+    delete_sudo_password(id)?;
+    for login in logins {
+        delete_login_all(id, login)?;
+    }
     delete_proxy(id)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn each_login_keeps_its_secrets_apart_and_the_first_keeps_the_servers() {
+        assert_eq!(login_scope("srv", ""), "srv");
+        assert_eq!(login_scope("srv", "dep"), "srv::login::dep");
+        assert_ne!(login_scope("srv", "proxy"), proxy_scope("srv"));
+    }
 }

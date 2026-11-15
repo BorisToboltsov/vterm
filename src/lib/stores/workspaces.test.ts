@@ -14,6 +14,7 @@ import {
   failEditor,
   setEditorContent,
   setEditorSudo,
+  setEditorSudoRoute,
   gotoEditorLine,
   setEditorWriteAccess,
   setEditorSaveIssue,
@@ -62,7 +63,7 @@ function doc(over: Partial<EditorDoc> = {}): EditorDoc {
     loading: false,
     loadError: null,
     sudo: false,
-    sudoPassword: "",
+    sudoRoute: null,
     gotoLine: null,
     ...over,
   };
@@ -201,13 +202,20 @@ describe("store mutators", () => {
     expect(d.baseSha256).toBe("sha-v2");
   });
 
-  it("setEditorSudo marks the doc elevated and stores the password", () => {
+  it("setEditorSudo marks the doc elevated — the password is the session's, in the backend", () => {
     const id = addEditor("s1", "/etc/hosts", "hosts", LANG);
     fillEditor("s1", id, file("127.0.0.1 localhost\n"));
-    setEditorSudo("s1", id, "secret");
+    setEditorSudo("s1", id);
     const d = getWorkspace("s1").editors[0];
     expect(d.sudo).toBe(true);
-    expect(d.sudoPassword).toBe("secret");
+    expect(Object.keys(d)).not.toContain("sudoPassword");
+  });
+
+  it("setEditorSudoRoute keeps what is known of sudo for the file", () => {
+    const id = addEditor("s1", "/etc/hosts", "hosts", LANG);
+    expect(getWorkspace("s1").editors[0].sudoRoute).toBeNull();
+    setEditorSudoRoute("s1", id, { kind: "refused", why: "not-allowed", said: "no" });
+    expect(getWorkspace("s1").editors[0].sudoRoute).toEqual({ kind: "refused", why: "not-allowed", said: "no" });
   });
 
   it("keeps a remote 0444 file editable and records save recovery state", () => {
@@ -223,7 +231,7 @@ describe("store mutators", () => {
     expect(d.saveIssue).toBe("permission");
     setEditorSaveIssue("s1", id, "sudo");
     expect(getWorkspace("s1").editors[0].saveIssue).toBe("sudo");
-    setEditorSudo("s1", id, "secret");
+    setEditorSudo("s1", id);
     d = getWorkspace("s1").editors[0];
     expect(d.sudo).toBe(true);
     expect(d.saveIssue).toBe("none");

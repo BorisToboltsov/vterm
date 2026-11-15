@@ -32,6 +32,7 @@ fn add_persisted(
 
 #[tauri::command]
 pub fn add_server(profile: NewServerProfile, state: State<AppState>) -> AppResult<ServerProfile> {
+    let (logins, _) = crate::model::merge_logins(&[], profile.logins)?;
     let created = ServerProfile {
         id: uuid_like(),
         alias: profile.alias,
@@ -41,6 +42,7 @@ pub fn add_server(profile: NewServerProfile, state: State<AppState>) -> AppResul
         auth_method: profile.auth_method,
         key_path: profile.key_path,
         has_saved_password: false,
+        has_saved_sudo: false,
         group: profile.group,
         tags: profile.tags,
         prod: profile.prod,
@@ -53,6 +55,9 @@ pub fn add_server(profile: NewServerProfile, state: State<AppState>) -> AppResul
         notes: String::new(),
         icon: profile.icon,
         icon_color: profile.icon_color,
+        logins,
+        default_login: profile.default_login,
+        ask_login: profile.ask_login,
     };
     let mut servers = state.servers.locked();
     add_persisted(&mut servers, created, store::save_servers)
@@ -61,6 +66,37 @@ pub fn add_server(profile: NewServerProfile, state: State<AppState>) -> AppResul
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The body of `fn name` in `src`, up to its closing brace.
+    fn body<'a>(src: &'a str, name: &str) -> &'a str {
+        let at = src.find(&format!("fn {name}(")).expect(name);
+        let rest = &src[at..];
+        &rest[..rest.find("\n}\n").map_or(rest.len(), |e| e + 2)]
+    }
+
+    /// A refused login forgets the login's secret and nothing else (ADR 0073):
+    /// the sudo password it was never asked about stays, so does the jump host's.
+    #[test]
+    fn a_refused_login_forgets_only_the_login_secret() {
+        let secrets_src = include_str!("secrets.rs");
+        let login = body(secrets_src, "delete_login");
+        assert!(login.contains("delete_password(id)") && login.contains("delete_passphrase(id)"));
+        assert!(
+            !login.contains("sudo") && !login.contains("proxy"),
+            "{login}"
+        );
+        let all = body(secrets_src, "delete_all");
+        assert!(
+            all.contains("delete_sudo_password(id)"),
+            "the form's «Forget» takes sudo's too"
+        );
+        let cmd = body(include_str!("servers.rs"), "forget_login_secret");
+        assert!(
+            cmd.contains("secrets::delete_login(") && !cmd.contains("delete_all"),
+            "{cmd}"
+        );
+        assert!(!cmd.contains("has_saved_sudo"), "{cmd}");
+    }
 
     fn sample(id: &str) -> ServerProfile {
         serde_json::from_value(serde_json::json!({
@@ -126,10 +162,16 @@ pub fn update_server(
     profile: NewServerProfile,
     state: State<AppState>,
 ) -> AppResult<ServerProfile> {
+    let gone;
     let snapshot = {
         let mut servers = state.servers.lock().unwrap();
         match servers.iter_mut().find(|s| s.id == id) {
             Some(server) => {
+                let (logins, removed) = crate::model::merge_logins(&server.logins, profile.logins)?;
+                gone = removed;
+                server.logins = logins;
+                server.default_login = profile.default_login;
+                server.ask_login = profile.ask_login;
                 server.alias = profile.alias;
                 server.host = profile.host;
                 server.port = profile.port;
@@ -153,10 +195,62 @@ pub fn update_server(
         servers.clone()
     };
     store::save_servers(&snapshot)?;
+    // A login taken out of the profile takes its secrets with it.
+    for login in &gone {
+        secrets::delete_login_all(&id, login).log_warn(
+            "servers",
+            "a removed login's saved passwords were not removed from the keychain",
+        );
+    }
     snapshot
         .into_iter()
         .find(|s| s.id == id)
         .ok_or(AppError::UnknownServer)
+}
+
+/// Add a login to a server — a user typed for one connection and kept with
+/// "Add to the profile" (ADR 0074): it logs in with a password. Returns the
+/// profile and the new login's id, to connect with it.
+#[tauri::command]
+pub fn add_server_login(
+    server_id: String,
+    username: String,
+    state: State<AppState>,
+) -> AppResult<AddedLogin> {
+    if !crate::model::valid_login_user(&username) {
+        return Err(AppError::Message(format!("not a user name: {username}")));
+    }
+    let login_id = uuid_like();
+    let snapshot = {
+        let mut servers = state.servers.locked();
+        let server = servers
+            .iter_mut()
+            .find(|s| s.id == server_id)
+            .ok_or(AppError::UnknownServer)?;
+        server.logins.push(crate::model::ServerLogin {
+            id: login_id.clone(),
+            username: username.trim().to_string(),
+            auth_method: AuthMethod::Password,
+            key_path: None,
+            has_saved_password: false,
+            has_saved_sudo: false,
+        });
+        servers.clone()
+    };
+    store::save_servers(&snapshot)?;
+    let server = snapshot
+        .into_iter()
+        .find(|s| s.id == server_id)
+        .ok_or(AppError::UnknownServer)?;
+    Ok(AddedLogin { server, login_id })
+}
+
+/// A login added to a server, and the server as it is now.
+#[derive(Debug, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AddedLogin {
+    pub server: ServerProfile,
+    pub login_id: String,
 }
 
 /// Save the free-form notes for a server. A dedicated command (not part of
@@ -218,13 +312,17 @@ fn path_sync_persisted(
 
 #[tauri::command]
 pub async fn delete_server(id: String, state: State<'_, AppState>) -> AppResult<()> {
+    let mut logins = Vec::new();
     let snapshot = {
         let mut servers = state.servers.lock().unwrap();
+        if let Some(gone) = servers.iter().find(|s| s.id == id) {
+            logins = gone.login_ids();
+        }
         servers.retain(|s| s.id != id);
         servers.clone()
     };
     store::save_servers(&snapshot)?;
-    secrets::delete_all(&id).log_warn(
+    secrets::delete_all(&id, &logins).log_warn(
         "servers",
         "the server's saved passwords were not removed from the keychain",
     );
@@ -233,14 +331,54 @@ pub async fn delete_server(id: String, state: State<'_, AppState>) -> AppResult<
     Ok(())
 }
 
-/// Forget any stored password/passphrase for a server — including its proxy's.
+/// Forget the login secret the server just turned down — its password or key
+/// passphrase only, of the login it was (`login`, ADR 0074; none — the first).
+/// The sudo password and the jump host's stay: a refused login says nothing of
+/// them (ADR 0073); "Forget saved password" in the form (`forget_secrets`)
+/// takes everything.
+#[tauri::command]
+pub fn forget_login_secret(
+    id: String,
+    login: Option<String>,
+    state: State<AppState>,
+) -> AppResult<()> {
+    let login = login.unwrap_or_default();
+    secrets::delete_login(&secrets::login_scope(&id, &login))?;
+    let snapshot = {
+        let mut servers = state.servers.locked();
+        if let Some((password, _)) = servers
+            .iter_mut()
+            .find(|p| p.id == id)
+            .and_then(|p| p.login_hints_mut(&login))
+        {
+            *password = false;
+        }
+        servers.clone()
+    };
+    store::save_servers(&snapshot)
+}
+
+/// Forget any stored password/passphrase for a server — its sudo password and
+/// its proxy's too.
 #[tauri::command]
 pub fn forget_secrets(id: String, state: State<AppState>) -> AppResult<()> {
-    secrets::delete_all(&id)?;
+    let logins = state
+        .servers
+        .locked()
+        .iter()
+        .find(|p| p.id == id)
+        .map(ServerProfile::login_ids)
+        .unwrap_or_default();
+    secrets::delete_all(&id, &logins)?;
     let snapshot = {
         let mut servers = state.servers.lock().unwrap();
         if let Some(p) = servers.iter_mut().find(|p| p.id == id) {
             p.has_saved_password = false;
+            p.has_saved_sudo = false;
+            for l in &mut p.logins {
+                l.has_saved_password = false;
+                l.has_saved_sudo = false;
+            }
             if let Some(px) = p.proxy.as_mut() {
                 px.has_saved_password = false;
             }
@@ -261,6 +399,7 @@ pub fn forget_secrets(id: String, state: State<AppState>) -> AppResult<()> {
 pub fn save_server_secret(
     server_id: String,
     secret: String,
+    login: Option<String>,
     state: State<AppState>,
 ) -> AppResult<ServerProfile> {
     // Wrap so vterm's own in-memory copy is wiped on drop (keychain stays canonical).
@@ -276,11 +415,18 @@ pub fn save_server_secret(
             .iter_mut()
             .find(|s| s.id == server_id)
             .ok_or(AppError::UnknownServer)?;
-        match server.auth_method {
-            AuthMethod::Password => secrets::set_password(&server_id, &secret)?,
-            AuthMethod::Key => secrets::set_passphrase(&server_id, &secret)?,
+        // The secret of one login (ADR 0074), of the kind its own auth method says.
+        let resolved = server.resolve_login(Some(&crate::model::LoginChoice::Saved {
+            id: login.clone().unwrap_or_default(),
+        }))?;
+        let scope = resolved.scope.unwrap_or_else(|| server_id.clone());
+        match resolved.auth_method {
+            AuthMethod::Password => secrets::set_password(&scope, &secret)?,
+            AuthMethod::Key => secrets::set_passphrase(&scope, &secret)?,
         }
-        server.has_saved_password = true;
+        if let Some((password, _)) = server.login_hints_mut(&login.unwrap_or_default()) {
+            *password = true;
+        }
         servers.clone()
     };
     store::save_servers(&snapshot)?;
