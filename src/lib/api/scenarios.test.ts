@@ -35,7 +35,7 @@ describe("scenario wrappers", () => {
     expect(invoke).toHaveBeenLastCalledWith("iac_cleanup", { sessionId: "s1", dir: "/tmp/vterm-iac.a" });
   });
 
-  it("pick a folder and shell scripts, or nothing", async () => {
+  it("pick a folder and shell scripts or playbooks, or nothing", async () => {
     open.mockResolvedValueOnce("/repo").mockResolvedValueOnce(null);
     expect(await api.pickRecipeFolder("t")).toBe("/repo");
     expect(await api.pickRecipeFolder("t")).toBeNull();
@@ -43,6 +43,6 @@ describe("scenario wrappers", () => {
     expect(await api.pickRecipeFiles("t")).toEqual(["/a.sh", "/b.sh"]);
     expect(await api.pickRecipeFiles("t")).toEqual(["/c.sh"]);
     expect(await api.pickRecipeFiles("t")).toEqual([]);
-    expect(open).toHaveBeenLastCalledWith(expect.objectContaining({ multiple: true, filters: [{ name: "Shell", extensions: ["sh"] }] }));
+    expect(open).toHaveBeenLastCalledWith(expect.objectContaining({ multiple: true, filters: [{ name: "Shell, YAML", extensions: ["sh", "yml", "yaml"] }] }));
   });
 });

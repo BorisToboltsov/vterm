@@ -91,7 +91,7 @@ function list(v: string): string[] {
 }
 
 /** `{ a: 1, b: x }` → { a: "1", b: "x" }. */
-function flowMap(v: string): Record<string, string> | null {
+export function flowMap(v: string): Record<string, string> | null {
   const s = v.trim();
   if (!s.startsWith("{") || !s.endsWith("}")) return null;
   const out: Record<string, string> = {};
@@ -102,6 +102,19 @@ function flowMap(v: string): Record<string, string> | null {
     out[part.slice(0, i).trim()] = scalar(part.slice(i + 1));
   }
   return out;
+}
+
+/**
+ * A value as the header writes it — the inverse of `scalar`: bare when it reads
+ * back as itself, quoted when it holds what the header splits on (`,`, `:`,
+ * brackets, braces, `#`) or a quote, or has spaces at its ends.
+ */
+export function headerValue(v: string): string {
+  const s = v.replace(/[\r\n]+/g, " ");
+  if (s !== "" && s === s.trim() && !/[,:{}[\]#"']/.test(s)) return s;
+  if (!s.includes('"')) return `"${s}"`;
+  if (!s.includes("'")) return `'${s}'`;
+  return `"${s.replace(/"/g, "'")}"`;
 }
 
 const truthy = (v: string | undefined): boolean => v !== undefined && /^(true|yes|on|1)$/i.test(v.trim());
@@ -235,23 +248,30 @@ export function summaryLine(stdout: string, stderr: string, max = 160): string {
   return line.length > max ? `${line.slice(0, max - 1)}…` : line;
 }
 
-/** A file name for a recipe named `name`: lower case, words joined by `-`. */
-export function recipeFileName(name: string): string {
-  const slug = name
+/** `name` as a file stem: lower case, words joined by `-`; `fallback` when nothing is left. */
+function slug(name: string, fallback: string): string {
+  const s = name
     .trim()
     .toLowerCase()
     .replace(/[^\p{L}\p{N}]+/gu, "-")
     .replace(/^-+|-+$/g, "")
     .slice(0, 60);
-  return `${slug || "recipe"}.sh`;
+  return s || fallback;
 }
 
-/** A name not among `taken`: `x.sh`, `x-2.sh`, … */
+/** A file name for a recipe named `name`: lower case, words joined by `-`. */
+export const recipeFileName = (name: string): string => `${slug(name, "recipe")}.sh`;
+
+/** A file name for a playbook named `name` (ADR 0072). */
+export const playbookFileName = (name: string): string => `${slug(name, "playbook")}.yml`;
+
+/** A name not among `taken`: `x.sh`, `x-2.sh`, … (`x.yml`, `x-2.yml`, …). */
 export function freeFileName(name: string, taken: readonly string[]): string {
   if (!taken.includes(name)) return name;
-  const stem = name.replace(/\.sh$/, "");
+  const dot = name.lastIndexOf(".");
+  const [stem, ext] = dot > 0 ? [name.slice(0, dot), name.slice(dot)] : [name, ""];
   for (let i = 2; ; i++) {
-    const next = `${stem}-${i}.sh`;
+    const next = `${stem}-${i}${ext}`;
     if (!taken.includes(next)) return next;
   }
 }
@@ -282,6 +302,24 @@ export function recipeTemplate(name: string, description: string): string {
     "}",
     "",
     'case "${VTERM_MODE:-apply}" in check) check ;; *) apply ;; esac',
+    "",
+  ].join("\n");
+}
+
+/**
+ * A new playbook to start from (ADR 0072): its description as the comment at
+ * its top, one play on every host of the run, one task that asks each host to
+ * answer. The servers are the catalog's, picked when it runs.
+ */
+export function playbookTemplate(name: string, description: string): string {
+  return [
+    `# ${description.replace(/\n/g, " ")}`,
+    `- name: ${JSON.stringify(name.replace(/\n/g, " "))}`,
+    "  hosts: all",
+    "  become: false",
+    "  tasks:",
+    "    - name: The host answers",
+    "      ansible.builtin.ping:",
     "",
   ].join("\n");
 }

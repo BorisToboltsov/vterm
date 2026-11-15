@@ -19,7 +19,8 @@
   // project's inventory and which servers of the catalog, with which tags, and
   // the command that will be typed into the terminal. Prod among the hosts —
   // known by matching the inventory to the catalog — turns the run red; the
-  // question after it is the project view's.
+  // question after it is the project view's. A playbook of the library (ADR
+  // 0072) has no inventory: its servers are the catalog's, picked here.
   import { isProdServer } from "../ai/aiexec";
   import { t } from "../i18n";
   import type { AnsibleOverview } from "../stores/scenarios.svelte";
@@ -36,6 +37,7 @@
     servers,
     connected,
     local,
+    library = false,
     initial,
     onrun,
     oncancel,
@@ -46,6 +48,8 @@
     connected: ReadonlySet<string>;
     /** The project is on this computer: key files and jump hosts can be passed. */
     local: boolean;
+    /** A playbook of the library: no inventory of its own, the catalog's servers only. */
+    library?: boolean;
     initial: { playbook?: string; check: boolean };
     onrun: (choice: AnsibleChoice) => void;
     oncancel: () => void;
@@ -135,6 +139,14 @@
       </div>
     </div>
 
+    {#if library}
+      <section data-testid="ansible-library-targets">
+        <h3 class="mb-1 text-meta text-muted">{t("scenarios.ansible.catalogTitle", { count: catalog.length })}</h3>
+        <TargetPicker {servers} bind:selected={catalog} {connected} hideStatus testid="ansible-catalog-picker" />
+        <p class="mt-1 text-meta text-muted">{local ? t("scenarios.ansible.catalogLocal") : t("scenarios.ansible.catalogRemote")}</p>
+        {#if inv.asksPassword.length}<p class="text-meta text-warn">{t("scenarios.ansible.asksPassword")}</p>{/if}
+      </section>
+    {:else}
     <section>
       <h3 class="mb-1 flex items-center gap-2 text-meta text-muted">
         {#if overview.inventories.length}
@@ -174,6 +186,7 @@
         </div>
       {/if}
     </section>
+    {/if}
 
     {#if book?.tags.length}
       <section>
@@ -193,7 +206,11 @@
 
     <section class="grid grid-cols-[8rem_1fr] gap-x-2 gap-y-1">
       <span class="text-muted">{t("scenarios.ansible.where")}</span>
-      <span class="text-text">{local ? t("scenarios.ansible.whereLocal") : t("scenarios.ansible.whereRemote")} · {overview.version ?? "ansible"}</span>
+      {#if library}
+        <span class="text-text">{local ? t("scenarios.ansible.whereThis") : t("scenarios.ansible.whereServer")} · {overview.version ?? "ansible"}</span>
+      {:else}
+        <span class="text-text">{local ? t("scenarios.ansible.whereLocal") : t("scenarios.ansible.whereRemote")} · {overview.version ?? "ansible"}</span>
+      {/if}
       <span class="text-muted">{t("scenarios.ansible.becomeLabel")}</span>
       <label class="flex items-center gap-1.5 text-text"><input type="checkbox" bind:checked={askBecome} />{t("scenarios.ansible.become")}</label>
       <span class="text-muted">{t("scenarios.ansible.hostKeys")}</span>

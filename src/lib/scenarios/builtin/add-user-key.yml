@@ -1,0 +1,43 @@
+# A user who signs in with a public key; Ansible asks the name and the key when the run starts.
+- name: User with an SSH key
+  hosts: all
+  become: true
+  vars_prompt:
+    - name: new_user
+      prompt: User name
+      private: false
+    - name: public_key
+      prompt: Public key (one line)
+      private: false
+  vars:
+    # true — the user joins sudo (Debian, Ubuntu) or wheel (the rest).
+    with_sudo: false
+    home: "/home/{{ new_user }}"
+  tasks:
+    - name: The user exists
+      ansible.builtin.user:
+        name: "{{ new_user }}"
+        home: "{{ home }}"
+        create_home: true
+
+    - name: Their .ssh folder
+      ansible.builtin.file:
+        path: "{{ home }}/.ssh"
+        state: directory
+        owner: "{{ new_user }}"
+        mode: "0700"
+
+    - name: The key signs them in
+      ansible.builtin.lineinfile:
+        path: "{{ home }}/.ssh/authorized_keys"
+        line: "{{ public_key }}"
+        create: true
+        owner: "{{ new_user }}"
+        mode: "0600"
+
+    - name: Member of the admin group
+      ansible.builtin.user:
+        name: "{{ new_user }}"
+        groups: "{{ 'sudo' if ansible_facts.os_family == 'Debian' else 'wheel' }}"
+        append: true
+      when: with_sudo | bool

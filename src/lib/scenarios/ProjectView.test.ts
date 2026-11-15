@@ -5,7 +5,8 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 // A project view (ADR 0071) over a mocked connection: an Ansible project read,
 // a check typed into the terminal and watched through its events, an apply
-// asked about on prod; a Terraform project planned, read, and applied.
+// asked about on prod; a playbook of the library (ADR 0072) run in its folder
+// here or carried to a server; a Terraform project planned, read, and applied.
 
 const here = (f: string) => readFileSync(join(process.cwd(), "src", "lib", "scenarios", f), "utf8");
 const EVENTS = here("ansibleevents.check.out");
@@ -17,6 +18,9 @@ const env = vi.hoisted(() => ({
   events: "",
   planSizes: [] as number[],
   cleaned: [] as string[],
+  temps: [] as string[][],
+  ansible: true,
+  local: {} as Record<string, string>,
 }));
 
 vi.mock("../api", async (importOriginal) => ({
@@ -31,14 +35,21 @@ vi.mock("../api", async (importOriginal) => ({
   })),
   iacRun: vi.fn(async (_s: string, args: string[]) => {
     const ok = (stdout: string) => ({ stdout, stderr: "", exitCode: 0 });
-    if (args[0] === "ansible-playbook") return ok("ansible-playbook [core 2.17.4]\n");
+    if (args[0] === "ansible-playbook") return env.ansible ? ok("ansible-playbook [core 2.17.4]\n") : { stdout: "", stderr: "", exitCode: 127 };
     if (args[0] === "ansible-inventory")
       return ok(JSON.stringify({ _meta: { hostvars: { local: { ansible_host: "db.lan" } } }, db: { hosts: ["local"] } }));
     if (args[0] === "terraform" && args[1] === "version") return ok('{"terraform_version":"1.9.8"}');
     if (args.includes("show")) return ok(PLAN);
     return { stdout: "", stderr: "", exitCode: 1 };
   }),
-  iacTemp: vi.fn(async () => "/tmp/vterm-iac.v1"),
+  iacTemp: vi.fn(async (_s: string, files: { name: string }[]) => {
+    env.temps.push(files.map((f) => f.name));
+    return "/tmp/vterm-iac.v1";
+  }),
+  readLocalText: vi.fn(async (path: string) => {
+    if (!(path in env.local)) throw new Error(`no ${path}`);
+    return { content: env.local[path], encoding: "utf-8", eol: "lf", sha256: "" };
+  }),
   iacRead: vi.fn(async (_s: string, path: string, offset: number) => {
     if (path.endsWith(".tfplan")) {
       const size = env.planSizes.shift() ?? 50;
@@ -129,8 +140,61 @@ function show(kind: "ansible" | "terraform", root: string, extra: Record<string,
 
 beforeEach(() => {
   env.cleaned.length = 0;
+  env.temps.length = 0;
   env.planSizes = [];
+  env.ansible = true;
   forgetScenarios("s1");
+});
+
+describe("a playbook of the library", () => {
+  const PATH = "/data/scripts/web.yml";
+  const library = (ask = true): EditorDoc => ({
+    ...doc("ansible", PATH),
+    project: { kind: "ansible", root: PATH, library: true, ask: ask ? { action: "check", playbook: "web.yml" } : undefined, askSeq: ask ? 1 : 0 },
+  });
+  beforeEach(() => {
+    env.local = { [PATH]: "# Serves the site\n- name: Web\n  hosts: all\n  become: true\n  tasks: []\n" };
+  });
+
+  async function runOn(local: boolean) {
+    const r = show("ansible", PATH, { doc: library(), local });
+    const dialog = await screen.findByTestId("ansible-run-dialog");
+    // No inventory of its own: the servers of the catalog, picked here.
+    const picker = within(dialog).getByTestId("ansible-library-targets");
+    await fireEvent.click(within(within(picker).getAllByTestId("target-row")[0]).getByRole("checkbox"));
+    await fireEvent.click(within(dialog).getByTestId("ansible-run-go"));
+    await waitFor(() => expect(r.onTypeLine).toHaveBeenCalled());
+    return r.onTypeLine.mock.calls[0][0] as string;
+  }
+
+  it("runs here in its own folder, on the servers picked from the catalog", async () => {
+    const line = await runOn(true);
+    expect(line).toMatch(/^cd \/data\/scripts && env /);
+    expect(line).toContain("ansible-playbook web.yml -i /tmp/vterm-iac.v1/vterm-inventory.yml --limit db-1 --check --diff -K");
+    expect(env.temps).toEqual([["vterm_events.py", "vterm-inventory.yml"]]);
+    expect(screen.getByText("Ansible playbook")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Pin to the Scenarios panel" })).toBeNull();
+  });
+
+  it("on a server, is carried into the run's folder and run from there", async () => {
+    const line = await runOn(false);
+    expect(env.temps).toEqual([["vterm_events.py", "vterm-inventory.yml", "web.yml"]]);
+    expect(line).toMatch(/^cd \/tmp\/vterm-iac\.v1 && env /);
+    expect(line).toContain("ansible-playbook web.yml -i /tmp/vterm-iac.v1/vterm-inventory.yml --limit db-1 --check --diff");
+  });
+
+  it("where Ansible is missing, says so and offers a server of the catalog", async () => {
+    env.ansible = false;
+    const onMoveTo = vi.fn();
+    const { onOpenFile } = show("ansible", PATH, { doc: library(false), local: true, onMoveTo });
+    const missing = await screen.findByTestId("playbook-missing");
+    expect(missing).toHaveTextContent("Ansible is not installed on this computer.");
+    await fireEvent.click(within(missing).getByRole("button", { name: "Open there" }));
+    expect(onMoveTo).toHaveBeenCalledWith("db");
+    // Its file is the library's, opened as it is.
+    await fireEvent.click(screen.getByText("web.yml"));
+    expect(onOpenFile).toHaveBeenCalledWith(PATH);
+  });
 });
 
 describe("an Ansible project", () => {

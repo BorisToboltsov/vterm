@@ -70,9 +70,11 @@ import type { LogScope } from "../git/git";
 import {
   sanitizeBookmarks,
   sanitizeScenarioTab,
+  sanitizeSeeded,
   sanitizeSources,
   type ProjectBookmark,
   type ScenarioTab,
+  type SeedState,
 } from "../scenarios/bookmarks";
 import { defaultAiSettings, sanitizeAiSettings, type AiSettings } from "../ai/ai";
 import {
@@ -314,6 +316,14 @@ export interface Settings {
   scenarioSources: string[];
   scenarioProjects: ProjectBookmark[];
   scenarioTab: ScenarioTab;
+  // The shipped recipes and playbooks written into "Mine" (ADR 0072): by file,
+  // the fingerprint of the text written and its language — a file still so is
+  // written anew by a later build, a changed or deleted one never. Read
+  // through `sanitizeSeeded` (recipelib.ts).
+  scenarioSeeded: SeedState;
+  // Where a playbook of the library runs (ADR 0072): a server of the catalog by
+  // id, or null — this computer. The last place the user picked.
+  playbookNode: string | null;
   // Docker registry credentials (Phase 36) — non-secret half (url + username);
   // the password lives only in the OS keychain, keyed by url. See docker.ts.
   dockerRegistries: DockerRegistry[];
@@ -495,6 +505,8 @@ const DEFAULTS: Settings = {
   scenarioSources: [],
   scenarioProjects: [],
   scenarioTab: "library",
+  scenarioSeeded: {},
+  playbookNode: null,
   hiddenPanels: [],
   topbar: [...DEFAULT_TOPBAR],
   topbarKnown: [...BUILTIN_ACTIONS],
@@ -640,6 +652,8 @@ function load(): Settings {
       scenarioSources: sanitizeSources(raw.scenarioSources),
       scenarioProjects: sanitizeBookmarks(raw.scenarioProjects),
       scenarioTab: sanitizeScenarioTab(raw.scenarioTab),
+      scenarioSeeded: sanitizeSeeded(raw.scenarioSeeded),
+      playbookNode: typeof raw.playbookNode === "string" && raw.playbookNode ? raw.playbookNode : null,
       hiddenPanels: sanitizeHiddenPanels(raw.hiddenPanels),
       topbar: sanitizeTopbar(raw.topbar, knownBuiltins(raw.topbarKnown)),
       topbarKnown: [...BUILTIN_ACTIONS],
@@ -670,6 +684,7 @@ function load(): Settings {
       gitFavoriteBranches: [...DEFAULT_FAVORITE_BRANCHES],
       scenarioSources: [],
       scenarioProjects: [],
+      scenarioSeeded: {},
       hiddenPanels: [],
       topbar: [...DEFAULT_TOPBAR],
       topbarKnown: [...BUILTIN_ACTIONS],
@@ -729,6 +744,9 @@ export function resetSettings(): void {
     gitFavoriteBranches: [...DEFAULT_FAVORITE_BRANCHES],
     scenarioSources: [],
     scenarioProjects: [],
+    // The files in «Mine» outlive a reset — so does what the app knows of them:
+    // a shipped recipe the user deleted does not come back.
+    scenarioSeeded: { ...settings.scenarioSeeded },
     hiddenPanels: [],
     topbar: [...DEFAULT_TOPBAR],
     topbarKnown: [...BUILTIN_ACTIONS],
@@ -761,6 +779,7 @@ export function applyImportedSettings(raw: unknown): void {
     gitFavoriteBranches: [...DEFAULT_FAVORITE_BRANCHES],
     scenarioSources: [],
     scenarioProjects: [],
+    scenarioSeeded: {},
     hiddenPanels: [],
     topbar: [...DEFAULT_TOPBAR],
     topbarKnown: [...BUILTIN_ACTIONS],
@@ -782,6 +801,7 @@ export function applyImportedSettings(raw: unknown): void {
     "dockerRegistries",
     "scenarioSources",
     "scenarioProjects",
+    "scenarioSeeded",
     "hiddenPanels",
     "topbar",
     "topbarCommands",
@@ -816,6 +836,8 @@ export function applyImportedSettings(raw: unknown): void {
   next.scenarioSources = sanitizeSources(r.scenarioSources);
   next.scenarioProjects = sanitizeBookmarks(r.scenarioProjects);
   next.scenarioTab = sanitizeScenarioTab(next.scenarioTab);
+  next.scenarioSeeded = sanitizeSeeded(r.scenarioSeeded);
+  next.playbookNode = typeof next.playbookNode === "string" && next.playbookNode ? next.playbookNode : null;
   next.topbar = sanitizeTopbar(r.topbar, knownBuiltins(r.topbarKnown));
   next.topbarKnown = [...BUILTIN_ACTIONS];
   next.journalKeep = next.journalKeep !== false;

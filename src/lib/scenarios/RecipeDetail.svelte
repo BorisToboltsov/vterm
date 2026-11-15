@@ -26,9 +26,8 @@
   import PasswordInput from "../ui/PasswordInput.svelte";
   import type { ServerProfile } from "../types";
   import { valuesProblem } from "./recipe";
-  import type { LibraryRecipe } from "./recipelib";
+  import { itemDescription, itemName, type LibraryRecipe } from "./recipelib";
   import RunHosts from "./RunHosts.svelte";
-  import { paramText, recipeDescription, recipeName } from "./scenariotext";
   import TargetPicker from "./TargetPicker.svelte";
 
   let {
@@ -46,7 +45,7 @@
     servers: ServerProfile[];
     connected: ReadonlySet<string>;
     onrun: (ask: RunAsk) => void;
-    /** Copy into "Mine" (a built-in or a source's recipe). */
+    /** Copy into "Mine" (a source's recipe). */
     oncopy?: () => void;
     /** Open the file in the editor (the user's recipes). */
     onedit?: () => void;
@@ -85,7 +84,7 @@
     const bad = valuesProblem(meta, values);
     if (bad) {
       const p = meta.params.find((x) => x.name === bad.param)!;
-      problem = t(bad.why === "required" ? "scenarios.recipe.required" : "scenarios.recipe.newline", { name: paramText(recipe, p).label });
+      problem = t(bad.why === "required" ? "scenarios.recipe.required" : "scenarios.recipe.newline", { name: p.label });
       return;
     }
     if (picked.length === 0) {
@@ -112,15 +111,15 @@
         </button>
       {/if}
       <Icon name="script" size={15} class="text-accent" />
-      <span class="min-w-0 truncate text-sm font-medium text-text">{recipeName(recipe)}</span>
+      <span class="min-w-0 truncate text-sm font-medium text-text">{itemName(recipe)}</span>
       <span class="rounded bg-edge px-1.5 text-caption text-muted">
-        {recipe.origin === "builtin" ? t("scenarios.origin.builtin") : recipe.origin === "own" ? t("scenarios.origin.own") : t("scenarios.origin.source")}
+        {recipe.origin === "own" ? t("scenarios.origin.own") : t("scenarios.origin.source")}
       </span>
       {#if meta?.sudo}<span class="rounded bg-warn/15 px-1.5 text-caption text-warn">sudo</span>{/if}
     </div>
-    {#if recipeDescription(recipe) || meta?.os.length}
+    {#if itemDescription(recipe) || meta?.os.length}
       <p class="mt-1 text-meta text-muted">
-        {recipeDescription(recipe)}{#if meta?.os.length}<span> · {meta.os.join(", ")}</span>{/if}
+        {itemDescription(recipe)}{#if meta?.os.length}<span> · {meta.os.join(", ")}</span>{/if}
       </p>
     {/if}
     <div class="mt-1.5 flex items-center gap-0.5" role="tablist">
@@ -163,7 +162,7 @@
             <h3 class="mb-1 text-meta text-muted">{t("scenarios.recipe.params")}</h3>
             <div class="grid grid-cols-[minmax(0,12rem)_1fr] items-center gap-x-3 gap-y-1.5">
               {#each meta.params as p (p.name)}
-                {@const text = paramText(recipe, p)}
+                {@const text = { label: p.label, hint: p.hint }}
                 <label for="rp-{p.name}" class="truncate text-xs text-text" use:tooltip={p.name}>{text.label}{p.required ? " *" : ""}</label>
                 {#if p.type === "bool"}
                   <input id="rp-{p.name}" type="checkbox" class="justify-self-start" checked={values[p.name] === "true"} onchange={(e) => (values[p.name] = String((e.currentTarget as HTMLInputElement).checked))} />

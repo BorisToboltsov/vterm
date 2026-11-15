@@ -1,37 +1,11 @@
-// How the Scenarios panel says things (ADR 0071): a built-in recipe in the
-// reader's language (its file keeps the English header), a host's state as an
-// icon, a tone and a word, a cell of a playbook run.
+// How the Scenarios panel says things (ADR 0071): a host's state as an icon, a
+// tone and a word, a cell of a playbook run, a change of a plan. (What a recipe
+// or a playbook is called is its own file's — `itemName` in recipelib.ts.)
 
 import { t, type MessageKey } from "../i18n";
 import type { IconName } from "../ui/icons";
 import type { CellStatus } from "./ansibleevents";
-import type { RecipeParam } from "./recipe";
-import { builtinId, type LibraryRecipe } from "./recipelib";
 import type { ChangeKind } from "./tfplan";
-
-/** A recipe's name as the list shows it: a built-in one translated, the user's as written. */
-export function recipeName(r: LibraryRecipe): string {
-  const id = builtinId(r);
-  if (id) return t(`scenarios.builtin.${id}.name` as MessageKey);
-  return r.meta?.name || r.file;
-}
-
-/** A recipe's description, the same way. */
-export function recipeDescription(r: LibraryRecipe): string {
-  const id = builtinId(r);
-  if (id) return t(`scenarios.builtin.${id}.desc` as MessageKey);
-  return r.meta?.description ?? "";
-}
-
-/** A parameter's label and hint; a built-in recipe's in the reader's language. */
-export function paramText(r: LibraryRecipe, p: RecipeParam): { label: string; hint: string } {
-  const id = builtinId(r);
-  if (!id) return { label: p.label, hint: p.hint };
-  return {
-    label: t(`scenarios.builtin.${id}.${p.name}` as MessageKey),
-    hint: p.hint ? t(`scenarios.builtin.${id}.${p.name}.hint` as MessageKey) : "",
-  };
-}
 
 export type HostTone = "muted" | "accent" | "ok" | "warn" | "bad";
 

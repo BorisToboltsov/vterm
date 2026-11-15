@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { folderName, isPinned, MAX_SOURCES, sanitizeBookmarks, sanitizeScenarioTab, sanitizeSources, togglePin } from "./bookmarks";
+import { folderName, isPinned, MAX_SOURCES, sanitizeBookmarks, sanitizeScenarioTab, sanitizeSeeded, sanitizeSources, togglePin } from "./bookmarks";
 
 describe("what the Scenarios panel remembers", () => {
   it("keeps absolute recipe folders, each once, and no more than its limit", () => {
@@ -35,5 +35,15 @@ describe("what the Scenarios panel remembers", () => {
     expect(togglePin(pinned, b)).toEqual([]);
     expect(folderName("/srv/infra/ansible/")).toBe("ansible");
     expect(folderName("C:\\work\\tf")).toBe("tf");
+  });
+
+  it("the shipped files written into «Mine»: library file names, a fingerprint and a language each", () => {
+    expect(sanitizeSeeded({ "a.sh": { hash: "0f", lang: "ru" }, "b.yml": { hash: "", lang: "en" } })).toEqual({
+      "a.sh": { hash: "0f", lang: "ru" },
+      "b.yml": { hash: "", lang: "en" },
+    });
+    for (const bad of [null, [], "x", { "../x.sh": { hash: "1", lang: "en" } }, { "x.txt": { hash: "1", lang: "en" } }, { "x.sh": { hash: 1, lang: "en" } }, { "x.sh": null }]) {
+      expect(sanitizeSeeded(bad)).toEqual({});
+    }
   });
 });

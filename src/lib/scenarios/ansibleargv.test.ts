@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { commandPreview, playbookArgv, playbookLine, type PlaybookRun } from "./ansibleargv";
+import { carriedName, commandPreview, playbookArgv, playbookLine, type PlaybookRun } from "./ansibleargv";
 
 const run: PlaybookRun = {
   root: "/home/deploy/infra/ansible",
@@ -48,5 +48,11 @@ describe("the command of a run", () => {
     expect(playbookLine({ ...run, playbook: "a\nrm -rf /" })).toBeNull();
     expect(playbookLine({ ...run, root: "/a\n" })).toBeNull();
     expect(commandPreview({ ...run, root: "/a\n" })).toBe("");
+  });
+
+  it("a playbook carried to a server keeps its name, unless vterm's files of the run hold it", () => {
+    expect(carriedName("web.yml")).toBe("web.yml");
+    expect(carriedName("vterm-inventory.yml")).toBe("playbook-vterm-inventory.yml");
+    expect(carriedName("vterm_events.py")).toBe("playbook-vterm_events.py");
   });
 });

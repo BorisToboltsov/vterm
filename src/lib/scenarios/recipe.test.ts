@@ -3,7 +3,10 @@ import {
   asRecipe,
   checkVerdict,
   freeFileName,
+  headerValue,
   parseRecipe,
+  playbookFileName,
+  playbookTemplate,
   recipeFileName,
   recipeScript,
   recipeTemplate,
@@ -108,6 +111,23 @@ describe("files of the library", () => {
     expect(recipeFileName("***")).toBe("recipe.sh");
     expect(freeFileName("a.sh", [])).toBe("a.sh");
     expect(freeFileName("a.sh", ["a.sh", "a-2.sh"])).toBe("a-3.sh");
+    expect(playbookFileName("Nginx с TLS")).toBe("nginx-с-tls.yml");
+    expect(playbookFileName("***")).toBe("playbook.yml");
+    expect(freeFileName("web.yml", ["web.yml"])).toBe("web-2.yml");
+  });
+
+  it("a value is written so the header reads it back as it was", () => {
+    for (const v of ["plain words", "10m, 1h, 1d", "127.0.0.1:9100", "Docker's repo", 'say "hi"', "a'b\"c", " padded ", "{x}", "#tag"]) {
+      const r = parseRecipe(`# vterm:\n#   name: N\n#   params:\n#     P: { label: ${headerValue(v)}, hint: ${headerValue(v)} }\n#   description: ${headerValue(v)}\n`);
+      const want = v.includes('"') && v.includes("'") ? v.replace(/"/g, "'") : v;
+      expect(r.ok && [r.meta.description, r.meta.params[0].label, r.meta.params[0].hint], v).toEqual([want, want, want]);
+    }
+    expect(headerValue("plain")).toBe("plain");
+  });
+
+  it("the playbook template is a playbook named as asked", () => {
+    const text = playbookTemplate('Web "front"', "Serves it");
+    expect(text.split("\n").slice(0, 3)).toEqual(["# Serves it", '- name: "Web \\"front\\""', "  hosts: all"]);
   });
 
   it("the template is a recipe that checks", () => {

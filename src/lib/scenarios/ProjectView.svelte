@@ -4,8 +4,10 @@
   // read from the files through the connection's own transport and from the
   // user's `ansible`/`terraform` on the host where the project lies; a run or a
   // plan is typed into that host's terminal — the user's program in the user's
-  // shell — and watched here through what it leaves in the run's folder. Not a
-  // container (it owns its dialogs).
+  // shell — and watched here through what it leaves in the run's folder. A
+  // playbook of the library (ADR 0072) is shown the same way: one file of this
+  // computer, run there in its folder, or carried into the run's folder of a
+  // server with Ansible. Not a container (it owns its dialogs).
   import { untrack, type Snippet } from "svelte";
   import { tooltip } from "../actions/tooltip";
   import { isProdServer } from "../ai/aiexec";
@@ -16,6 +18,7 @@
     ansibleWatch,
     endAnsibleWatch,
     loadAnsibleProject,
+    loadLibraryPlaybook,
     loadTfProject,
     planApplied,
     planWatch,
@@ -34,7 +37,7 @@
   import Skeleton from "../ui/Skeleton.svelte";
   import { singleFlight } from "../ui/poll";
   import type { ServerProfile } from "../types";
-  import { CATALOG_INVENTORY_FILE, playbookLine } from "./ansibleargv";
+  import { CATALOG_INVENTORY_FILE, carriedName, playbookLine } from "./ansibleargv";
   import AnsibleRunDialog, { type AnsibleChoice } from "./AnsibleRunDialog.svelte";
   import AnsibleRunView from "./AnsibleRunView.svelte";
   import { folderName, isPinned, togglePin } from "./bookmarks";
@@ -57,6 +60,7 @@
     onShowTerminal,
     onOpenFile,
     onAsk,
+    onMoveTo,
   }: {
     sessionId: string;
     /** The project is on this computer (a local tab). */
@@ -77,10 +81,14 @@
     onShowTerminal: () => void;
     onOpenFile: (path: string) => void;
     onAsk?: (context: string) => void;
+    /** A playbook of the library to a server of the catalog where Ansible is. */
+    onMoveTo?: (serverId: string) => void;
   } = $props();
 
   const kind = $derived(doc.project!.kind);
   const root = $derived(doc.project!.root);
+  /** A playbook of the library: `root` is its file on this computer. */
+  const library = $derived(doc.project!.library === true);
   const bookmark = $derived({ kind, root, serverId });
   const pinned = $derived(isPinned(settings.scenarioProjects, bookmark));
 
@@ -95,7 +103,7 @@
     loading = true;
     loadError = null;
     try {
-      if (kind === "ansible") ansible = await loadAnsibleProject(sessionId, local, root);
+      if (kind === "ansible") ansible = library ? await loadLibraryPlaybook(sessionId, root) : await loadAnsibleProject(sessionId, local, root);
       else tf = await loadTfProject(sessionId, local, root);
     } catch (e) {
       loadError = String(e);
@@ -107,6 +115,7 @@
   $effect(() => {
     void root;
     void kind;
+    void library;
     untrack(() => void load());
   });
 
@@ -154,17 +163,19 @@
     }
     const picked = servers.filter((s) => choice.catalog.includes(s.id));
     const inv = picked.length ? catalogInventory(picked, local) : null;
+    // A playbook of the library runs in its folder here; on a server it is carried into the run's folder.
+    const carried = ov.library && !local ? { file: choice.playbook, text: ov.library.text } : null;
     let tempDir: string;
     try {
-      tempDir = await prepareAnsibleRun(sessionId, inv?.text ?? null);
+      tempDir = await prepareAnsibleRun(sessionId, inv?.text ?? null, carried);
     } catch (e) {
       notifyError(t("scenarios.ansible.prepareFailed", { error: String(e) }), { source: "scenarios", sessionId });
       return;
     }
     const limit = choice.allHosts && !picked.length ? [] : [...choice.hosts, ...picked.map((s) => inv!.names[s.id])];
     const line = playbookLine({
-      root,
-      playbook: choice.playbook,
+      root: carried ? tempDir : ov.root,
+      playbook: carried ? carriedName(carried.file) : choice.playbook,
       inventories: [...(choice.hosts.length ? ov.inventories : []), ...(inv ? [`${tempDir}/${CATALOG_INVENTORY_FILE}`] : [])],
       limit,
       tags: choice.tags,
@@ -240,6 +251,7 @@
   });
 
   const where = $derived(serverId ? (servers.find((s) => s.id === serverId)?.alias ?? "") : t("scenarios.project.thisComputer"));
+  let moveTarget = $state("");
   const join = (dir: string, name: string) => `${dir}${dir.endsWith("/") ? "" : "/"}${name}`;
 </script>
 
@@ -253,19 +265,25 @@
 <div class="flex h-full min-h-0 flex-col bg-panel" data-testid="project-view">
   <div class="flex shrink-0 flex-wrap items-center gap-2 border-b border-edge px-3 py-1.5">
     <Icon name={kind === "ansible" ? "gearPlay" : "cube"} size={16} class={kind === "ansible" ? "text-warn" : "text-accent"} />
-    <span class="text-sm font-medium text-text">{kind === "ansible" ? t("scenarios.project.ansible") : t("scenarios.project.terraform")}</span>
-    <span class="min-w-0 truncate font-mono text-meta text-muted" use:tooltip={root}>{where}:{root}</span>
+    <span class="text-sm font-medium text-text">{library ? t("scenarios.project.playbook") : kind === "ansible" ? t("scenarios.project.ansible") : t("scenarios.project.terraform")}</span>
+    {#if library}
+      <span class="min-w-0 truncate font-mono text-meta text-muted" use:tooltip={root}>{folderName(root)} · {where}</span>
+    {:else}
+      <span class="min-w-0 truncate font-mono text-meta text-muted" use:tooltip={root}>{where}:{root}</span>
+    {/if}
     <span class="ml-auto flex items-center gap-1">
-      <button
-        type="button"
-        class="rounded p-1 hover:bg-edge {pinned ? 'text-accent' : 'text-muted hover:text-text'}"
-        aria-label={pinned ? t("scenarios.project.unpin") : t("scenarios.project.pin")}
-        aria-pressed={pinned}
-        use:tooltip={pinned ? t("scenarios.project.unpin") : t("scenarios.project.pin")}
-        onclick={() => (settings.scenarioProjects = togglePin(settings.scenarioProjects, bookmark))}
-      >
-        <Icon name="pin" size={13} />
-      </button>
+      {#if !library}
+        <button
+          type="button"
+          class="rounded p-1 hover:bg-edge {pinned ? 'text-accent' : 'text-muted hover:text-text'}"
+          aria-label={pinned ? t("scenarios.project.unpin") : t("scenarios.project.pin")}
+          aria-pressed={pinned}
+          use:tooltip={pinned ? t("scenarios.project.unpin") : t("scenarios.project.pin")}
+          onclick={() => (settings.scenarioProjects = togglePin(settings.scenarioProjects, bookmark))}
+        >
+          <Icon name="pin" size={13} />
+        </button>
+      {/if}
       <button type="button" class="rounded p-1 text-muted hover:bg-edge hover:text-text" aria-label={t("scenarios.refresh")} use:tooltip={t("scenarios.refresh")} onclick={() => void load()}>
         <Icon name="refresh" size={13} class={loading ? "animate-spin" : ""} />
       </button>
@@ -322,13 +340,31 @@
   {:else if kind === "ansible" && ansible}
     {@const ov = ansible}
     <div class="min-h-0 flex-1 overflow-y-auto px-3 pb-3 text-xs">
-      {#if !ov.installed}
+      {#if !ov.installed && library}
+        {@const elsewhere = servers.filter((s) => s.id !== serverId)}
+        <div class="mt-3 space-y-1.5 rounded border border-warn/50 bg-warn/10 px-2 py-1.5 text-warn" data-testid="playbook-missing">
+          <p>{local ? t("scenarios.ansible.missingLibraryLocal") : t("scenarios.ansible.missingLibraryRemote")}</p>
+          {#if onMoveTo && elsewhere.length}
+            <div class="flex flex-wrap items-center gap-2 text-text">
+              <span>{t("scenarios.ansible.moveTo")}</span>
+              <select class="rounded border border-edge bg-panel px-1.5 py-0.5 text-xs text-text" aria-label={t("scenarios.ansible.moveTo")} bind:value={moveTarget}>
+                {#each elsewhere as s (s.id)}<option value={s.id}>{s.alias}</option>{/each}
+              </select>
+              <button
+                type="button"
+                class="rounded border border-edge px-2 py-0.5 text-meta hover:border-accent"
+                onclick={() => onMoveTo?.(moveTarget || elsewhere[0].id)}>{t("scenarios.ansible.moveGo")}</button
+              >
+            </div>
+          {/if}
+        </div>
+      {:else if !ov.installed}
         <p class="mt-3 rounded border border-warn/50 bg-warn/10 px-2 py-1 text-warn">{local ? t("scenarios.ansible.missingLocal") : t("scenarios.ansible.missingRemote")}</p>
       {/if}
       {#snippet books()}
         {#each ov.playbooks as p (p.file)}
           <div class="flex items-center gap-2 px-2 py-1">
-            <button type="button" class="w-28 shrink-0 truncate text-left font-mono text-text hover:underline" onclick={() => onOpenFile(join(root, p.file))}>{p.file}</button>
+            <button type="button" class="w-28 shrink-0 truncate text-left font-mono text-text hover:underline" onclick={() => onOpenFile(library ? root : join(root, p.file))}>{p.file}</button>
             <span class="min-w-0 flex-1 truncate text-muted">
               {#if p.book.imports.length}{t("scenarios.ansible.imports", { files: p.book.imports.join(", ") })}{/if}
               {#each p.book.plays as pl, i (i)}
@@ -369,7 +405,11 @@
           <p class="px-2 py-1 text-muted">{t("scenarios.ansible.noInventoryHint")}</p>
         {/if}
       {/snippet}
-      {@render card(ov.inventories.length ? t("scenarios.ansible.inventoryOf", { files: ov.inventories.map((p) => p.slice(root.length + 1) || p).join(", ") }) : t("scenarios.ansible.inventory"), hostsCard)}
+      {#if library}
+        <p class="mt-3 text-meta text-muted">{t("scenarios.ansible.libraryHosts")}{#if !local} {t("scenarios.playbook.carryHint")}{/if}</p>
+      {:else}
+        {@render card(ov.inventories.length ? t("scenarios.ansible.inventoryOf", { files: ov.inventories.map((p) => p.slice(root.length + 1) || p).join(", ") }) : t("scenarios.ansible.inventory"), hostsCard)}
+      {/if}
 
       {#if ov.requirements.collections.length || ov.requirements.roles.length || ov.unreadable.length}
         {#snippet needs()}
@@ -460,6 +500,7 @@
     {servers}
     {connected}
     {local}
+    {library}
     initial={dialog ?? { check: true }}
     onrun={chosen}
     oncancel={() => (dialog = null)}

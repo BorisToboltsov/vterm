@@ -1,6 +1,7 @@
 // The command a run of a playbook types into the terminal (ADR 0071): `cd` to
-// the project, then `env` with the event collector of vterm and the playbook
-// with what the run dialog chose. Ansible runs only in a POSIX shell (Linux,
+// the project — or to the folder of a playbook of the library, or to the run's
+// folder it was carried to (ADR 0072) — then `env` with the event collector of
+// vterm and the playbook with what the run dialog chose. Ansible runs only in a POSIX shell (Linux,
 // macOS, WSL), so the line is POSIX. Pure.
 import { shQuote } from "./recipe";
 
@@ -10,6 +11,13 @@ export const COLLECTOR_FILE = "vterm_events.py";
 export const EVENTS_FILE = "events.out";
 /** The inventory of the servers picked from the catalog, in the same folder. */
 export const CATALOG_INVENTORY_FILE = "vterm-inventory.yml";
+/**
+ * The name a playbook of the library (ADR 0072) takes in the run's folder on a
+ * server: its own, unless vterm's files of the run hold it.
+ */
+export const carriedName = (file: string): string =>
+  [COLLECTOR_FILE, EVENTS_FILE, CATALOG_INVENTORY_FILE].includes(file) ? `playbook-${file}` : file;
+
 /** Where Ansible looks for callbacks by default — kept after vterm's folder. */
 const DEFAULT_CALLBACK_DIRS = "~/.ansible/plugins/callback:/usr/share/ansible/plugins/callback";
 
