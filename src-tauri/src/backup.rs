@@ -35,6 +35,8 @@ pub const BACKUP_VERSION: u32 = 1;
 pub const SECTION_SERVERS: &str = "servers";
 pub const SECTION_SETTINGS: &str = "settings";
 pub const SECTION_RECORDINGS: &str = "recordings";
+/// The recipes of the app's own folder (ADR 0071) — in a full backup only.
+pub const SECTION_SCRIPTS: &str = "scripts";
 
 /// Backup preset kinds the user can choose to export.
 pub const KIND_SERVERS: &str = "servers";
@@ -46,6 +48,7 @@ pub const KIND_ALL: &str = "all";
 pub const MANIFEST_NAME: &str = "manifest.json";
 pub const BACKUP_NAME: &str = "backup.json";
 pub const RECORDINGS_PREFIX: &str = "recordings/";
+pub const SCRIPTS_PREFIX: &str = "scripts/";
 
 /// Which data sections a chosen backup `kind` includes. The `servers` section
 /// carries the folder structure too; an unknown kind falls back to a full backup.
@@ -58,6 +61,7 @@ pub fn sections_for_kind(kind: &str) -> Vec<String> {
             SECTION_SERVERS.into(),
             SECTION_SETTINGS.into(),
             SECTION_RECORDINGS.into(),
+            SECTION_SCRIPTS.into(),
         ],
     }
 }
@@ -126,6 +130,30 @@ pub fn safe_recording_name(entry: &str) -> Option<String> {
         return None;
     }
     Some(base.to_string())
+}
+
+/// Reduce an archive's `scripts/<name>` entry to a safe recipe file name, like
+/// [`safe_recording_name`]: `None` for anything but one `*.sh` component.
+pub fn safe_script_name(entry: &str) -> Option<String> {
+    let rest = entry.strip_prefix(SCRIPTS_PREFIX)?;
+    crate::scenarios::recipe_file_name(rest).ok()
+}
+
+/// The recipes an archive carries: (entry index, safe `*.sh` name).
+pub fn script_entries(zip: &mut Archive) -> AppResult<Vec<(usize, String)>> {
+    let mut out = Vec::new();
+    for i in 0..zip.len() {
+        let f = zip
+            .by_index(i)
+            .map_err(|e| AppError::Message(format!("read archive entry: {e}")))?;
+        let Ok(name) = f.name() else {
+            continue;
+        };
+        if let Some(safe) = safe_script_name(&name) {
+            out.push((i, safe));
+        }
+    }
+    Ok(out)
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -259,6 +287,8 @@ pub struct BackupContents {
     pub settings: bool,
     /// How many recordings it carries; None when it has no recordings section.
     pub recordings: Option<usize>,
+    /// How many recipes it carries; None when it has no scripts section.
+    pub scripts: Option<usize>,
 }
 
 /// Read what a backup file (`.zip` archive or legacy JSON) holds.
@@ -272,11 +302,17 @@ pub fn read_contents(bytes: Vec<u8>) -> AppResult<BackupContents> {
             servers: Some(doc.servers),
             folders: Some(normalize_folders(doc.folders)),
             recordings: None,
+            scripts: None,
         });
     }
     let (mut zip, manifest, doc) = open_archive(bytes)?;
     let recordings = if manifest.has(SECTION_RECORDINGS) {
         Some(recording_entries(&mut zip)?.len())
+    } else {
+        None
+    };
+    let scripts = if manifest.has(SECTION_SCRIPTS) {
+        Some(script_entries(&mut zip)?.len())
     } else {
         None
     };
@@ -294,6 +330,7 @@ pub fn read_contents(bytes: Vec<u8>) -> AppResult<BackupContents> {
         folders,
         settings,
         recordings,
+        scripts,
     })
 }
 
@@ -501,6 +538,23 @@ mod tests {
     }
 
     #[test]
+    fn a_recipe_of_a_backup_is_one_safe_shell_file_name() {
+        assert_eq!(
+            safe_script_name("scripts/install-docker.sh").as_deref(),
+            Some("install-docker.sh")
+        );
+        for bad in [
+            "scripts/../x.sh",
+            "scripts/a/b.sh",
+            "scripts/x.txt",
+            "recordings/x.sh",
+            "x.sh",
+        ] {
+            assert_eq!(safe_script_name(bad), None, "{bad}");
+        }
+    }
+
+    #[test]
     fn normalize_folders_sorts_and_dedups() {
         let f = normalize_folders(vec!["B".into(), "A".into(), "B".into()]);
         assert_eq!(f, vec!["A", "B"]);
@@ -513,12 +567,22 @@ mod tests {
         assert_eq!(sections_for_kind(KIND_RECORDINGS), vec![SECTION_RECORDINGS]);
         assert_eq!(
             sections_for_kind(KIND_ALL),
-            vec![SECTION_SERVERS, SECTION_SETTINGS, SECTION_RECORDINGS]
+            vec![
+                SECTION_SERVERS,
+                SECTION_SETTINGS,
+                SECTION_RECORDINGS,
+                SECTION_SCRIPTS
+            ]
         );
         // Unknown kind → full backup.
         assert_eq!(
             sections_for_kind("???"),
-            vec![SECTION_SERVERS, SECTION_SETTINGS, SECTION_RECORDINGS]
+            vec![
+                SECTION_SERVERS,
+                SECTION_SETTINGS,
+                SECTION_RECORDINGS,
+                SECTION_SCRIPTS
+            ]
         );
     }
 

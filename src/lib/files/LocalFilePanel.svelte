@@ -1,4 +1,5 @@
 <script lang="ts">
+  import type { ProjectKind } from "../scenarios/project";
   // Local-filesystem browser — a thin wrapper over the shared <FileBrowser>
   // (Phase 44.8). It supplies the local transport and the Windows-aware navigation
   // (the synthetic "This PC" drives level sits above a drive root) as an adapter,
@@ -30,6 +31,9 @@
     onToggleFollowTerminal,
     onOpenFile,
     onPipelines,
+    onProject,
+    projectPinned,
+    onPinProject,
     onUserNavigate,
   }: {
     /** Owning terminal tab — the key its directory is remembered under (v1.0.14). */
@@ -46,6 +50,10 @@
     onOpenFile?: (path: string) => void;
     /** "Pipeline schema" on files and folders (ADR 0068). */
     onPipelines?: (targets: { path: string; isDir: boolean }[]) => void;
+    /** The folder is an Ansible or Terraform project (ADR 0071). */
+    onProject?: (kind: ProjectKind, root: string, action: "open" | "check" | "run" | "plan") => void;
+    projectPinned?: (kind: ProjectKind, root: string) => boolean;
+    onPinProject?: (kind: ProjectKind, root: string) => void;
     onUserNavigate?: (path: string) => void;
   } = $props();
 
@@ -82,6 +90,9 @@
   {onToggleFollowTerminal}
   {onOpenFile}
   {onPipelines}
+  {onProject}
+  {projectPinned}
+  {onPinProject}
   {onUserNavigate}
   drives
   stripLabel={t("localfiles.label")}

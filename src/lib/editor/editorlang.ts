@@ -50,6 +50,8 @@ export type EditorLangKind =
   | "prometheus"
   | "ansible"
   | "k8s"
+  // Terraform (ADR 0071): a stream mode of our own, hclmode.ts.
+  | "hcl"
   | "cmake"
   | "diff"
   | "http"
@@ -96,7 +98,7 @@ const SHELL: EditorLang = { kind: "shell", label: "Shell" };
 const TOML: EditorLang = { kind: "toml", label: "TOML" };
 const CONFIG: EditorLang = { kind: "ini", label: "Config" };
 const TEXT: EditorLang = { kind: "plain", label: "Text" };
-const TERRAFORM: EditorLang = { kind: "plain", label: "Terraform" };
+const TERRAFORM: EditorLang = { kind: "hcl", label: "Terraform" };
 const PYTHON: EditorLang = { kind: "python", label: "Python" };
 const JS: EditorLang = { kind: "javascript", label: "JavaScript" };
 const TS: EditorLang = { kind: "typescript", label: "TypeScript" };

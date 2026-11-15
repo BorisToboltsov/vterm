@@ -23,6 +23,8 @@ export function panelLabel(id: PanelId): string {
       return "k8s";
     case "ci":
       return "CI";
+    case "scenarios":
+      return t("scenarios.panelTitle");
     case "ai":
       return t("ai.panelTitle");
   }

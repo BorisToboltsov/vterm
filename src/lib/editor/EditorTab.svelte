@@ -58,6 +58,8 @@
     groupServers = null,
     onGroup,
     onOpenFileAt,
+    onScenario,
+    onToLibrary,
   }: {
     sessionId: string;
     doc: EditorDoc;
@@ -77,7 +79,23 @@
     onGroup?: () => void;
     /** Open another file of the connection on a line (a pipeline's include, ADR 0068). */
     onOpenFileAt?: (path: string, line: number) => void;
+    /** A playbook or a `.tf` file: its project's run dialog or plan (ADR 0071). */
+    onScenario?: (action: "check" | "run" | "plan") => void;
+    /** A shell script not yet a file (the assistant's): into the recipe library. */
+    onToLibrary?: () => void;
   } = $props();
+
+  // What this file is to the Scenarios (ADR 0071): a playbook to run, a
+  // Terraform file whose folder is planned — or nothing.
+  const scenarioKind = $derived(
+    !onScenario
+      ? null
+      : doc.lang.kind === "ansible" && /^\s*-?\s*hosts:\s*\S/m.test(doc.content.slice(0, 4000))
+        ? "ansible"
+        : doc.lang.kind === "hcl" && /\.tf$/i.test(doc.path)
+          ? "terraform"
+          : null,
+  );
 
   let host: HTMLDivElement;
   let view: EditorView | undefined;
@@ -644,6 +662,37 @@
             </div>
           {/if}
         </div>
+      {/if}
+      {#if scenarioKind === "ansible"}
+        <button
+          class="rounded px-2 py-0.5 text-muted hover:bg-edge hover:text-text"
+          data-testid="editor-playbook-check"
+          onclick={() => onScenario?.("check")}>{t("scenarios.editor.check")}</button
+        >
+        <button
+          class="flex items-center gap-1 rounded border border-accent/50 bg-accent/10 px-2 py-0.5 text-accent"
+          data-testid="editor-playbook-run"
+          onclick={() => onScenario?.("run")}
+        >
+          <Icon name="play" size={12} />{t("scenarios.editor.run")}
+        </button>
+      {:else if scenarioKind === "terraform"}
+        <button
+          class="flex items-center gap-1 rounded border border-accent/50 bg-accent/10 px-2 py-0.5 text-accent"
+          data-testid="editor-tf-plan"
+          onclick={() => onScenario?.("plan")}
+        >
+          <Icon name="play" size={12} />{t("scenarios.editor.plan")}
+        </button>
+      {/if}
+      {#if onToLibrary}
+        <button
+          class="flex items-center gap-1 rounded px-2 py-0.5 text-muted hover:bg-edge hover:text-text"
+          data-testid="editor-to-library"
+          onclick={() => onToLibrary?.()}
+        >
+          <Icon name="listCheck" size={13} />{t("scenarios.editor.toLibrary")}
+        </button>
       {/if}
       {#if groupServers && onGroup && !codeHidden}
         <button

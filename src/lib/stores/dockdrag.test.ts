@@ -173,7 +173,7 @@ describe("dragging a panel tab", () => {
     window.dispatchEvent(pointer("pointerup", 12, 11));
     // A plain click must still reach the tab.
     expect(consumeDragClick()).toBe(false);
-    expect(layout.docks.bottom.panels).toEqual(["docker", "k8s", "ci"]);
+    expect(layout.docks.bottom.panels).toEqual(["docker", "k8s", "ci", "scenarios"]);
   });
 
   it("moves the panel to the dock it is dropped on, at the gap under the pointer", () => {
@@ -256,7 +256,7 @@ describe("dragging a panel tab", () => {
     beginPanelDrag(press(document.getElementById("tab0")!), "docker");
     window.dispatchEvent(pointer("pointermove", 300, 300));
     window.dispatchEvent(pointer("pointerup", 300, 300));
-    expect(layout.docks.bottom.panels).toEqual(["docker", "k8s", "ci"]);
+    expect(layout.docks.bottom.panels).toEqual(["docker", "k8s", "ci", "scenarios"]);
   });
 
   it("is abandoned on pointercancel", () => {
@@ -267,7 +267,7 @@ describe("dragging a panel tab", () => {
     window.dispatchEvent(pointer("pointercancel", 80, 80));
     expect(dockDrag.panel).toBeNull();
     window.dispatchEvent(pointer("pointerup", 80, 80));
-    expect(layout.docks.bottom.panels).toEqual(["docker", "k8s", "ci"]);
+    expect(layout.docks.bottom.panels).toEqual(["docker", "k8s", "ci", "scenarios"]);
   });
 
   it("starts only from the primary button", () => {
@@ -408,7 +408,7 @@ describe("releasing the dragged tab", () => {
     window.dispatchEvent(pointer("pointermove", 300, 300));
     expect(dockDrag.over).toBeNull();
     window.dispatchEvent(pointer("pointerup", 300, 300));
-    expect(layout.docks.bottom.panels).toEqual(["docker", "k8s", "ci"]);
+    expect(layout.docks.bottom.panels).toEqual(["docker", "k8s", "ci", "scenarios"]);
     expect(dockDrag.settling).toBe(true);
     expect([dockDrag.x, dockDrag.y]).toEqual([36, 500]);
   });

@@ -152,6 +152,17 @@ export default defineConfig(
             owners: ["src/lib/stores/ci.svelte.ts"],
             why: "every call to a forge goes through the CI store: its watches, its cache for the Git badges and its cleanup on close are one place (ADR 0069)",
           },
+          // Scenarios (ADR 0071): a recipe reaches a server, a project's checks
+          // run and a run's folder is made and removed only through the store.
+          ...Object.fromEntries(
+            ["recipeRun", "iacRun", "iacTemp", "iacRead", "iacCleanup", "recipeSave", "recipeDelete", "recipesScan"].map((name) => [
+              name,
+              {
+                owners: ["src/lib/stores/scenarios.svelte.ts"],
+                why: "a run's folder is removed when the run ends and when its tab closes, and the library is read again after a write: one place keeps both (ADR 0071)",
+              },
+            ]),
+          ),
           fetchMetrics: {
             owners: ["src/lib/stores/metricsfeed.svelte.ts"],
             why: "one poll per session: the backend takes CPU% and rates from the previous call, so a second poller reads them over a fraction of a second",

@@ -514,6 +514,19 @@ impl SshSession {
         exec_on(&self.handle, command, stdin, timeout_secs, None).await
     }
 
+    /// [`exec_captured_stdin`](Self::exec_captured_stdin) the user can stop, like
+    /// [`exec_captured_until`](Self::exec_captured_until): a recipe run on a
+    /// server (ADR 0071) gets its script on stdin and a stop button.
+    pub async fn exec_captured_stdin_until(
+        &self,
+        command: &str,
+        stdin: &[u8],
+        timeout_secs: u64,
+        cancel: &std::sync::atomic::AtomicBool,
+    ) -> AppResult<ExecOutcome> {
+        exec_on(&self.handle, command, stdin, timeout_secs, Some(cancel)).await
+    }
+
     /// Push bytes into the active recording as output (no-op if not recording).
     /// Used to mirror AI-executed commands into the session recording (17.8).
     pub fn record_output(&self, data: &[u8]) {

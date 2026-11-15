@@ -65,9 +65,10 @@ describe("guards and bounds", () => {
     expect(isDockSide("top")).toBe(false);
   });
 
-  it("treats only the server tree as a global panel", () => {
+  it("treats the server tree and the Scenarios panel as the global panels", () => {
     expect(isSessionPanel("servers")).toBe(false);
-    for (const id of PANEL_IDS.filter((p) => p !== "servers")) expect(isSessionPanel(id)).toBe(true);
+    expect(isSessionPanel("scenarios")).toBe(false);
+    for (const id of PANEL_IDS.filter((p) => p !== "servers" && p !== "scenarios")) expect(isSessionPanel(id)).toBe(true);
   });
 
   it("clamps values and dock sizes", () => {
@@ -138,11 +139,11 @@ describe("guards and bounds", () => {
 });
 
 describe("defaultDocks", () => {
-  it("puts the tree left, files/git/AI right and Docker/k8s/CI at the bottom", () => {
+  it("puts the tree left, files/git/AI right and Docker/k8s/CI/Scenarios at the bottom", () => {
     const d = defaultDocks();
     expect(d.left.panels).toEqual(["servers"]);
     expect(d.right.panels).toEqual(["files", "git", "ai"]);
-    expect(d.bottom.panels).toEqual(["docker", "k8s", "ci"]);
+    expect(d.bottom.panels).toEqual(["docker", "k8s", "ci", "scenarios"]);
     expect(d.left.collapsed).toBe(false);
     expect(d.right.collapsed).toBe(true);
     expect(d.bottom.collapsed).toBe(true);
@@ -160,7 +161,7 @@ describe("sanitizeDocks", () => {
   it("keeps a valid layout as it is", () => {
     const d = defaultDocks();
     d.left.panels = ["servers", "docker"];
-    d.bottom.panels = ["k8s", "ci"];
+    d.bottom.panels = ["k8s", "ci", "scenarios"];
     d.bottom.active = "k8s";
     d.left.active = "docker";
     d.bottom.collapsed = false;
@@ -176,8 +177,8 @@ describe("sanitizeDocks", () => {
     });
     expect(d.left.panels).toEqual(["servers", "git"]);
     expect(d.right.panels).toEqual(["files"]);
-    // CI is missing from the stored layout: it comes back into its own dock.
-    expect(d.bottom.panels).toEqual(["docker", "k8s", "ai", "ci"]);
+    // CI and Scenarios are missing from the stored layout: they come back into their own dock.
+    expect(d.bottom.panels).toEqual(["docker", "k8s", "ai", "ci", "scenarios"]);
     expectWellFormed(d);
   });
 
@@ -189,7 +190,7 @@ describe("sanitizeDocks", () => {
       bottom: { panels: [] },
     });
     expect(d.right.panels).toEqual(["files", "git", "ai"]);
-    expect(d.bottom.panels).toEqual(["docker", "k8s", "ci"]);
+    expect(d.bottom.panels).toEqual(["docker", "k8s", "ci", "scenarios"]);
     expectWellFormed(d);
   });
 
@@ -278,7 +279,7 @@ describe("loadDocks", () => {
     expect(d.right.active).toBe("git");
     // The right dock always started collapsed before 1.1; the new docks do too.
     expect(d.right.collapsed).toBe(true);
-    expect(d.bottom.panels).toEqual(["docker", "k8s", "ci"]);
+    expect(d.bottom.panels).toEqual(["docker", "k8s", "ci", "scenarios"]);
     expectWellFormed(d);
   });
 
@@ -324,7 +325,7 @@ describe("movePanel", () => {
     const before = defaultDocks();
     const d = movePanel(before, "docker", "right");
     expect(d.right.panels).toEqual(["files", "git", "ai", "docker"]);
-    expect(d.bottom.panels).toEqual(["k8s", "ci"]);
+    expect(d.bottom.panels).toEqual(["k8s", "ci", "scenarios"]);
     expect(d.right.active).toBe("docker");
     expect(d.right.collapsed).toBe(false);
     expectWellFormed(d);
@@ -367,6 +368,7 @@ describe("movePanel", () => {
     let d = movePanel(defaultDocks(), "docker", "right");
     d = movePanel(d, "k8s", "right");
     d = movePanel(d, "ci", "right");
+    d = movePanel(d, "scenarios", "right");
     expect(d.bottom.panels).toEqual([]);
     expect(d.bottom.active).toBeNull();
     expectWellFormed(d);
@@ -485,7 +487,7 @@ describe("insertionIndex", () => {
 
 describe("hidden panels", () => {
   it("lets every panel be hidden except the server tree", () => {
-    expect(HIDEABLE_PANELS).toEqual(["files", "git", "docker", "k8s", "ci", "ai"]);
+    expect(HIDEABLE_PANELS).toEqual(["files", "git", "docker", "k8s", "ci", "scenarios", "ai"]);
     expect(canHidePanel("docker")).toBe(true);
     expect(canHidePanel("servers")).toBe(false);
   });
@@ -544,8 +546,8 @@ describe("hidden panels", () => {
 
   it("leaves a dock with nothing to show when all its panels are hidden", () => {
     const d = defaultDocks();
-    expect(availablePanels(d.bottom, true, ["docker", "k8s", "ci"])).toEqual([]);
-    expect(shownPanel(d.bottom, true, ["docker", "k8s", "ci"])).toBeNull();
+    expect(availablePanels(d.bottom, true, ["docker", "k8s", "ci", "scenarios"])).toEqual([]);
+    expect(shownPanel(d.bottom, true, ["docker", "k8s", "ci", "scenarios"])).toBeNull();
   });
 });
 
@@ -555,7 +557,7 @@ describe("previewPanels", () => {
     expect(previewPanels(d, "docker", null)).toEqual({
       left: ["servers"],
       right: ["files", "git", "ai"],
-      bottom: ["docker", "k8s", "ci"],
+      bottom: ["docker", "k8s", "ci", "scenarios"],
     });
   });
 
@@ -564,7 +566,7 @@ describe("previewPanels", () => {
     expect(previewPanels(d, "docker", { side: "right", index: 1 })).toEqual({
       left: ["servers"],
       right: ["files", "docker", "git", "ai"],
-      bottom: ["k8s", "ci"],
+      bottom: ["k8s", "ci", "scenarios"],
     });
   });
 

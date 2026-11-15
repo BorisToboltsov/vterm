@@ -10,6 +10,8 @@
     mode: ImportMode;
     settings: boolean;
     recordings: boolean;
+    /** The recipes of the library (ADR 0071). */
+    scripts: boolean;
   }
 </script>
 
@@ -59,6 +61,7 @@
   let takeServers = $state(true);
   let takeSettings = $state(true);
   let takeRecordings = $state(true);
+  let takeScripts = $state(true);
   let mode = $state<ImportMode>("merge");
   let logins = $state<Record<string, string>>({});
   let keys = $state<Record<string, string>>({});
@@ -78,6 +81,7 @@
     takeServers = contents.servers !== null;
     takeSettings = contents.settings;
     takeRecordings = contents.recordings !== null;
+    takeScripts = (contents.scripts ?? null) !== null;
     mode = "merge";
     logins = {};
     keys = {};
@@ -123,12 +127,17 @@
       : null,
   );
   const holdsSomething = $derived(
-    !!contents && (contents.servers !== null || contents.settings || contents.recordings !== null),
+    !!contents &&
+      (contents.servers !== null ||
+        contents.settings ||
+        contents.recordings !== null ||
+        (contents.scripts ?? null) !== null),
   );
   const chosen = $derived(
     (takeServers && servers !== null) ||
       (takeSettings && !!contents?.settings) ||
-      (takeRecordings && contents?.recordings != null),
+      (takeRecordings && contents?.recordings != null) ||
+      (takeScripts && contents?.scripts != null),
   );
   const removes = $derived(!!plan && plan.removed > 0);
 
@@ -147,6 +156,7 @@
       mode,
       settings: takeSettings && !!contents?.settings,
       recordings: takeRecordings && contents?.recordings != null,
+      scripts: takeScripts && contents?.scripts != null,
     });
   }
 </script>
@@ -209,6 +219,13 @@
             <input type="checkbox" bind:checked={takeRecordings} data-testid="backup-take-recordings" />
             {t("backup.recordings")}
             <span class="text-muted">{t("backup.recordingsCount", { count: contents.recordings })}</span>
+          </label>
+        {/if}
+        {#if contents.scripts != null}
+          <label class="flex items-center gap-2 text-text">
+            <input type="checkbox" bind:checked={takeScripts} data-testid="backup-take-scripts" />
+            {t("backup.scripts")}
+            <span class="text-muted">{t("backup.scriptsCount", { count: contents.scripts })}</span>
           </label>
         {/if}
       </div>

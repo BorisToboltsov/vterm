@@ -29,6 +29,8 @@ export const JOURNAL_SOURCES = [
   "recording",
   "ai",
   "netcheck",
+  // Recipes, Ansible and Terraform (ADR 0071).
+  "scenarios",
   "monitoring",
   "servers",
   "settings",

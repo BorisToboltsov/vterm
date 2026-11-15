@@ -86,6 +86,7 @@
   import { MARK_DOT, type Mark } from "./groupupload";
   import { t } from "../i18n";
   import { holdsPipelines, isPipelineDir, pipelineKindOf } from "../pipeline/pipefiles";
+  import { projectSigns, type ProjectKind } from "../scenarios/project";
 
   let {
     adapter,
@@ -98,6 +99,9 @@
     onToggleFollowTerminal,
     onOpenFile,
     onPipelines,
+    onProject,
+    projectPinned,
+    onPinProject,
     onUserNavigate,
     // Kind-specific behaviour ----------------------------------------------------
     /** Require an explicit Connect action before listing (SFTP); local FS is instant. */
@@ -153,6 +157,11 @@
     onOpenFile?: (path: string, name: string, gotoLine?: number) => void;
     /** Show the pipelines of files and folders (ADR 0068): one file on its schema, the rest on a map. */
     onPipelines?: (targets: { path: string; isDir: boolean }[]) => void;
+    /** The folder shown is an Ansible or Terraform project (ADR 0071): its overview, a check, a run, a plan. */
+    onProject?: (kind: ProjectKind, root: string, action: "open" | "check" | "run" | "plan") => void;
+    /** Whether that project is pinned to the Scenarios panel. */
+    projectPinned?: (kind: ProjectKind, root: string) => boolean;
+    onPinProject?: (kind: ProjectKind, root: string) => void;
     onUserNavigate?: (path: string) => void;
     requiresConnect?: boolean;
     sessionReady?: boolean;
@@ -204,6 +213,8 @@
   // Navigation semantics come from the adapter (POSIX vs the Windows drives level).
   const hasParent = $derived(adapter.hasParent(cwd));
   const mutable = $derived(adapter.mutable(cwd));
+  // The folder shown, as a project of Ansible or Terraform (ADR 0071) — by its names.
+  const project = $derived(onProject && mutable ? projectSigns(entries) : null);
   // Where ".." leads, and whether it is a legal drop target (never the synthetic
   // drives level, which has no filesystem to move anything into).
   const parentPath = $derived.by(() => {
@@ -1471,6 +1482,47 @@
         </div>
       {:else}
         {@render banner?.()}
+        {#if project && onProject}
+          <!-- The folder is a project (ADR 0071): what it is and what can be done
+               with it, before the listing — a run is one click from the folder. -->
+          <div class="mx-2 mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 rounded border border-accent/35 bg-accent/5 px-2 py-1 text-xs" data-testid="{testPrefix}-project">
+            <button
+              type="button"
+              class="flex min-w-0 items-center gap-1 font-medium text-text hover:underline"
+              use:tooltip={t("scenarios.strip.markers", { markers: project.markers.join(", ") })}
+              onclick={() => onProject?.(project.kind, cwd, "open")}
+            >
+              <Icon name={project.kind === "ansible" ? "gearPlay" : "cube"} size={13} class={project.kind === "ansible" ? "text-warn" : "text-accent"} />
+              <span class="truncate">{project.kind === "ansible" ? t("scenarios.strip.ansible") : t("scenarios.strip.terraform")}</span>
+              <Icon name="chevronRight" size={11} class="text-muted" />
+            </button>
+            <span class="ml-auto flex items-center gap-1">
+              {#if project.kind === "ansible"}
+                <button type="button" class="rounded border border-edge px-1.5 py-0.5 text-meta text-text hover:border-accent" onclick={() => onProject?.("ansible", cwd, "check")}>{t("scenarios.editor.check")}</button>
+                <button type="button" class="flex items-center gap-1 rounded border border-accent/50 bg-accent/10 px-1.5 py-0.5 text-meta text-accent" data-testid="{testPrefix}-project-run" onclick={() => onProject?.("ansible", cwd, "run")}>
+                  <Icon name="play" size={10} />{t("scenarios.editor.run")}
+                </button>
+              {:else}
+                <button type="button" class="flex items-center gap-1 rounded border border-accent/50 bg-accent/10 px-1.5 py-0.5 text-meta text-accent" onclick={() => onProject?.("terraform", cwd, "plan")}>
+                  <Icon name="play" size={10} />{t("scenarios.editor.plan")}
+                </button>
+              {/if}
+              {#if onPinProject}
+                {@const pinned = projectPinned?.(project.kind, cwd) ?? false}
+                <button
+                  type="button"
+                  class="rounded p-0.5 hover:bg-edge {pinned ? 'text-accent' : 'text-muted hover:text-text'}"
+                  aria-pressed={pinned}
+                  aria-label={pinned ? t("scenarios.project.unpin") : t("scenarios.project.pin")}
+                  use:tooltip={pinned ? t("scenarios.project.unpin") : t("scenarios.project.pin")}
+                  onclick={() => onPinProject?.(project.kind, cwd)}
+                >
+                  <Icon name="pin" size={12} />
+                </button>
+              {/if}
+            </span>
+          </div>
+        {/if}
         {#if mutable}
           <!-- The filter row: the name in this folder and «View» with the order
                and hidden files. Context menus reuse these controls and state. -->

@@ -151,6 +151,13 @@
   import DockDragGhost from "#lib/layout/DockDragGhost.svelte";
   import EditorTab from "#lib/editor/EditorTab.svelte";
   import PipelinesTab from "#lib/pipeline/PipelinesTab.svelte";
+  import ScenariosPanel from "#lib/scenarios/ScenariosPanel.svelte";
+  import ProjectView from "#lib/scenarios/ProjectView.svelte";
+  import NewProjectDialog from "#lib/scenarios/NewProjectDialog.svelte";
+  import { folderName, isPinned as isProjectPinned, togglePin, type ProjectBookmark } from "#lib/scenarios/bookmarks.ts";
+  import type { ProjectKind } from "#lib/scenarios/project.ts";
+  import { forgetScenarios, library, saveRecipe } from "#lib/stores/scenarios.svelte.ts";
+  import { asRecipe, freeFileName, recipeFileName } from "#lib/scenarios/recipe.ts";
   import DiffModal from "#lib/editor/DiffModal.svelte";
   import ToolInstallDialog from "#lib/editor/ToolInstallDialog.svelte";
   import type { ToolStatus } from "#lib/editor/servertools.ts";
@@ -159,6 +166,8 @@
     getWorkspace,
     workspacesState,
     addScratchEditor,
+    addProjectView,
+    type ProjectAsk,
     setEditorSaveIssue,
     isDirty,
     removeWorkspace,
@@ -174,8 +183,9 @@
   import { beginViewDrag, consumeViewDragClick, viewDrag } from "#lib/stores/viewdrag.svelte.ts";
   import { removeChat, getChat, askAbout } from "#lib/stores/aichat.svelte.ts";
   import { forgetCi } from "#lib/stores/ci.svelte.ts";
-  import { removeDockState, setDockCwd } from "#lib/stores/dockstate.svelte.ts";
-  import { baseName, pathHints } from "#lib/files/fspath.ts";
+  import { dockCwd, removeDockState, setDockCwd } from "#lib/stores/dockstate.svelte.ts";
+  import { baseName, parentOf, pathHints } from "#lib/files/fspath.ts";
+  import { isAbsolutePath } from "#lib/tabs/tabrestore.ts";
   import { fileLinksAllowed } from "#lib/terminal/termfiles.ts";
   import { followUpdates, pollsLocalCwd } from "#lib/pathsync/followcwd.ts";
   import { aiReady } from "#lib/ai/ai.ts";
@@ -534,6 +544,11 @@
     }
     return map;
   });
+  // Servers whose session is open now — the Scenarios panel says which of the
+  // servers picked for a recipe will be connected for the run (ADR 0071).
+  const connectedServers = $derived(
+    new Set(tabsState.list.filter((x) => x.kind === "ssh" && dockConnection(x.status) === "connected").map((x) => x.serverId)),
+  );
   const dockConn = $derived(activeTab ? dockConnection(activeTab.status) : "offline");
   // The session the docks' session panels work on — the tab in focus. Null with
   // no tab open: the docks then offer only the server tree.
@@ -581,6 +596,130 @@
       connecting: !tab.waiting && dockConnection(tab.status) === "connecting",
     })),
   );
+
+  // ── Scenarios (ADR 0071) ────────────────────────────────────────────────────
+  /** How long a run waits for a server's session to connect. */
+  const SESSION_WAIT_MS = 60_000;
+
+  /**
+   * The session a recipe runs on: the server's open one, or a tab opened the
+   * usual way (its password asked, its host key checked) — the focus stays
+   * where it was. A tab that does not connect in time is the run's failure on
+   * that server, said in the run.
+   */
+  async function sessionForServer(serverId: string): Promise<string> {
+    const server = servers.find((s) => s.id === serverId);
+    if (!server) throw new Error(t("scenarios.ensure.gone"));
+    const of = (st: "connected" | "connecting") =>
+      tabsState.list.find((x) => x.kind === "ssh" && !x.attach && x.serverId === serverId && dockConnection(x.status) === st);
+    const open = of("connected");
+    if (open) return open.sessionId;
+    let sid = of("connecting")?.sessionId ?? null;
+    if (!sid) {
+      const before = tabsState.activeId;
+      sid = await new Promise<string | null>((resolve) => {
+        const timer = setTimeout(() => resolve(null), SESSION_WAIT_MS);
+        void connectServer(server, (id) => {
+          clearTimeout(timer);
+          resolve(id);
+        });
+      });
+      if (!sid) throw new Error(t("scenarios.ensure.timeout", { secs: SESSION_WAIT_MS / 1000 }));
+      if (before && findTab(before)) activateTab(before);
+    }
+    const deadline = Date.now() + SESSION_WAIT_MS;
+    while (Date.now() < deadline) {
+      const tab = findTab(sid);
+      if (!tab) throw new Error(t("scenarios.ensure.notConnected"));
+      const st = dockConnection(tab.status);
+      if (st === "connected") return sid;
+      if (st === "offline" && !tab.waiting) throw new Error(t("scenarios.ensure.notConnected"));
+      await new Promise((r) => setTimeout(r, 400));
+    }
+    throw new Error(t("scenarios.ensure.timeout", { secs: SESSION_WAIT_MS / 1000 }));
+  }
+
+  /** A tab for a place: the server's (connected first) or a local one; opened when there is none. */
+  async function tabForPlace(serverId: string | null): Promise<string | null> {
+    if (serverId === null) {
+      const local = tabsState.list.find((x) => x.kind === "local" && !x.attach);
+      if (local) {
+        activateTab(local.sessionId);
+        return local.sessionId;
+      }
+      return openLocalTab();
+    }
+    const known = tabsState.list.find((x) => x.kind === "ssh" && !x.attach && x.serverId === serverId);
+    if (known) {
+      activateTab(known.sessionId);
+      return known.sessionId;
+    }
+    const server = servers.find((s) => s.id === serverId);
+    if (!server) return null;
+    return new Promise((resolve) => void connectServer(server, (id) => resolve(id)));
+  }
+
+  /** Show a project's overview in a tab: its file panel in the folder, the overview beside the terminal. */
+  function openProjectIn(sid: string, kind: ProjectKind, root: string, ask?: ProjectAsk) {
+    const tab = findTab(sid);
+    if (!tab) return;
+    setDockCwd(sid, root);
+    // Beside the terminal where its zone holds two: a run is typed there and watched here.
+    const zone = panes(getWorkspace(sid).layout).find((z) => z.tabs.includes(TERMINAL_VIEW));
+    const beside = !!zone && canSplitZone(sid, zone.id, "right");
+    addProjectView(sid, tab.kind === "local" ? "local" : "sftp", kind, root, folderName(root), ask, beside);
+  }
+
+  /** A pinned project of the Scenarios panel: its place's tab, then the overview. */
+  async function openBookmark(b: ProjectBookmark) {
+    const sid = await tabForPlace(b.serverId);
+    if (sid) openProjectIn(sid, b.kind, b.root);
+  }
+
+  /** A recipe file of this computer in the editor of a local tab. */
+  async function editRecipe(path: string) {
+    const sid = await tabForPlace(null);
+    if (sid) void editors.openLocal(sid, path);
+  }
+
+  /**
+   * A script the assistant made (from a recording, 17.6) into the recipe
+   * library: a header added when it has none, saved under a free name in «Mine».
+   */
+  async function scriptToLibrary(name: string, text: string) {
+    const stem = name.replace(/\.sh$/, "");
+    const file = freeFileName(recipeFileName(stem), library().own.map((r) => r.file));
+    try {
+      await saveRecipe(file, asRecipe(text, stem, t("scenarios.new.description")));
+      notifySuccess(t("scenarios.editor.savedToLibrary", { file }), { source: "scenarios" });
+    } catch (e) {
+      notifyError(t("scenarios.recipe.copyFailed", { error: String(e) }), { source: "scenarios" });
+    }
+  }
+
+  /** A failed recipe run or playbook task to the assistant, about its session. */
+  function askAiAboutScenario(sid: string, context: string) {
+    askAbout(sid, { source: "scenario", context });
+    revealPanel("ai");
+  }
+
+  /** "New Ansible project": in the folder the file panel of the tab in focus shows. */
+  let newProject = $state<{ sid: string; local: boolean; parent: string; where: string } | null>(null);
+  function askNewProject() {
+    const tab = activeTab;
+    const parent = tab ? (dockCwd(tab.sessionId) ?? terminalCwd[tab.sessionId] ?? null) : null;
+    if (!tab || !parent || (tab.kind !== "ssh" && tab.kind !== "local")) {
+      notifyError(t("scenarios.newProject.noSession"), { source: "scenarios" });
+      return;
+    }
+    const srv = tab.kind === "ssh" ? servers.find((s) => s.id === tab.serverId) : null;
+    newProject = {
+      sid: tab.sessionId,
+      local: tab.kind === "local",
+      parent,
+      where: `${srv?.alias ?? t("scenarios.project.thisComputer")}:${parent}`,
+    };
+  }
 
   /** "Connect" in the access check: the server's tab, opened the usual way. */
   function connectServerById(serverId: string) {
@@ -980,6 +1119,17 @@
    * that tab runs — the user sees it and answers it (the CI panel's sign-in,
    * ADR 0069; the monitoring page's read-only commands).
    */
+  /**
+   * A POSIX line built and quoted by its subsystem (a playbook run, ADR 0071),
+   * typed into the tab's terminal. The terminal is brought on screen unless it
+   * already is — a run watched beside it stays where it is.
+   */
+  function typeLine(id: string, line: string) {
+    if (/[\r\n]/.test(line)) return;
+    if (!terminalShown(getWorkspace(id).layout)) showSessionView(id, TERMINAL_VIEW);
+    void writeToTerminal(id, new TextEncoder().encode(submitLine(line))).catch(writtenByCall);
+  }
+
   function typeInTerminal(id: string, argv: string[]) {
     const shell = findTab(id)?.kind === "local" ? (localShellKind[id] ?? "posix") : "posix";
     const cmd = renderArgv(argv, shell);
@@ -1270,6 +1420,15 @@
       title: t("palette.showAi"),
       icon: "aiMark", group: t("palette.groupActions"), keywords: "ai chat assistant llm панель ии ассистент чат",
       run: () => revealPanel("ai") } satisfies CommandItem]),
+    // Scenarios (ADR 0071): the panel, a new recipe, a new Ansible project.
+    ...(isPanelHidden("scenarios") ? [] : [
+      { id: "act:scenarios", title: t("palette.scenarios"), icon: "listCheck", group: t("palette.groupActions"),
+        keywords: "scenarios recipes ansible terraform playbook scripts library сценарии рецепты скрипты библиотека плейбук",
+        run: () => revealPanel("scenarios") } satisfies CommandItem,
+      { id: "act:scenarios-project", title: t("palette.newAnsibleProject"), icon: "gearPlay", group: t("palette.groupActions"),
+        keywords: "new ansible project playbook inventory новый проект ansible инвентарь",
+        run: askNewProject } satisfies CommandItem,
+    ]),
     { id: "act:toggle-bottom",
       title: layout.docks.bottom.collapsed ? t("palette.showBottomPanel") : t("palette.hideBottomPanel"),
       icon: "layoutGrid", group: t("palette.groupActions"),
@@ -2076,6 +2235,8 @@
     forgetMetrics(sessionId);
     // Its watched CI runs and the list its Git badges read (stores/ci, ADR 0069).
     forgetCi(sessionId);
+    // Its watched playbook run and its plan, and their folders on the host (ADR 0071).
+    forgetScenarios(sessionId);
     closeTabStore(sessionId);
   }
 
@@ -2655,7 +2816,18 @@
      "the active tab": the docks keep the panels of every session on screen
      mounted, and a hidden one must go on working for its own session. -->
 {#snippet dockPanel(id: PanelId, visible: boolean, sid: string | null)}
-  {#if id === "servers"}
+  {#if id === "scenarios"}
+    <ScenariosPanel
+      {visible}
+      {servers}
+      connected={connectedServers}
+      ensureSession={sessionForServer}
+      onOpenProject={(b) => void openBookmark(b)}
+      onEditRecipe={(path) => void editRecipe(path)}
+      onAsk={aiOn ? askAiAboutScenario : undefined}
+      onNewProject={askNewProject}
+    />
+  {:else if id === "servers"}
     <ServerTree
       {servers}
       {folders}
@@ -2714,6 +2886,10 @@
         onOpenFile={(path, name, gotoLine) => editors.openFile(tab.sessionId, path, name, { gotoLine })}
         onOpenLocalFile={(path) => editors.openLocal(tab.sessionId, path)}
         onPipelines={(targets) => editors.openPipelines(tab.sessionId, tab.kind === "ssh" ? "sftp" : "local", targets)}
+        onProject={(kind, root, action) => openProjectIn(tab.sessionId, kind, root, action === "open" ? undefined : { action })}
+        projectPinned={(kind, root) => isProjectPinned(settings.scenarioProjects, { kind, root, serverId: tab.kind === "ssh" ? tab.serverId : null })}
+        onPinProject={(kind, root) =>
+          (settings.scenarioProjects = togglePin(settings.scenarioProjects, { kind, root, serverId: tab.kind === "ssh" ? tab.serverId : null }))}
         onOpenGitDiff={(absPath, gitBase) => editors.openGitDiff(tab.sessionId, absPath, gitBase)}
         onIgnoreGitignore={(path, pattern) => editors.appendGitignore(tab.sessionId, path, pattern)}
         onSftpNavigate={(path) => cdTerminalTo(tab.sessionId, path)}
@@ -3559,6 +3735,27 @@
                           <div class="p-4 text-sm text-muted" data-testid="doc-awaiting">{t("editor.awaiting")}</div>
                         {:else if ed.loading}
                           <div class="p-4 text-sm text-muted">{t("editor.loading")}</div>
+                        {:else if ed.project}
+                          <!-- An Ansible or Terraform project of the connection (ADR 0071): no text of its own. -->
+                          {@const projServer = tab.kind === "ssh" ? (servers.find((s) => s.id === tab.serverId) ?? null) : null}
+                          <ProjectView
+                            sessionId={tab.sessionId}
+                            local={ed.source === "local"}
+                            doc={ed}
+                            {servers}
+                            connected={connectedServers}
+                            shell={tab.kind === "local" ? (localShellKind[tab.sessionId] ?? "posix") : "posix"}
+                            serverId={tab.kind === "ssh" ? tab.serverId : null}
+                            prod={isProdServer(projServer)}
+                            onTypeLine={(line) => typeLine(tab.sessionId, line)}
+                            onTypeArgv={(argv) => typeInTerminal(tab.sessionId, argv)}
+                            onShowTerminal={() => showSessionView(tab.sessionId, TERMINAL_VIEW)}
+                            onOpenFile={(path) =>
+                              ed.source === "sftp"
+                                ? void editors.openFile(tab.sessionId, path, path.split("/").pop() ?? path)
+                                : void editors.openLocal(tab.sessionId, path)}
+                            onAsk={aiOn ? (ctx) => askAiAboutScenario(tab.sessionId, ctx) : undefined}
+                          />
                         {:else if ed.pipelines}
                           <!-- The map of a group of pipelines (ADR 0068): no text of its own. -->
                           <PipelinesTab
@@ -3586,6 +3783,14 @@
                             onLintMissing={offerLintInstall}
                             groupServers={ed.source === "sftp" ? edFlow.servers(tab.sessionId) : null}
                             onGroup={() => edFlow.open(tab.sessionId, ed)}
+                            onScenario={isAbsolutePath(ed.path)
+                              ? (action) =>
+                                  openProjectIn(tab.sessionId, action === "plan" ? "terraform" : "ansible", parentOf(ed.path), {
+                                    action,
+                                    playbook: baseName(ed.path),
+                                  })
+                              : undefined}
+                            onToLibrary={!isAbsolutePath(ed.path) && ed.lang.kind === "shell" ? () => void scriptToLibrary(ed.name, ed.content) : undefined}
                           />
                         {/if}
                       </div>
@@ -3838,6 +4043,24 @@
 />
 
 <!-- Server tool install dialog (Phase 12.8) -->
+{#if newProject}
+  {@const np = newProject}
+  <NewProjectDialog
+    open
+    sessionId={np.sid}
+    local={np.local}
+    parent={np.parent}
+    where={np.where}
+    {servers}
+    connected={connectedServers}
+    onclose={() => (newProject = null)}
+    oncreate={(root) => {
+      newProject = null;
+      openProjectIn(np.sid, "ansible", root);
+    }}
+  />
+{/if}
+
 <ToolInstallDialog
   open={!!installTool}
   sessionId={installTool?.sessionId ?? ""}

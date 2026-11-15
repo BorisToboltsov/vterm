@@ -87,7 +87,7 @@
     pending = null;
     if (!path) return;
     try {
-      const result = await importBackup(path, choice.catalog, choice.recordings);
+      const result = await importBackup(path, choice.catalog, choice.recordings, choice.scripts);
       const appliedSettings = choice.settings && !!result.settings;
       if (appliedSettings) applyImportedSettings(result.settings);
       onImported?.();
@@ -107,6 +107,7 @@
       if (appliedSettings) parts.push(t("settings.restoredSettings"));
       if (result.recordings !== null)
         parts.push(t("settings.restoredRecordings", { count: result.recordings }));
+      if (result.scripts != null) parts.push(t("settings.restoredScripts", { count: result.scripts }));
       backupMsg = parts.length ? parts.join(" ") : t("settings.restoredNothing");
     } catch (e) {
       backupErr = true;

@@ -131,7 +131,7 @@ describe("Dock — chrome", () => {
     const corner = screen.getByTestId("dock-corner-left");
     expect(bottom.firstElementChild).toBe(corner);
     expect(corner).toContainElement(screen.getByTestId("dock-toggle-bottom"));
-    expect(bottom.lastElementChild).toBe(screen.getByTestId("dock-tab-ci"));
+    expect(bottom.lastElementChild).toBe(screen.getByTestId("dock-tab-scenarios"));
   });
 
   it("lines the bottom dock's corner up with the left rail: same width, button centred, a border down", () => {
@@ -166,6 +166,8 @@ describe("Dock — chrome", () => {
   });
 
   it("has no rail cell under a right dock that has no session to show", () => {
+    // The Scenarios panel is global (ADR 0071): hidden, the bottom dock has nothing without a session.
+    setPanelHidden("scenarios", true);
     render(Dock, { props: { side: "bottom", panel } });
     expect(screen.queryByTestId("dock-bottom")).toBeNull();
     movePanel("servers", "bottom");
@@ -212,6 +214,7 @@ describe("Dock — hidden panels", () => {
     setPanelHidden("docker", true);
     setPanelHidden("k8s", true);
     setPanelHidden("ci", true);
+    setPanelHidden("scenarios", true);
     render(Dock, { props: { side: "bottom", sessionId: "s1", connection: "connected", panel } });
     expect(screen.queryByTestId("dock-bottom")).toBeNull();
   });
@@ -510,7 +513,7 @@ describe("Dock — moving a panel", () => {
     // Only the other two docks are offered.
     expect(screen.queryByRole("menuitem", { name: "Move to the left panel" })).toBeNull();
     await fireEvent.click(screen.getByRole("menuitem", { name: "Move to the bottom panel" }));
-    expect(layout.docks.bottom.panels).toEqual(["docker", "k8s", "ci", "servers"]);
+    expect(layout.docks.bottom.panels).toEqual(["docker", "k8s", "ci", "scenarios", "servers"]);
     expect(layout.docks.left.panels).toEqual([]);
   });
 
@@ -540,7 +543,7 @@ describe("Dock — moving a panel", () => {
     dockDrag.over = { side: "right", index: 1 };
     flushSync();
     expect(strip("right")).toEqual(["SFTP", "[Docker]", "Git", "AI"]);
-    expect(strip("bottom")).toEqual(["k8s", "CI"]);
+    expect(strip("bottom")).toEqual(["k8s", "CI", "Scenarios"]);
     // The pointer moves on: the slot follows it.
     dockDrag.over = { side: "right", index: 3 };
     flushSync();
@@ -601,6 +604,7 @@ describe("Dock — moving a panel", () => {
     // Dropping the dock out of the layout mid-drag would resize the terminal.
     movePanel("k8s", "right");
     movePanel("ci", "right");
+    movePanel("scenarios", "right");
     setDockCollapsed("bottom", false);
     render(Dock, { props: { side: "bottom", sessionId: "s1", connection: "connected", panel } });
     dockDrag.panel = "docker";

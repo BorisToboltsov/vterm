@@ -1,0 +1,18 @@
+{"e": "start", "file": "site.yml", "check": false, "t": 1794691631.227}
+{"e": "play", "id": "2661adbc-edf7-3305-8993-000000000002", "name": "Local play", "t": 1794691631.227}
+{"e": "task", "id": "2661adbc-edf7-3305-8993-000000000004", "name": "ok task", "role": null, "handler": false, "t": 1794691631.231}
+{"e": "running", "host": "local", "task": "2661adbc-edf7-3305-8993-000000000004", "t": 1794691631.231}
+{"e": "result", "status": "ok", "host": "local", "task": "2661adbc-edf7-3305-8993-000000000004", "changed": false, "msg": null, "rc": 0, "t": 1794691631.505}
+{"e": "task", "id": "2661adbc-edf7-3305-8993-000000000005", "name": "changed task", "role": null, "handler": false, "t": 1794691631.506}
+{"e": "running", "host": "local", "task": "2661adbc-edf7-3305-8993-000000000005", "t": 1794691631.506}
+{"e": "result", "status": "changed", "host": "local", "task": "2661adbc-edf7-3305-8993-000000000005", "changed": true, "msg": null, "rc": null, "t": 1794691631.979}
+{"e": "task", "id": "2661adbc-edf7-3305-8993-000000000006", "name": "skipped", "role": null, "handler": false, "t": 1794691631.98}
+{"e": "running", "host": "local", "task": "2661adbc-edf7-3305-8993-000000000006", "t": 1794691631.981}
+{"e": "result", "status": "skipped", "host": "local", "task": "2661adbc-edf7-3305-8993-000000000006", "changed": false, "msg": null, "rc": null, "t": 1794691631.987}
+{"e": "task", "id": "2661adbc-edf7-3305-8993-000000000007", "name": "secret", "role": null, "handler": false, "t": 1794691631.989}
+{"e": "running", "host": "local", "task": "2661adbc-edf7-3305-8993-000000000007", "t": 1794691631.989}
+{"e": "result", "status": "changed", "host": "local", "task": "2661adbc-edf7-3305-8993-000000000007", "changed": true, "msg": "(hidden: no_log)", "rc": null, "t": 1794691632.192}
+{"e": "task", "id": "2661adbc-edf7-3305-8993-000000000008", "name": "fail", "role": null, "handler": false, "t": 1794691632.193}
+{"e": "running", "host": "local", "task": "2661adbc-edf7-3305-8993-000000000008", "t": 1794691632.194}
+{"e": "result", "status": "failed", "host": "local", "task": "2661adbc-edf7-3305-8993-000000000008", "changed": false, "msg": "[Errno 2] No such file or directory: b'/bin/false'", "rc": 2, "ignored": true, "t": 1794691632.395}
+{"e": "stats", "hosts": {"local": {"ok": 4, "failures": 0, "unreachable": 0, "changed": 2, "skipped": 1, "rescued": 0, "ignored": 1}}, "t": 1794691632.396}

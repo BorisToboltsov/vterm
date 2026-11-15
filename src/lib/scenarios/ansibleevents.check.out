@@ -1,0 +1,19 @@
+{"e": "start", "file": "site.yml", "check": true, "t": 1794691647.315}
+{"e": "play", "id": "2661adbc-edf7-98f6-47a3-000000000002", "name": "Local play", "t": 1794691647.316}
+{"e": "task", "id": "2661adbc-edf7-98f6-47a3-000000000004", "name": "ok task", "role": null, "handler": false, "t": 1794691647.322}
+{"e": "running", "host": "local", "task": "2661adbc-edf7-98f6-47a3-000000000004", "t": 1794691647.322}
+{"e": "result", "status": "skipped", "host": "local", "task": "2661adbc-edf7-98f6-47a3-000000000004", "changed": false, "msg": "Command would have run if not in check mode", "rc": 0, "t": 1794691647.678}
+{"e": "task", "id": "2661adbc-edf7-98f6-47a3-000000000005", "name": "changed task", "role": null, "handler": false, "t": 1794691647.679}
+{"e": "running", "host": "local", "task": "2661adbc-edf7-98f6-47a3-000000000005", "t": 1794691647.68}
+{"e": "diff", "host": "local", "task": "2661adbc-edf7-98f6-47a3-000000000005", "diff": "--- before\n+++ after: /srv/app/out.txt\n@@ -0,0 +1,2 @@\n+a\n+b\n\n", "t": 1794691648.154}
+{"e": "result", "status": "changed", "host": "local", "task": "2661adbc-edf7-98f6-47a3-000000000005", "changed": true, "msg": null, "rc": null, "t": 1794691648.155}
+{"e": "task", "id": "2661adbc-edf7-98f6-47a3-000000000006", "name": "skipped", "role": null, "handler": false, "t": 1794691648.156}
+{"e": "running", "host": "local", "task": "2661adbc-edf7-98f6-47a3-000000000006", "t": 1794691648.156}
+{"e": "result", "status": "skipped", "host": "local", "task": "2661adbc-edf7-98f6-47a3-000000000006", "changed": false, "msg": null, "rc": null, "t": 1794691648.163}
+{"e": "task", "id": "2661adbc-edf7-98f6-47a3-000000000007", "name": "secret", "role": null, "handler": false, "t": 1794691648.164}
+{"e": "running", "host": "local", "task": "2661adbc-edf7-98f6-47a3-000000000007", "t": 1794691648.164}
+{"e": "result", "status": "skipped", "host": "local", "task": "2661adbc-edf7-98f6-47a3-000000000007", "changed": false, "msg": "(hidden: no_log)", "rc": null, "t": 1794691648.378}
+{"e": "task", "id": "2661adbc-edf7-98f6-47a3-000000000008", "name": "fail", "role": null, "handler": false, "t": 1794691648.379}
+{"e": "running", "host": "local", "task": "2661adbc-edf7-98f6-47a3-000000000008", "t": 1794691648.38}
+{"e": "result", "status": "skipped", "host": "local", "task": "2661adbc-edf7-98f6-47a3-000000000008", "changed": false, "msg": "Command would have run if not in check mode", "rc": 0, "t": 1794691648.616}
+{"e": "stats", "hosts": {"local": {"ok": 1, "failures": 0, "unreachable": 0, "changed": 1, "skipped": 4, "rescued": 0, "ignored": 0}}, "t": 1794691648.616}

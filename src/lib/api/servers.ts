@@ -115,6 +115,8 @@ export interface BackupContents {
   folders: string[] | null;
   settings: boolean;
   recordings: number | null;
+  /** How many recipes of the library it carries (ADR 0071); absent in an older backup. */
+  scripts?: number | null;
 }
 
 /** The server catalog an import writes: assembled by `backupimport.ts`. */
@@ -134,6 +136,8 @@ export interface ImportResult {
   servers: number | null;
   folders: number | null;
   recordings: number | null;
+  /** Recipes written into the library; `null` — none asked for or none carried. */
+  scripts?: number | null;
   settings: unknown | null;
 }
 
@@ -153,15 +157,17 @@ export function readBackup(path: string): Promise<BackupContents> {
 
 /**
  * Restore a backup from `path`: write `catalog` (null — leave the servers as
- * they are) and extract the recordings when `recordings` is set. The backup's
- * own server list is never written as is.
+ * they are), extract the recordings when `recordings` is set, and the recipes
+ * of the library when `scripts` is (a recipe whose name is taken stays as it
+ * is). The backup's own server list is never written as is.
  */
 export function importBackup(
   path: string,
   catalog: ImportCatalog | null,
   recordings: boolean,
+  scripts = false,
 ): Promise<ImportResult> {
-  return call<ImportResult>("import_backup", { path, catalog, recordings });
+  return call<ImportResult>("import_backup", { path, catalog, recordings, scripts });
 }
 
 /** Native "save as" dialog for a backup archive; returns the chosen path or null. */
