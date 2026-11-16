@@ -448,7 +448,8 @@ export function cursorPath(text: string, pos: number): { path: (string | number)
     const l = all[i];
     if (skip(l)) continue;
     const ind = indentOf(l);
-    if (ind < keyCol || (ind === keyCol - 2 && /^\s*-/.test(l))) break;
+    // A shallower line ends the mapping — the next list item's dash included.
+    if (ind < keyCol) break;
     const k = ind === keyCol ? /^\s*([\w.$/-]+):/.exec(l) : null;
     if (k) present.add(k[1]);
   }
