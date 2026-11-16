@@ -119,7 +119,6 @@ export const WIRINGS: Record<string, Wiring> = {
     needs: [
       [/easeOut\(progress\(tierAt, now, ms\(TIER_MS\)\)\)/, "the idle card's layouts do not give way to each other"],
       [/ctx\.globalAlpha = 1 - k;\s*drawTier\(tierWas,/, "the old layout is not drawn fading"],
-      [/const base = ctx\.globalAlpha;/, "the history chart does not fade within the card"],
     ],
   },
 };

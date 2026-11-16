@@ -3,6 +3,7 @@ import {
   AWAY_EVENTS,
   awayGaps,
   awayPush,
+  awayStory,
   bandRuns,
   chartFrom,
   chartHit,
@@ -14,42 +15,37 @@ import {
   DRIFT_Y,
   driftOffset,
   emptyAway,
-  eventsAt,
+  eventHeight,
   gapAfter,
   gapReading,
-  GUTTER_RING_MIN,
-  gutterRing,
-  historyLayout,
   HOVER_SLACK,
   HOVER_STILL_MS,
   hoverShown,
   isGapReading,
   loadCeiling,
-  mergeSpans,
+  openGap,
+  procName,
+  PULSE_SHARE,
+  pulseLayout,
+  pulseMark,
+  pulseOf,
   readingLevels,
-  ringFraction,
+  REBOOT_SLACK_MS,
+  restartedAt,
   serverOffset,
   serverZone,
-  shifted,
   SHIFT_PATH_STEP,
   shiftOffset,
   silentSince,
-  slotGap,
   SPAN_BASE_MS,
   SPAN_MAX_MS,
   spanLabel,
   spanLength,
   spanMid,
   standbyTransfer,
-  STRIP_KEEP,
-  stripHit,
-  stripSlots,
-  stripView,
-  stripX,
-  swapShare,
+  STORY_GAP_MS,
   timeAtX,
   timeRuns,
-  timeTicks,
   timeX,
   verdictLine,
   windowPeak,
@@ -82,6 +78,7 @@ function reading(over: Partial<AwayReading> = {}): AwayReading {
     topProc: "postgres 12%",
     memUsed: 6 * 2 ** 30,
     memTotal: 10 * 2 ** 30,
+    uptimeSecs: null,
     ...over,
   };
 }
@@ -94,6 +91,19 @@ function feed(readings: Partial<AwayReading>[], beat = 5 * SEC, every = beat): A
 }
 /** A minute apart on a history polled every 30 s: a minute is not a gap there. */
 const run = (readings: Partial<AwayReading>[]) => feed(readings, 30 * SEC, MIN);
+/** An event as the history keeps it. */
+const ev = (over: Partial<AwayEvent>): AwayEvent => ({
+  key: "cpu",
+  level: "warn",
+  start: T0,
+  end: T0,
+  peak: 80,
+  peakAt: T0,
+  top: "",
+  cores: null,
+  open: false,
+  ...over,
+});
 /** A span as the history keeps it, for the pure views. */
 function span(over: Partial<AwaySpan> = {}): AwaySpan {
   const at = over.at ?? T0;
@@ -139,13 +149,12 @@ describe("the clock of the history", () => {
     for (const beat of [1, 2, 5, 10, 30, 60].map((s) => s * SEC)) {
       const h = emptyAway(beat);
       expect(h.bucketMs).toBeGreaterThanOrEqual(h.gapMs);
-      expect(h.step).toBe(h.bucketMs);
     }
   });
 });
 
 describe("history of the time away", () => {
-  it("puts a reading in its bucket and its cell, aligned to the clock", () => {
+  it("puts a reading in its bucket, aligned to the clock", () => {
     const h = feed([{ cpuPct: 10, topProc: "cron 9%" }, { cpuPct: 40, topProc: "make 39%" }, { cpuPct: 25 }, { cpuPct: 30 }]);
     expect(h.bucketMs).toBe(15 * SEC);
     // 0, 5 and 10 s share a bucket; 15 s begins the next one.
@@ -157,7 +166,6 @@ describe("history of the time away", () => {
     expect(h.buckets[0].cpu).toEqual({ lo: 10, hi: 40, sum: 75, n: 3 });
     // What it says beside a value comes from the reading that gave the peak.
     expect(h.buckets[0].top).toBe("make 39%");
-    expect(h.cells).toEqual(h.buckets);
     expect([h.firstAt, h.lastAt]).toEqual([T0, T0 + 15 * SEC]);
   });
 
@@ -211,7 +219,7 @@ describe("history of the time away", () => {
     expect(bandRuns(steady.buckets, "cpu", steady.bucketMs)).toHaveLength(1);
   });
 
-  it("lets go of buckets the charts no longer reach, and keeps every cell", () => {
+  it("lets go of buckets the pulse no longer reaches", () => {
     // A poll every 30 s: a gap is 90 s, a span two minutes.
     const h = feed(
       Array.from({ length: 80 }, () => ({})),
@@ -221,55 +229,8 @@ describe("history of the time away", () => {
     const last = T0 + 79 * 30 * SEC;
     expect(h.buckets.every((b) => b.at + 2 * h.bucketMs > last - CHART_MS)).toBe(true);
     expect(h.buckets[0].at).toBeGreaterThan(T0);
-    expect(h.cells[0].first).toBe(T0);
-    expect(h.cells.reduce((n, c) => n + c.n, 0)).toBe(80);
-  });
-
-  it("merges cells pairwise once the strip is full, keeping the peak and the worst level", () => {
-    const spike = 300;
-    const h = feed(
-      Array.from({ length: STRIP_KEEP + 1 }, (_, i) => ({ cpuPct: i === spike ? 99 : 10, topProc: i === spike ? "pg_dump 98%" : "cron 1%" })),
-      5 * SEC,
-      15 * SEC,
-    );
-    expect(h.step).toBe(30 * SEC);
-    expect(h.cells.length).toBeLessThanOrEqual(STRIP_KEEP / 2 + 1);
-    expect(h.cells.every((c) => c.at % h.step === 0)).toBe(true);
-    const peak = h.cells.find((c) => c.cpu?.hi === 99);
-    expect(peak).toMatchObject({ top: "pg_dump 98%", level: { cpu: "crit" }, n: 2 });
-    expect(h.cells.reduce((n, c) => n + c.n, 0)).toBe(STRIP_KEEP + 1);
-    // The buckets of the charts do not merge: their length holds.
-    expect(h.bucketMs).toBe(15 * SEC);
-  });
-
-  it("merges spans into longer ones whole, the first keeping its gap", () => {
-    const merged = mergeSpans(
-      [
-        span({ at: T0, cpu: { lo: 5, hi: 30, sum: 35, n: 2 }, top: "node", level: { cpu: "ok", mem: "ok", load: null } }),
-        span({
-          at: T0 + 15 * SEC,
-          cpu: { lo: 90, hi: 96, sum: 186, n: 2 },
-          mem: null,
-          top: "make",
-          level: { cpu: "crit", mem: null, load: "warn" },
-          gapBefore: "failed",
-        }),
-        span({ at: T0 + 30 * SEC, gapBefore: "silent" }),
-      ],
-      30 * SEC,
-    );
-    expect(merged.map((s) => [s.at, s.gapBefore])).toEqual([
-      [T0, null],
-      [T0 + 30 * SEC, "silent"],
-    ]);
-    expect(merged[0]).toMatchObject({
-      cpu: { lo: 5, hi: 96, sum: 221, n: 4 },
-      mem: { lo: 60, hi: 60, sum: 60, n: 1 },
-      top: "make",
-      level: { cpu: "crit", mem: "ok", load: "warn" },
-      first: T0,
-      last: T0 + 15 * SEC,
-    });
+    // The whole time away is still known where the sentence needs it.
+    expect([h.firstAt, h.lastReadAt]).toEqual([T0, last]);
   });
 
   it("never places a reading before the last one when the clock steps back", () => {
@@ -435,119 +396,112 @@ describe("the charts", () => {
   });
 });
 
-describe("the strip of the whole time away", () => {
-  const L = 15 * SEC;
-  const cells = [0, 1, 2, 5].map((k) => span({ at: T0 + k * L, first: T0 + k * L, last: T0 + k * L }));
+describe("the pulse", () => {
+  const p = (id: string, level: Problem["level"]): Problem => ({ id, level, section: "cpu", key: "mon.p.cpu", params: {} });
 
-  it("keeps its cells' length while the time away fits, and ends at the right edge", () => {
-    const view = stripView(cells, L, T0, T0 + 6 * L, 10);
-    expect(view).toMatchObject({ step: L, count: 10, from: T0 - 4 * L });
-    expect(view.cells).toHaveLength(4);
-    expect(stripX(view, T0, 0, 100)).toBe(40);
-    expect(stripX(view, T0 + 6 * L, 0, 100)).toBe(100);
+  it("draws CPU while all is well, and the metric the status bar names when it is not", () => {
+    expect(pulseOf([])).toEqual({ key: "cpu", level: "ok" });
+    // A problem the pulse cannot draw leaves it on CPU, at ok: the verdict tells it.
+    expect(pulseOf([p("disk:/", "crit"), p("swap", "warn")])).toEqual({ key: "cpu", level: "ok" });
+    expect(pulseOf([p("disk:/", "crit"), p("ram", "warn")])).toEqual({ key: "mem", level: "warn" });
+    expect(pulseOf([p("load", "crit"), p("cpu", "warn")])).toEqual({ key: "load", level: "crit" });
+    // The status bar's own order decides: the first it lists.
+    expect(pulseOf([p("cpu", "warn"), p("load", "warn")])).toEqual({ key: "cpu", level: "warn" });
   });
 
-  it("steps up to the next length only when the time away outgrows it", () => {
-    const view = stripView(cells, L, T0, T0 + 11 * L, 10);
-    expect(view.step).toBe(2 * L);
-    expect(view.cells.map((c) => [c.at, c.n])).toEqual([
-      [T0, 2],
-      [T0 + 2 * L, 1],
-      [T0 + 4 * L, 1],
-    ]);
-    // Exactly full still fits.
-    expect(stripView(cells, L, T0, T0 + 10 * L, 10).step).toBe(L);
-    // A strip of no width is one cell.
-    expect(stripView(cells, L, T0, T0 + 6 * L, 0).count).toBe(1);
-  });
-
-  it("names every slot from the start of the time away: a cell, or nothing read", () => {
-    const view = stripView(cells, L, T0, T0 + 6 * L, 10);
-    const slots = stripSlots(view, T0, T0 + 6 * L);
-    expect(slots.map((s) => [s.at - T0, s.cell != null])).toEqual([
-      [0, true],
-      [L, true],
-      [2 * L, true],
-      [3 * L, false],
-      [4 * L, false],
-      [5 * L, true],
-    ]);
-    // Why a slot was not read: the gap the next cell follows, else the one still waiting.
-    const gapped = stripSlots(
-      stripView([cells[0], span({ at: T0 + 2 * L, gapBefore: "failed" })], L, T0, T0 + 4 * L, 10),
-      T0,
-      T0 + 4 * L,
-    );
-    expect(slotGap(gapped, 1, null)).toBe("failed");
-    expect(slotGap(gapped, 3, "silent")).toBe("silent");
-    expect(slotGap(gapped, 3, null)).toBe("silent");
-  });
-
-  it("finds the slot under the pointer", () => {
-    const view = stripView(cells, L, T0, T0 + 6 * L, 10);
-    const slots = stripSlots(view, T0, T0 + 6 * L);
-    expect(stripHit(slots, view, 45, 0, 100)).toBe(0);
-    expect(stripHit(slots, view, 95, 0, 100)).toBe(5);
-    expect(stripHit(slots, view, 100 + HOVER_SLACK, 0, 100)).toBe(5);
-    // Before the time away began, and off the strip: nothing.
-    expect(stripHit(slots, view, 10, 0, 100)).toBe(-1);
-    expect(stripHit(slots, view, 100 + HOVER_SLACK + 1, 0, 100)).toBe(-1);
-    expect(stripHit(slots, view, NaN, 0, 100)).toBe(-1);
+  it("marks one event: the highest peak of its metric in sight", () => {
+    const low = ev({ peak: 85, peakAt: T0 + 2 * MIN });
+    const high = ev({ peak: 97, peakAt: T0 + 5 * MIN, level: "crit" });
+    const old = ev({ peak: 99, peakAt: T0 - 40 * MIN });
+    const mem = ev({ key: "mem", peak: 99, peakAt: T0 + 3 * MIN });
+    const all = [low, high, old, mem];
+    expect(pulseMark(all, "cpu", T0, T0 + 30 * MIN)).toBe(high);
+    expect(pulseMark(all, "mem", T0, T0 + 30 * MIN)).toBe(mem);
+    expect(pulseMark(all, "load", T0, T0 + 30 * MIN)).toBeNull();
+    expect(pulseMark([], "cpu", T0, T0 + MIN)).toBeNull();
   });
 });
 
-describe("the history's layout", () => {
-  it("gives the strip a row a metric while the charts keep a height worth reading", () => {
-    for (const big of [true, false]) {
-      const h = big ? 420 : 240;
-      const lay = historyLayout(h, big);
-      expect(lay.stripRows).toBe(3);
-      expect(lay.rowY[1] - lay.rowY[0]).toBe(lay.rowY[2] - lay.rowY[1]);
-      expect(lay.rowY[2] + lay.rowH).toBeLessThanOrEqual(lay.axisY);
-      expect(lay.axisY).toBeLessThan(lay.stripY);
-      expect(lay.stripY).toBeLessThan(lay.cellY);
-      expect(lay.cellY + 3 * lay.cellStep).toBeLessThanOrEqual(lay.stripLabelY + lay.cellStep);
-      expect(lay.stripLabelY + 12).toBeLessThanOrEqual(h);
-    }
+describe("the sentence about the time away", () => {
+  const LEFT = T0 - 5 * MIN;
+
+  it("says nothing before the first reading, and that nothing happened after a quiet one", () => {
+    expect(awayStory(emptyAway(5 * SEC), LEFT)).toEqual({ kind: "none" });
+    expect(awayStory(run([{}, {}, {}]), LEFT)).toEqual({ kind: "calm" });
   });
 
-  it("folds the strip into one row — the worst of three — in a low block", () => {
-    const lay = historyLayout(150, false);
-    expect(lay.stripRows).toBe(1);
-    expect(lay.rowH).toBeGreaterThanOrEqual(historyLayout(150, false).rowH);
-    expect(lay.stripLabelY + 12).toBeLessThanOrEqual(150);
-    // Too low for anything: the charts keep a sliver rather than a negative height.
-    expect(historyLayout(20, true).rowH).toBe(8);
+  it("tells a restart between two readings first, counting the events beside it", () => {
+    // Up 100 000 s, a minute later up 30 s: the host booted again.
+    const h = run([{ uptimeSecs: 100_000, cpuPct: 97 }, { uptimeSecs: 100_060 }, { uptimeSecs: 30 }]);
+    expect(h.rebootAt).toBe(T0 + 2 * MIN - 30 * SEC);
+    expect(awayStory(h, LEFT)).toEqual({ kind: "reboot", at: T0 + 2 * MIN - 30 * SEC, more: 1 });
+    // The uptime wobbles with the poll's latency: seconds are no restart.
+    const steady = run([{ uptimeSecs: 1000 }, { uptimeSecs: 1000 + 60 - 20 }, { uptimeSecs: 1120 + 5 }]);
+    expect(steady.rebootAt).toBeNull();
+    expect(awayStory(steady, LEFT)).toEqual({ kind: "calm" });
+    // A host that never said how long it had been up is not claimed to have restarted.
+    expect(run([{}, { uptimeSecs: null }]).bootAt).toBeNull();
+  });
+
+  it("tells a restart before the first reading: the host booted after the user left", () => {
+    const h = run([{ uptimeSecs: 120 }]);
+    expect(h.bootAt).toBe(T0 - 2 * MIN);
+    expect(restartedAt(h, LEFT)).toBe(T0 - 2 * MIN);
+    // Booted long before the user left: nothing to tell.
+    expect(restartedAt(run([{ uptimeSecs: 86_400 }]), LEFT)).toBeNull();
+    // Within the slack of the user leaving: the clocks' wobble, not a restart.
+    expect(restartedAt(run([{ uptimeSecs: 5 * 60 - REBOOT_SLACK_MS / 1000 / 2 }]), LEFT)).toBeNull();
+  });
+
+  it("tells a metric still over its threshold before a higher peak that is over", () => {
+    const h = run([{ cpuPct: 99 }, { cpuPct: 40 }, { memPct: 88 }, { memPct: 90 }]);
+    const story = awayStory(h, LEFT);
+    expect(story).toMatchObject({ kind: "open", event: { key: "mem", open: true, start: T0 + 2 * MIN, end: T0 + 3 * MIN }, more: 1 });
+  });
+
+  it("tells the highest peak: the worse level first, then the higher, load against its cores", () => {
+    const warnHigh = ev({ peak: 94 });
+    const crit = ev({ key: "mem", level: "crit", peak: 96 });
+    const load = ev({ key: "load", level: "crit", peak: 12, cores: 8 });
+    // Load 12 on 8 cores is 150 %: higher than memory at 96 %.
+    const h: AwayHistory = { ...run([{}]), events: [warnHigh, crit, load] };
+    expect(awayStory(h, LEFT)).toEqual({ kind: "peak", event: load, more: 2 });
+    expect(awayStory({ ...h, events: [warnHigh, crit] }, LEFT)).toEqual({ kind: "peak", event: crit, more: 1 });
+    expect(eventHeight(load)).toBe(150);
+    expect(eventHeight(crit)).toBe(96);
+    // Load with the cores unknown is not comparable: it ranks last.
+    expect(eventHeight(ev({ key: "load", peak: 12, cores: null }))).toBe(0);
+  });
+
+  it("tells the longest stretch nothing was read, once it is long enough to matter", () => {
+    // A poll every 5 s; nothing for three minutes, then readings again.
+    const h = feed([{}, { at: T0 + 5 * SEC }, { at: T0 + 3 * MIN }, { at: T0 + 3 * MIN + 5 * SEC }]);
+    expect(h.longestGap).toEqual({ from: T0 + 5 * SEC, to: T0 + 3 * MIN, kind: "silent" });
+    expect(awayStory(h, LEFT)).toEqual({ kind: "gap", gap: h.longestGap });
+    // Twenty seconds without data is a gap on the line, not news.
+    const brief = feed([{}, { at: T0 + 25 * SEC }]);
+    expect(brief.longestGap?.to).toBe(T0 + 25 * SEC);
+    expect(awayStory(brief, LEFT)).toEqual({ kind: "calm" });
+    expect(STORY_GAP_MS).toBeGreaterThan(brief.gapMs);
+  });
+
+  it("counts a stretch still going: polls that keep failing", () => {
+    // A poll every 5 s that fails for three minutes.
+    const polls = Array.from({ length: 36 }, (_, i) => T0 + (i + 1) * 5 * SEC);
+    const h = polls.reduce((acc, at) => awayPush(acc, gapReading(at), TH), feed([{}]));
+    expect(openGap(h)).toEqual({ from: T0, to: T0 + 3 * MIN, kind: "failed" });
+    expect(awayStory(h, LEFT)).toEqual({ kind: "gap", gap: { from: T0, to: T0 + 3 * MIN, kind: "failed" } });
+    expect(openGap(feed([{}]))).toBeNull();
+  });
+
+  it("names a process by its name, not its share", () => {
+    expect(procName("postgres 93%")).toBe("postgres");
+    expect(procName("  node  ")).toBe("node");
+    expect(procName("")).toBe("");
   });
 });
 
-describe("above the charts", () => {
-  it("tells swap as a share, as none, or not at all", () => {
-    expect(swapShare(2 * 2 ** 30, 8 * 2 ** 30)).toBe(0.25);
-    expect(swapShare(0, 0)).toBe("none");
-    expect(swapShare(null, 0)).toBe("none");
-    expect(swapShare(null, 8)).toBeNull();
-    expect(swapShare(1, null)).toBeNull();
-    expect(swapShare(9, 8)).toBe(1);
-    expect(swapShare(NaN, 8)).toBeNull();
-  });
-
-  it("puts a ring at the start of a chart only where it is worth drawing", () => {
-    expect(gutterRing(46, false)).toBe(22);
-    expect(gutterRing(30, false)).toBe(14);
-    expect(gutterRing(26, false)).toBeNull();
-    expect(gutterRing(90, true)).toBe(30);
-    expect(gutterRing(50, true)).toBe(24);
-    expect(gutterRing(NaN, true)).toBeNull();
-    for (const h of [20, 28, 40, 64, 120]) {
-      const r = gutterRing(h, false);
-      if (r != null) {
-        expect(r).toBeGreaterThanOrEqual(GUTTER_RING_MIN);
-        expect(2 * r).toBeLessThan(h);
-      }
-    }
-  });
-
+describe("the verdict", () => {
   it("says the host is fine, or names its worst problem and counts the rest", () => {
     const p = (id: string, level: Problem["level"]): Problem => ({ id, level, section: "cpu", key: "mon.p.cpu", params: { pct: 97 } });
     expect(verdictLine(false, [p("cpu", "crit")])).toEqual({ kind: "none" });
@@ -559,31 +513,60 @@ describe("above the charts", () => {
   });
 });
 
-describe("under the pointer", () => {
-  it("tells the events a stretch shares time with: CPU, then memory, then load", () => {
-    const ev = (over: Partial<AwayEvent>): AwayEvent => ({
-      key: "cpu",
-      level: "warn",
-      start: T0,
-      end: T0,
-      peak: 80,
-      peakAt: T0,
-      top: "",
-      cores: null,
-      open: false,
-      ...over,
-    });
-    const load = ev({ key: "load", start: T0 + MIN, end: T0 + 9 * MIN });
-    const cpu = ev({ start: T0 + 2 * MIN, end: T0 + 3 * MIN });
-    const mem = ev({ key: "mem", start: T0 + 3 * MIN, end: T0 + 4 * MIN });
-    const all = [load, cpu, mem];
-    expect(eventsAt(all, T0 + 2 * MIN, T0 + 2 * MIN)).toEqual([cpu, load]);
-    // A cell covers its whole stretch: the edges count.
-    expect(eventsAt(all, T0 + 3 * MIN, T0 + 5 * MIN)).toEqual([cpu, mem, load]);
-    expect(eventsAt(all, T0 + 10 * MIN, T0 + 10 * MIN)).toEqual([]);
-    expect(eventsAt(all, T0 - MIN, T0)).toEqual([]);
+describe("the standby screen's layout", () => {
+  // The smallest area each form is drawn in (`CARD_ROOM`), a common one and a large one.
+  const AREAS: [number, number, boolean][] = [
+    [600, 400, false],
+    [960, 560, false],
+    [1099, 779, false],
+    [1100, 780, true],
+    [1440, 900, true],
+    [2560, 1440, true],
+  ];
+  const FLAGS = [false, true].flatMap((yourTime) => [false, true].map((transfer) => ({ yourTime, transfer })));
+
+  it("stacks clock, pulse, numbers, transfer and hint top to bottom, inside the area", () => {
+    for (const [W, H, big] of AREAS) {
+      for (const o of FLAGS) {
+        const l = pulseLayout(W, H, big, o);
+        const at = `${W}×${H} ${JSON.stringify(o)}`;
+        const topBottom = o.yourTime ? l.yourTimeY + l.smallSize : l.dateY + l.dateSize;
+        expect(l.dateY, at).toBeGreaterThan(l.clockY + l.clockSize * 0.9);
+        expect(l.headY, at).toBeGreaterThan(topBottom);
+        expect(l.headY + l.headSize, at).toBeLessThan(l.chart.y);
+        expect(l.chart.y + l.chart.h, at).toBeLessThan(l.axisY);
+        expect(l.axisY + l.smallSize, at).toBeLessThan(l.labelY);
+        expect(l.labelY + l.labelSize, at).toBeLessThan(l.valueY);
+        const under = l.transfer ? l.transfer.y : l.hintY;
+        expect(l.valueY + l.valueSize, at).toBeLessThanOrEqual(under);
+        if (l.transfer) expect(l.transfer.y + l.transfer.h, at).toBeLessThan(l.hintY);
+        expect(l.transfer != null, at).toBe(o.transfer);
+        expect(l.hintY + 12, at).toBeLessThanOrEqual(H);
+        expect(l.chart.x + l.chart.w, at).toBe(W - l.pad);
+        // The host and its verdict stand beside the clock, not under it.
+        expect(l.verdictY + l.verdictSize, at).toBeLessThan(l.headY);
+      }
+    }
   });
 
+  it("keeps the pulse a height worth reading, with room for the mark's label", () => {
+    for (const [W, H, big] of AREAS) {
+      for (const o of FLAGS) {
+        const l = pulseLayout(W, H, big, o);
+        expect(l.chart.h - l.markRoom, `${W}×${H} ${JSON.stringify(o)}`).toBeGreaterThanOrEqual(big ? 100 : 40);
+        expect(l.chart.h).toBeLessThanOrEqual(Math.round(H * PULSE_SHARE));
+      }
+    }
+  });
+
+  it("gives what is left to air above the pulse, not to a taller line", () => {
+    const l = pulseLayout(2560, 1440, true, { yourTime: false, transfer: false });
+    expect(l.chart.h).toBe(Math.round(1440 * PULSE_SHARE));
+    expect(l.headY - (l.dateY + l.dateSize)).toBeGreaterThan(200);
+  });
+});
+
+describe("under the pointer", () => {
   it("stops showing once the pointer rests", () => {
     expect(hoverShown(null, 1000)).toBe(false);
     expect(hoverShown(1000, 1000)).toBe(true);
@@ -669,25 +652,6 @@ describe("the small cards' chart", () => {
     expect(timeRuns(gapped, "cpu", 0, 15, 0, 0, 100, 100)).toEqual([[{ x: 0, y: 50 }]]);
   });
 
-  it("ticks at round minutes of the server's clock, no more than asked", () => {
-    for (const offset of [0, -180, 330, 45]) {
-      const from = T0 + 17_000;
-      const to = from + 47 * MIN;
-      const ticks = timeTicks(from, to, offset, 6);
-      expect(ticks.length).toBeGreaterThanOrEqual(4);
-      expect(ticks.length).toBeLessThanOrEqual(6);
-      for (const at of ticks) {
-        expect(at).toBeGreaterThanOrEqual(from);
-        expect(at).toBeLessThanOrEqual(to);
-        const d = shifted(at, offset);
-        expect(d.getMinutes() % 10, `${offset}: ${d.toString()}`).toBe(0);
-        expect(d.getSeconds()).toBe(0);
-      }
-    }
-    expect(timeTicks(T0, T0 + 3 * MIN, 0, 6)).toEqual([T0, T0 + MIN, T0 + 2 * MIN, T0 + 3 * MIN]);
-    expect(timeTicks(T0, T0, 0, 6)).toEqual([]);
-    expect(timeTicks(T0, T0 + MIN, 0, 0)).toEqual([]);
-  });
 });
 
 describe("the server's clock", () => {
@@ -742,18 +706,6 @@ describe("a transfer under way", () => {
   it("has nothing to show when nothing runs", () => {
     expect(standbyTransfer([], {})).toBeNull();
     expect(standbyTransfer([row("a", { done: true })], { a: 5 })).toBeNull();
-  });
-});
-
-describe("rings", () => {
-  it("fill to a value's share of its ceiling, or not at all when either is unknown", () => {
-    expect(ringFraction(23, 100)).toBe(0.23);
-    expect(ringFraction(1.42, 8)).toBeCloseTo(0.1775);
-    expect(ringFraction(9.6, 8)).toBe(1);
-    expect(ringFraction(null, 100)).toBeNull();
-    expect(ringFraction(5, null)).toBeNull();
-    expect(ringFraction(5, 0)).toBeNull();
-    expect(ringFraction(NaN, 10)).toBeNull();
   });
 });
 
