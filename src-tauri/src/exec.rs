@@ -86,6 +86,8 @@ pub struct Local<'a> {
     pub missing: Missing,
     /// Appended to the timeout note — why a run of this program may hang.
     pub timeout_hint: &'a str,
+    /// The folder it runs in (a formatter reads its project's config there).
+    pub cwd: Option<&'a str>,
 }
 
 /// Run a program locally, bounded by `timeout_secs`. The program is resolved on
@@ -113,6 +115,9 @@ pub async fn run_local(cmd: Local<'_>, timeout_secs: u64) -> AppResult<ExecOutpu
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped())
         .kill_on_drop(true);
+    if let Some(dir) = cmd.cwd {
+        command.current_dir(dir);
+    }
     crate::localenv::no_console_window(&mut command);
 
     let mut child = match command.spawn() {
@@ -167,6 +172,7 @@ pub fn source_of(label: &str) -> &'static str {
         "ci" | "ci dispatch" => "ci",
         "probe" | "netcheck" => "netcheck",
         "iac" | "recipe" => "scenarios",
+        "format" | "lsp" => "editor",
         _ => "docker",
     }
 }
@@ -225,6 +231,7 @@ mod tests {
             stdin: None,
             missing,
             timeout_hint: "",
+            cwd: None,
         }
     }
 

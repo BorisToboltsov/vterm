@@ -31,7 +31,6 @@
   import { fitsBeside } from "../layout/panelsplit";
   import { partWidth } from "../stores/panelsplit.svelte";
   import type { FileEntry } from "../types";
-  import { fileIconName } from "./fileicon";
   import { lsColorKey, fileTooltip, formatMode, formatModified, ownerLabel } from "./lscolors";
   import ColumnHead from "../ui/ColumnHead.svelte";
   import SortTitle from "../ui/SortTitle.svelte";
@@ -87,6 +86,30 @@
   import { t } from "../i18n";
   import { holdsPipelines, isPipelineDir, pipelineKindOf } from "../pipeline/pipefiles";
   import { projectSigns, type ProjectKind } from "../scenarios/project";
+  import ProjectStrip from "./ProjectStrip.svelte";
+  import {
+    isGenerated,
+    manifestFacts,
+    packageManager,
+    projectOf,
+    roleOf,
+    rowLook,
+    type ManifestFacts,
+    type ProjectKind as MapKind,
+    type Role,
+    type Tone,
+  } from "./projectmap";
+  import {
+    asks,
+    helmInstallArgv,
+    projectActions,
+    projectTasks,
+    rowActions,
+    type ProjectAction,
+    type ProjectCommand,
+    type ProjectTask,
+  } from "./projectactions";
+  import { markTone, type ListingGit } from "../git/gitlisting";
 
   let {
     adapter,
@@ -141,6 +164,10 @@
     footer,
     footerCount = 0,
     rowMark,
+    prod = false,
+    kubeContext = null,
+    onProjectCommand,
+    onOpenPanel,
   }: {
     adapter: FileBrowserAdapter;
     width?: number;
@@ -190,6 +217,14 @@
      * no comparison for this folder.
      */
     rowMark?: (entry: FileEntry) => { label: string; mark: Mark }[] | null;
+    /** The connection is a prod server: the strip's commands that change things ask in red (ADR 0077). */
+    prod?: boolean;
+    /** The k8s panel's context for this connection — kubectl and helm are told it. */
+    kubeContext?: string | null;
+    /** Type a project's command into the connection's terminal, in `root` (ADR 0077). */
+    onProjectCommand?: (root: string, cmd: ProjectCommand, label: string) => void;
+    /** «Open in Docker / k8s» from the strip. */
+    onOpenPanel?: (panel: "docker" | "k8s") => void;
   } = $props();
 
   let cwd = $state("");
@@ -289,7 +324,18 @@
     if (sessionKey) setListFilter(sessionKey, "files", next);
     else localFilter = next;
   }
-  const visibleEntries = $derived(filterHiddenFiles(entries, settings.sftp.showHiddenFiles));
+  // What the folder is as a project and what each entry is to it (ADR 0077).
+  const projInfo = $derived(mutable ? projectOf(cwd, entries) : null);
+  const projKind = $derived<MapKind | null>(projInfo?.kind ?? null);
+  const roles = $derived(new Map<string, Role>(entries.map((e) => [e.path, roleOf(projKind, e)])));
+  const visibleEntries = $derived(
+    filterHiddenFiles(entries, settings.sftp.showHiddenFiles).filter(
+      (e) => !(settings.sftp.hideGenerated && isGenerated(roles.get(e.path) ?? "plain")),
+    ),
+  );
+  const hiddenGenerated = $derived(
+    settings.sftp.hideGenerated ? entries.filter((e) => isGenerated(roles.get(e.path) ?? "plain")).length : 0,
+  );
   const shownEntries = $derived(
     mutable ? sortEntries(filterItems(visibleEntries, FILE_SCHEMA, nameFilter), sortNow) : visibleEntries,
   );
@@ -679,7 +725,172 @@
       checked: settings.sftp.showHiddenFiles,
       onSelect: toggleHiddenFiles,
     },
+    {
+      label: t("project.hideGenerated"),
+      checked: settings.sftp.hideGenerated,
+      onSelect: () => (settings.sftp.hideGenerated = !settings.sftp.hideGenerated),
+    },
   ]);
+
+  // ── The project view of the folder (ADR 0077) ──────────────────────────────
+  // Its manifest's facts and its tasks, read once per folder; its Git status,
+  // read while the panel is on screen — one read in flight, again on reload.
+  let projFacts = $state<ManifestFacts | null>(null);
+  let projTasks = $state<ProjectTask[]>([]);
+  let gitInfo = $state<ListingGit | null>(null);
+  let gitFor = "";
+  let gitBusy = false;
+  let gitAgain = false;
+  const lastAction = new Map<string, ProjectAction | ProjectTask>();
+  let lastShown = $state<ProjectAction | ProjectTask | null>(null);
+  let projAsk = $state<{ action: ProjectAction; helm: boolean } | null>(null);
+  let helmForm = $state({ release: "", namespace: "default", values: null as string | null });
+
+  const manager = $derived(projKind ? packageManager(projKind, entries) : null);
+  const projActs = $derived(
+    projKind
+      ? projectActions(projKind, {
+          manager,
+          initialised: entries.some((e) => e.isDir && e.name === ".terraform"),
+          kubeContext,
+          goMain: entries.some((e) => !e.isDir && e.name === "main.go"),
+          playbook: entries.find((e) => !e.isDir && /^(site|playbook)\.ya?ml$/i.test(e.name))?.name ?? null,
+          inventory: entries.find((e) => /^(inventory|inventories|hosts)(\.(ini|ya?ml))?$/i.test(e.name))?.name ?? null,
+          folder: baseNameOf(cwd),
+        })
+      : [],
+  );
+
+  function baseNameOf(p: string): string {
+    const parts = p.split(/[\\/]/).filter(Boolean);
+    return parts[parts.length - 1] ?? "";
+  }
+
+  $effect(() => {
+    const info = projInfo;
+    const dir = cwd;
+    projFacts = null;
+    projTasks = [];
+    lastShown = lastAction.get(dir) ?? null;
+    if (!info || !adapter.readText) return;
+    const read = adapter.readText;
+    const at = (name: string) => joinPath(dir, name);
+    if (info.manifest) {
+      const m = info.manifest;
+      void read(at(m))
+        .then((text) => {
+          if (cwd === dir && projInfo?.kind === info.kind) projFacts = manifestFacts(info.kind, m, text);
+        })
+        .catch(swallow("files", "the project's manifest was not read: the strip shows its name only"));
+    }
+    if (info.tasksFile) {
+      const f = info.tasksFile;
+      void read(at(f))
+        .then((text) => {
+          if (cwd === dir) projTasks = projectTasks(f, text, manager);
+        })
+        .catch(swallow("files", "the project's task file was not read: its tasks are not offered"));
+    }
+  });
+
+  async function readGit(dir: string) {
+    if (!adapter.gitStatus) return;
+    if (gitBusy) {
+      gitAgain = true;
+      return;
+    }
+    gitBusy = true;
+    try {
+      const g = await adapter.gitStatus(dir);
+      if (cwd === dir) gitInfo = g;
+    } catch (e) {
+      if (cwd === dir) gitInfo = null;
+      swallowed("files", "the folder's Git status was not read: the listing shows no Git marks", e);
+    } finally {
+      gitBusy = false;
+      if (gitAgain) {
+        gitAgain = false;
+        void readGit(cwd);
+      }
+    }
+  }
+
+  // Asked when the folder or its listing changes, and only while on screen.
+  $effect(() => {
+    void entries;
+    const dir = cwd;
+    if (!visible || !mutable || !dir || !adapter.gitStatus) return;
+    if (gitFor !== dir) gitInfo = null;
+    gitFor = dir;
+    void untrack(() => readGit(dir));
+  });
+
+  function runProject(a: ProjectAction) {
+    const kind = projInfo?.kind;
+    if (!kind) return;
+    if (a.opens === "scenarios-check" || a.opens === "scenarios-run" || a.opens === "scenarios-plan") {
+      const signs = projectSigns(entries);
+      if (signs) onProject?.(signs.kind, cwd, a.opens === "scenarios-check" ? "check" : a.opens === "scenarios-run" ? "run" : "plan");
+      return;
+    }
+    if (a.opens === "docker" || a.opens === "k8s") {
+      onOpenPanel?.(a.opens);
+      return;
+    }
+    if (kind === "helm" && a.id === "install") {
+      helmForm = { release: projFacts?.name ?? baseNameOf(cwd), namespace: "default", values: null };
+      projAsk = { action: a, helm: true };
+      return;
+    }
+    if (asks(a, prod)) {
+      projAsk = { action: a, helm: false };
+      return;
+    }
+    send(a);
+  }
+
+  function send(a: ProjectAction | ProjectTask, cmd?: ProjectCommand) {
+    const c = cmd ?? ("argv" in a && !("label" in a) ? { argv: a.argv } : (a as ProjectAction).cmd);
+    onProjectCommand?.(cwd, c, "label" in a ? t(a.label) : a.name);
+    lastAction.set(cwd, a);
+    lastShown = a;
+  }
+
+  function runTask(task: ProjectTask) {
+    if (prod) {
+      projAsk = { action: { id: `task:${task.name}`, label: "project.tasks", cmd: { argv: task.argv }, ask: "prod" }, helm: false };
+      return;
+    }
+    send(task);
+  }
+
+  const helmArgv = $derived(projAsk?.helm ? helmInstallArgv(helmForm, kubeContext) : null);
+  const valuesFiles = $derived(entries.filter((e) => !e.isDir && /^values.*\.ya?ml$/i.test(e.name)).map((e) => e.name));
+
+  function confirmProject() {
+    const ask = projAsk;
+    projAsk = null;
+    if (!ask) return;
+    if (ask.helm) {
+      if (helmArgv) send(ask.action, { argv: helmArgv });
+      return;
+    }
+    send(ask.action);
+  }
+
+  function askText(a: ProjectAction): string {
+    if ("argv" in a.cmd) return a.cmd.argv.join(" ");
+    return a.cmd.line.posix ?? Object.values(a.cmd.line)[0] ?? "";
+  }
+
+  const TONE: Record<Exclude<Tone, null>, string> = {
+    accent: "text-accent",
+    ok: "text-ok",
+    warn: "text-warn",
+    muted: "text-muted",
+    violet: "text-rail-2",
+  };
+  const GIT_TONE = { warn: "text-warn", ok: "text-ok", bad: "text-bad" } as const;
 
   function toggleHiddenFiles() {
     const held = cursorEntry?.path;
@@ -908,6 +1119,18 @@
     const sel = selectedEntries();
     const multi = sel.length > 1;
     const items: MenuItem[] = [];
+    // A unit of systemd, a site of nginx (ADR 0077): what is done to it, first.
+    const own = !multi && projKind && onProjectCommand ? rowActions(projKind, cwd, entry) : [];
+    for (const a of own) {
+      items.push({
+        icon: a.ask === "always" ? "alert" : "terminal",
+        label: t(a.label),
+        danger: a.ask === "always",
+        hint: asks(a, prod) ? t("project.asks") : undefined,
+        onSelect: () => (asks(a, prod) ? (projAsk = { action: { ...a, label: a.label }, helm: false }) : send(a)),
+      });
+    }
+    if (own.length > 0) items.push({ kind: "separator" });
     if (!multi) {
       items.push({
         icon: entry.isDir ? "folder" : "file",
@@ -1482,46 +1705,34 @@
         </div>
       {:else}
         {@render banner?.()}
-        {#if project && onProject}
-          <!-- The folder is a project (ADR 0071): what it is and what can be done
-               with it, before the listing — a run is one click from the folder. -->
-          <div class="mx-2 mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 rounded border border-accent/35 bg-accent/5 px-2 py-1 text-xs" data-testid="{testPrefix}-project">
-            <button
-              type="button"
-              class="flex min-w-0 items-center gap-1 font-medium text-text hover:underline"
-              use:tooltip={t("scenarios.strip.markers", { markers: project.markers.join(", ") })}
-              onclick={() => onProject?.(project.kind, cwd, "open")}
-            >
-              <Icon name={project.kind === "ansible" ? "gearPlay" : "cube"} size={13} class={project.kind === "ansible" ? "text-warn" : "text-accent"} />
-              <span class="truncate">{project.kind === "ansible" ? t("scenarios.strip.ansible") : t("scenarios.strip.terraform")}</span>
-              <Icon name="chevronRight" size={11} class="text-muted" />
-            </button>
-            <span class="ml-auto flex items-center gap-1">
-              {#if project.kind === "ansible"}
-                <button type="button" class="rounded border border-edge px-1.5 py-0.5 text-meta text-text hover:border-accent" onclick={() => onProject?.("ansible", cwd, "check")}>{t("scenarios.editor.check")}</button>
-                <button type="button" class="flex items-center gap-1 rounded border border-accent/50 bg-accent/10 px-1.5 py-0.5 text-meta text-accent" data-testid="{testPrefix}-project-run" onclick={() => onProject?.("ansible", cwd, "run")}>
-                  <Icon name="play" size={10} />{t("scenarios.editor.run")}
-                </button>
-              {:else}
-                <button type="button" class="flex items-center gap-1 rounded border border-accent/50 bg-accent/10 px-1.5 py-0.5 text-meta text-accent" onclick={() => onProject?.("terraform", cwd, "plan")}>
-                  <Icon name="play" size={10} />{t("scenarios.editor.plan")}
-                </button>
-              {/if}
-              {#if onPinProject}
-                {@const pinned = projectPinned?.(project.kind, cwd) ?? false}
-                <button
-                  type="button"
-                  class="rounded p-0.5 hover:bg-edge {pinned ? 'text-accent' : 'text-muted hover:text-text'}"
-                  aria-pressed={pinned}
-                  aria-label={pinned ? t("scenarios.project.unpin") : t("scenarios.project.pin")}
-                  use:tooltip={pinned ? t("scenarios.project.unpin") : t("scenarios.project.pin")}
-                  onclick={() => onPinProject?.(project.kind, cwd)}
-                >
-                  <Icon name="pin" size={12} />
-                </button>
-              {/if}
-            </span>
-          </div>
+        {#if projInfo}
+          <!-- The folder is a project (ADR 0071, 0077): what it is, its branch and
+               facts, and the commands of its kind — one click from the folder. -->
+          <ProjectStrip
+            info={projInfo}
+            facts={projFacts}
+            git={gitInfo}
+            actions={onProjectCommand || onProject ? projActs.filter((a) => (a.opens?.startsWith("scenarios") ? !!onProject && !!project : a.opens ? !!onOpenPanel : !!onProjectCommand)) : []}
+            tasks={onProjectCommand ? projTasks : []}
+            tasksFile={projInfo.tasksFile}
+            {prod}
+            last={lastShown}
+            pinned={project && onPinProject ? (projectPinned?.(project.kind, cwd) ?? false) : null}
+            testid="{testPrefix}-project"
+            onrun={runProject}
+            ontask={runTask}
+            onopen={project && onProject ? () => onProject?.(project.kind, cwd, "open") : undefined}
+            onpin={project && onPinProject ? () => onPinProject?.(project.kind, cwd) : undefined}
+            onmenu={(x, y, items) => (ctxMenu = { x, y, items })}
+          />
+        {/if}
+        {#if hiddenGenerated > 0}
+          <button
+            type="button"
+            class="mx-2 mt-1 flex items-center gap-1 text-meta text-muted hover:text-text"
+            data-testid="{testPrefix}-generated-hidden"
+            onclick={() => (settings.sftp.hideGenerated = false)}
+          ><Icon name="folderOff" size={11} />{t("project.generatedHidden", { n: hiddenGenerated })}</button>
         {/if}
         {#if mutable}
           <!-- The filter row: the name in this folder and «View» with the order
@@ -1868,6 +2079,9 @@
                         {/if}
                       </div>
                     {:else}
+                      {@const look = rowLook(entry, roles.get(entry.path) ?? "plain", projKind)}
+                      {@const gmark = gitInfo?.marks.get(entry.name)}
+                      {@const ignored = gitInfo?.ignored.has(entry.name) ?? false}
                       <div
                         data-drop={entry.isDir ? entry.path : undefined}
                         onpointerdown={(e) => startMove(e, entry)}
@@ -1895,8 +2109,30 @@
                           use:tooltip={fileTooltip(entry)}
                         >
                           <div class="flex min-w-0 flex-1 items-center gap-2 @wide:w-[var(--c-name)] @wide:flex-initial @wide:border-r @wide:border-edge/40 @wide:pr-2">
-                            <Icon name={fileIconName(entry)} size={15} class="shrink-0 text-muted" />
-                            <span class="truncate" style={nameStyle(entry)}>{entry.name}</span>
+                            <Icon
+                              name={look.icon}
+                              size={15}
+                              class="shrink-0 {look.tone ? TONE[look.tone] : 'text-muted'} {look.dim || ignored ? 'opacity-50' : ''}"
+                            />
+                            <span
+                              class="truncate {look.strong ? 'font-medium' : ''} {look.warnName ? 'text-warn' : ''} {look.dim || ignored ? 'opacity-50' : ''}"
+                              style={look.warnName ? "" : nameStyle(entry)}
+                            >{entry.name}</span>
+                            {#if look.after === "entry"}
+                              <Icon name="play" size={9} class="shrink-0 text-accent" />
+                            {:else if look.after === "link"}
+                              <Icon name="symlink" size={11} class="shrink-0 text-ok" />
+                            {/if}
+                            {#if look.dim}
+                              <span class="shrink-0 rounded border border-edge px-1 text-caption text-muted" data-testid="{testPrefix}-generated">{t("project.generated")}</span>
+                            {/if}
+                            {#if gmark}
+                              <span
+                                class="ml-auto shrink-0 font-mono text-caption {GIT_TONE[markTone(gmark)]}"
+                                data-testid="{testPrefix}-git-mark"
+                                use:tooltip={t(`project.git.${gmark === "•" ? "inside" : gmark}`)}
+                              >{gmark}</span>
+                            {/if}
                             {#if rowMark}
                               {@const marks = rowMark(entry)}
                               {#if marks}
@@ -2050,6 +2286,37 @@
     {moveTarget.items.length === 1
       ? t("sftp.moveBody", { name: moveTarget.items[0].name, dest: moveTarget.destDir })
       : t("sftp.moveBodyMulti", { count: moveTarget.items.length, dest: moveTarget.destDir })}
+  {/if}
+</ConfirmDialog>
+
+<!-- A project's command that changes things (ADR 0077): said in full before it is typed. -->
+<ConfirmDialog
+  open={!!projAsk}
+  title={projAsk?.helm ? t("project.helmTitle") : t("project.askTitle", { what: projAsk ? t(projAsk.action.label) : "" })}
+  confirmLabel={t("project.toTerminal")}
+  danger={prod || projAsk?.action.ask === "always"}
+  onconfirm={confirmProject}
+  oncancel={() => (projAsk = null)}
+>
+  {#if projAsk}
+    {#if projAsk.helm}
+      <div class="mb-3 grid grid-cols-[6rem_1fr] items-center gap-x-2 gap-y-1.5" data-testid="{testPrefix}-helm-form">
+        <label for="{testPrefix}-helm-release">{t("project.helmRelease")}</label>
+        <input id="{testPrefix}-helm-release" class="rounded border border-edge bg-panel px-2 py-1 text-text" bind:value={helmForm.release} />
+        <label for="{testPrefix}-helm-ns">{t("project.helmNamespace")}</label>
+        <input id="{testPrefix}-helm-ns" class="rounded border border-edge bg-panel px-2 py-1 text-text" bind:value={helmForm.namespace} />
+        <label for="{testPrefix}-helm-values">{t("project.helmValues")}</label>
+        <select id="{testPrefix}-helm-values" class="rounded border border-edge bg-panel px-2 py-1 text-text" bind:value={helmForm.values}>
+          <option value={null}>{t("project.helmNoValues")}</option>
+          {#each valuesFiles as v (v)}<option value={v}>{v}</option>{/each}
+        </select>
+      </div>
+    {/if}
+    <div class="break-all rounded border border-edge bg-panel-alt px-2 py-1.5 font-mono text-text" data-testid="{testPrefix}-ask-command">
+      {projAsk.helm ? (helmArgv ? helmArgv.join(" ") : t("project.helmInvalid")) : askText(projAsk.action)}
+    </div>
+    <p class="mt-2">{t("project.askFolder", { dir: cwd })}{#if kubeContext && (projKind === "kustomize" || projKind === "k8s" || projKind === "helm")} · {t("project.askContext", { context: kubeContext })}{/if}</p>
+    {#if prod}<p class="mt-2 text-bad">{t("project.askProd")}</p>{/if}
   {/if}
 </ConfirmDialog>
 

@@ -25,6 +25,8 @@
   import type { DockConnection } from "../stores/tabs.svelte";
   import type { AttachTarget } from "../tabs/tabattach";
   import type { SftpGroup } from "../files/groupupload";
+  import type { ProjectCommand } from "../files/projectactions";
+  import { dockState } from "../stores/dockstate.svelte";
 
   let {
     id,
@@ -61,6 +63,8 @@
     aiProd = false,
     aiNoAi = false,
     sftpGroup = null,
+    onProjectCommand,
+    onOpenPanel,
   }: {
     /** Which session panel to render (the server tree is not one of them). */
     id: Exclude<PanelId, "servers">;
@@ -125,7 +129,14 @@
     aiNoAi?: boolean;
     /** Synchronous input is on for this session: the file panel uploads to the group (ADR 0064). */
     sftpGroup?: SftpGroup | null;
+    /** The file panel's project strip: a command typed into this tab's terminal, in `root` (ADR 0077). */
+    onProjectCommand?: (root: string, cmd: ProjectCommand, label: string) => void;
+    /** «Open in Docker / k8s» from the project strip. */
+    onOpenPanel?: (panel: "docker" | "k8s") => void;
   } = $props();
+
+  // The context the k8s panel works in, told to kubectl and helm from the strip.
+  const kubeContext = $derived(dockState(sessionId).k8sScope?.context ?? null);
 
   const sessionReady = $derived(connection === "connected");
 </script>
@@ -147,6 +158,9 @@
       {onProject}
       {projectPinned}
       {onPinProject}
+      {kubeContext}
+      {onProjectCommand}
+      {onOpenPanel}
       onUserNavigate={onSftpNavigate}
     />
   {:else}
@@ -162,6 +176,9 @@
       {onProject}
       {projectPinned}
       {onPinProject}
+      {kubeContext}
+      {onProjectCommand}
+      {onOpenPanel}
       onUserNavigate={onSftpNavigate}
     />
   {/if}

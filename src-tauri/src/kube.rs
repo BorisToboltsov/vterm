@@ -655,6 +655,7 @@ mod live_kube {
                 stdin: None,
                 missing: exec::Missing::Exit127,
                 timeout_hint: "",
+                cwd: None,
             },
             30,
         )

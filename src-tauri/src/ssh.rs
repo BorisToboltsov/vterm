@@ -558,6 +558,15 @@ impl SshSession {
         exec_on(&self.handle, command, stdin, timeout_secs, Some(cancel)).await
     }
 
+    /// A long-lived exec channel running `command` (a language server, ADR 0079):
+    /// the caller splits it, writes requests to its stdin and reads its stdout
+    /// until it ends. Opened under the same deadline as every other channel.
+    pub async fn exec_channel(&self, command: &str) -> AppResult<russh::Channel<client::Msg>> {
+        let channel = answered(self.handle.channel_open_session(), "exec channel failed").await?;
+        answered(channel.exec(true, command.as_bytes()), "exec failed").await?;
+        Ok(channel)
+    }
+
     /// Push bytes into the active recording as output (no-op if not recording).
     /// Used to mirror AI-executed commands into the session recording (17.8).
     pub fn record_output(&self, data: &[u8]) {

@@ -89,6 +89,11 @@ export interface EditorLang {
   kind: EditorLangKind;
   /** Short label shown on the sub-tab (untranslated, technical). */
   label: string;
+  /**
+   * A Jinja2 template of that language (`nginx.conf.j2`, ADR 0076): the
+   * language underneath is highlighted, the `{{ }}`/`{% %}` over it.
+   */
+  jinja?: boolean;
 }
 
 const YAML: EditorLang = { kind: "yaml", label: "YAML" };
@@ -148,6 +153,7 @@ const EXT_LANG: Record<string, EditorLang> = {
   properties: { kind: "ini", label: "Properties" },
   tf: TERRAFORM,
   tfvars: TERRAFORM,
+  hcl: { kind: "hcl", label: "HCL" },
   txt: TEXT,
   log: TEXT,
   // Shells
@@ -275,6 +281,8 @@ const NAME_LANG: Record<string, EditorLang> = {
   dockerfile: DOCKER,
   containerfile: DOCKER,
   makefile: TEXT,
+  jenkinsfile: { kind: "groovy", label: "Jenkinsfile" },
+  justfile: TEXT,
   gemfile: RUBY,
   rakefile: RUBY,
   vagrantfile: RUBY,
@@ -413,6 +421,11 @@ export function editorLangWithDialect(lang: EditorLang, content: string): Editor
  * ({@link isNginxConfigPath}), not just `nginx.conf` by name.
  */
 export function editorLangFor(name: string): EditorLang | null {
+  const tpl = jinjaInner(name);
+  if (tpl !== null) {
+    const inner = tpl === "" ? null : editorLangFor(tpl);
+    return { ...(inner ?? TEXT), jinja: true };
+  }
   const byName = NAME_LANG[baseName(name).toLowerCase()];
   if (byName) return byName;
   const daemon = daemonConfigLang(name);
@@ -465,4 +478,145 @@ export function editorLangWithIncludes(
   const lang = editorLangOrPlain(path);
   if (lang.kind !== "nginx" && nginxConfigs?.has(path)) return NGINX;
   return lang;
+}
+
+/** Template suffixes whose language is the name without them (ADR 0076). */
+const JINJA_EXT = ["j2", "jinja", "jinja2"];
+
+/**
+ * The name a Jinja2 template renders to (`nginx.conf.j2` → `nginx.conf`), `""`
+ * for a template with nothing left to say (`x.j2` → nothing known), or null when
+ * the name is not a template.
+ */
+export function jinjaInner(path: string): string | null {
+  const ext = fileExt(path);
+  if (!JINJA_EXT.includes(ext)) return null;
+  const inner = path.slice(0, path.length - ext.length - 1);
+  return fileExt(inner) === "" && !NAME_LANG[baseName(inner).toLowerCase()] ? "" : inner;
+}
+
+/** Interpreters a shebang names, to the language they run. */
+const SHEBANG: Record<string, EditorLang> = {
+  sh: SHELL,
+  bash: SHELL,
+  zsh: SHELL,
+  dash: SHELL,
+  ksh: SHELL,
+  ash: SHELL,
+  python: PYTHON,
+  python2: PYTHON,
+  python3: PYTHON,
+  node: JS,
+  deno: TS,
+  bun: TS,
+  perl: PERL,
+  ruby: RUBY,
+  lua: LUA,
+  pwsh: POWERSHELL,
+};
+
+/** The language a `#!` first line names (`#!/usr/bin/env -S python3 -u`), or null. */
+export function shebangLang(content: string): EditorLang | null {
+  const m = /^#!\s*(\S+)(?:\s+(.*))?/.exec(content.slice(0, 200));
+  if (!m) return null;
+  let prog = m[1].split("/").pop() ?? "";
+  if (prog === "env") {
+    const args = (m[2] ?? "").split(/\s+/).filter((a) => a && !a.startsWith("-") && !a.includes("="));
+    prog = args[0] ?? "";
+  }
+  const key = prog.toLowerCase();
+  return SHEBANG[key] ?? SHEBANG[key.replace(/[\d.]+$/, "")] ?? null;
+}
+
+/** Names a modeline may use, to a language kind. */
+const MODE_NAMES: Record<string, EditorLang> = {
+  yaml: YAML,
+  json: JSON_,
+  sh: SHELL,
+  bash: SHELL,
+  zsh: SHELL,
+  "shell-script": SHELL,
+  python: PYTHON,
+  ruby: RUBY,
+  perl: PERL,
+  lua: LUA,
+  javascript: JS,
+  js: JS,
+  typescript: TS,
+  ts: TS,
+  dockerfile: DOCKER,
+  nginx: NGINX,
+  ini: CONFIG,
+  dosini: CONFIG,
+  conf: CONFIG,
+  toml: TOML,
+  markdown: MD,
+  md: MD,
+  go: GO,
+  rust: RUST,
+  terraform: TERRAFORM,
+  hcl: TERRAFORM,
+  systemd: SYSTEMD,
+  xml: { kind: "xml", label: "XML" },
+  sql: SQL,
+  groovy: { kind: "groovy", label: "Groovy" },
+  "jinja2": { ...TEXT, jinja: true },
+  jinja: { ...TEXT, jinja: true },
+};
+
+/**
+ * The language a vim or emacs modeline names in the first or last five lines
+ * (`# vim: set ft=yaml:`, `# -*- mode: python -*-`), or null.
+ */
+export function modelineLang(content: string): EditorLang | null {
+  const lines = content.split("\n");
+  const look = [...lines.slice(0, 5), ...lines.slice(Math.max(5, lines.length - 5))];
+  for (const l of look) {
+    const vim = /\b(?:vim?|ex):.*?\b(?:ft|filetype|syntax)=([\w.+-]+)/.exec(l);
+    if (vim) {
+      const name = vim[1].split(".")[0].toLowerCase();
+      if (MODE_NAMES[name]) return MODE_NAMES[name];
+    }
+    const emacs = /-\*-\s*(?:mode:\s*)?([\w+-]+)\s*(?:;.*)?-\*-/i.exec(l);
+    if (emacs) {
+      const name = emacs[1].toLowerCase();
+      if (MODE_NAMES[name]) return MODE_NAMES[name];
+    }
+  }
+  return null;
+}
+
+/**
+ * The language once the buffer is read: a name that says nothing (plain text,
+ * an untyped template) asks the modeline, then the shebang; plain YAML asks its
+ * content for a dialect. A name that says something keeps it, and a template
+ * stays a template.
+ */
+export function editorLangFromContent(lang: EditorLang, content: string): EditorLang {
+  if (lang.kind === "plain") {
+    const found = modelineLang(content) ?? shebangLang(content);
+    if (found) return lang.jinja ? { ...found, jinja: true } : found;
+    return lang;
+  }
+  const dialect = editorLangWithDialect(lang, content);
+  return lang.jinja && dialect !== lang ? { ...dialect, jinja: true } : dialect;
+}
+
+/** Every language the status bar can switch a file to, by label. */
+export const LANG_CHOICES: readonly EditorLang[] = (() => {
+  const seen = new Map<EditorLangKind, EditorLang>();
+  const add = (l: EditorLang) => {
+    if (!seen.has(l.kind)) seen.set(l.kind, { kind: l.kind, label: l.label });
+  };
+  [TEXT, YAML, ANSIBLE, K8S, COMPOSE, GHACTIONS, PROMETHEUS, TERRAFORM, JSON_, TOML, CONFIG, SHELL, PYTHON, GO, RUST, JS, TS, DOCKER, NGINX, SYSTEMD, MD].forEach(add);
+  Object.values(EXT_LANG).forEach(add);
+  Object.values(NAME_LANG).forEach(add);
+  [SSHD, SUDOERS, HAPROXY, BIND].forEach(add);
+  return [...seen.values()].sort((a, b) => (a.kind === "plain" ? -1 : b.kind === "plain" ? 1 : a.label.localeCompare(b.label)));
+})();
+
+/** The language of a picked kind, labelled as the picker shows it. */
+export function langOfKind(kind: EditorLangKind, jinja = false): EditorLang {
+  const found = LANG_CHOICES.find((l) => l.kind === kind) ?? TEXT;
+  return jinja ? { ...found, jinja: true } : { ...found };
 }

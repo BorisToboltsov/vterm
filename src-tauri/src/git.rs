@@ -192,6 +192,17 @@ mod tests {
         for ok in [
             &["rev-parse", "--show-toplevel"][..],
             &["status", "--porcelain=v2", "--branch", "-z"],
+            // The file panel's listing (ADR 0077): its folder's status and place.
+            &[
+                "status",
+                "--porcelain=v2",
+                "--branch",
+                "-z",
+                "--ignored",
+                "--",
+                ".",
+            ],
+            &["rev-parse", "--show-prefix"],
             &[
                 "log",
                 "--no-color",

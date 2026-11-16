@@ -74,6 +74,11 @@ Uppercase-микротекст — `text-caption uppercase tracking-wider` (и �
   [AppLogo](../src/lib/appearance/AppLogo.svelte) берёт фон из `backdrop` активной темы — единственное
   место, где SVG инлайнится в компоненте.
 - Сворачивание — шевроны `chevronLeft`/`chevronRight` из реестра, не символы `«`/`»`.
+- **Проект в панели файлов** (ADR 0077) — те же линии: папки `folderCode` (код, `text-accent`),
+  `folderTest` (тесты, `text-ok`), `folderOff` (служебное, `text-muted`), `folderVars` (переменные,
+  `text-rail-2`); `manifest` — манифест проекта; язык файла — `langPython`, `langRust`, `langGo`,
+  `langNode`, `markdown`; `helm`, `unit` (юнит systemd), `clock` (таймер). Редактор — `minimap`,
+  `alignLeft` (форматировать), `redo` (повторить команду).
 
 ## Кнопки и строки
 
@@ -1060,8 +1065,16 @@ Git: каждый поворот одного радиуса (8 px), связи 
   `bg-panel-alt`, прод — чип `bg-danger/15 text-danger`), «Проверить» — рамочная, «Выполнить на N» —
   `border-accent/50 bg-accent/10 text-accent`, с продом среди целей — `danger`. Состояние сервера —
   значок, тон (`text-ok`/`text-warn`/`text-bad`/`text-muted`) и строка ответа.
-- **Полоса проекта** над списком файлов — `border-accent/35 bg-accent/5`, имя проекта со стрелкой,
-  справа «Пробный» и акцентная «Запустить…»/«План», булавка.
+- **Полоса проекта** над списком файлов (ADR 0077, [ProjectStrip](../src/lib/files/ProjectStrip.svelte)) —
+  `border-accent/35 bg-accent/5`: значок типа в его тоне, «Тип · имя версия» (у Ansible и Terraform —
+  со стрелкой в «Сценарии»), кнопки команд — рамочные `text-meta`, главная — `border-accent/50 bg-accent/10
+  text-accent` с `play`; «Задачи ▾»/«Скрипты ▾», «▾» с остальными, «↻ последняя», булавка. Вторая строка —
+  `text-meta text-muted`: `gitBranch`, ветка `text-text`, ↑↓, «изменено: N» `text-warn`, факты манифеста.
+  Команда, которая спрашивает, в меню — `danger` или подсказка «спросит».
+- **Строка файла «как в IDE»** — значок роли или языка в тоне роли, манифест `font-medium`, секрет —
+  `lock` и имя `text-warn`, служебное — `opacity-50` и метка «служебное» в рамке `border-edge`; точка
+  входа — `play` 9 px `text-accent`, включённое — `symlink` `text-ok`. Git-буква — `font-mono text-caption`
+  справа: M/R/• `text-warn`, A/U `text-ok`, D/C `text-bad`; игнорируемое — `opacity-50`.
 - **Прогон playbook** — таблица: шапка play `bg-panel-alt`, колонки хостов 6 rem (прод — `text-danger`),
   ячейка — `rounded text-meta`: ok `bg-ok/15 text-ok`, изменено/изменит `bg-warn/15 text-warn`, ошибка и
   недоступен `bg-bad/15 text-bad`, пропущенная ошибка — `bg-edge text-muted`, идёт — `bg-accent/15
@@ -1070,6 +1083,30 @@ Git: каждый поворот одного радиуса (8 px), связи 
 - **План** — строка `±` + адрес `font-mono` + слово действия; знак: `+` `text-ok`, `~` `text-warn`, `±` и
   `−` `text-bad`. Изменение раскрывается в атрибуты «было → стало»; скрытое и неизвестное — `italic
   text-muted`.
+
+## Редактор
+
+Рабочее место редактора — ADR 0076, схемы — ADR 0078, языковые серверы — ADR 0079.
+
+- **Строка состояния** ([EditorStatusBar](../src/lib/editor/EditorStatusBar.svelte)) — `h-6 border-t
+  border-edge bg-panel-alt text-meta text-muted`; слева значки сервера и схемы, справа «Стр, кол», отступ
+  (меню), кодировка, концы строк, перенос и миникарта (`text-accent`, когда включены), язык с `chevronUp`
+  (`text-accent`, если выбран вручную). Выбор языка — всплывающий список над строкой: `FilterField`,
+  строки `text-xs`, «определён» — `text-caption`, внизу «выбор запоминается».
+- **Значок языкового сервера** — точка 6 px: `bg-ok` работает, `bg-warn` запускается, `bg-bad`
+  остановился сам, `bg-edge` выключен; «не установлен» — `text-warn`. **Схема** — `listCheck`, «Схема: …»,
+  `check` `text-ok` или «замечаний: N» `text-warn`; недоступна — `circleOff`.
+- **Путь в документе** — строка `h-6 border-b text-meta text-muted` под панелью инструментов,
+  сегменты через `chevronRight` 10 px, последний — `text-text`, справа `hierarchy` открывает `⌘⇧O`.
+  Список символов — всплывающий блок по центру сверху (`bg-panel-alt border-edge`), значок вида в
+  `text-accent`, номер строки `text-caption`.
+- **Форматировать** — рамочная пара «`alignLeft` Форматировать | `chevronDown`»; меню — инструменты с
+  отметкой выбранного, «Исправить: ansible-lint --fix» с `wrench`, «Форматировать при сохранении».
+  Изменённые строки на мгновение подсвечены `accent` 14 %.
+- **В коде**: шеврон сворачивания `text-muted` (наведение — `text-accent`), свёрнутое — рамочная
+  пилюля «⋯ N стр.»; направляющие отступов — `muted` 22 %; хвостовые пробелы — `bad` 28 %; Jinja —
+  разделители цветом ключевых слов темы, выражение на его подложке 13 %. Плашка Vault — `bg-warn/10`,
+  `lock` `text-warn`, кнопки «в терминале» рамочные.
 
 ## История и обновления
 

@@ -343,3 +343,12 @@ export interface DiagNews {
   sizeMb: number;
   panics: number;
 }
+
+/** A run of a formatter (mirror of `format::FormatRun`, ADR 0076). */
+export interface FormatRun {
+  /** False: the program is not installed where the file lives. */
+  found: boolean;
+  stdout: string;
+  stderr: string;
+  code: number;
+}

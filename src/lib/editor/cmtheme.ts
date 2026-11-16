@@ -41,6 +41,15 @@ export function editorTheme(term: TerminalTheme): Extension {
       ".cm-activeLine": { backgroundColor: wash },
       ".cm-activeLineGutter": { backgroundColor: wash, color: term.foreground },
       ".cm-lineNumbers .cm-gutterElement": { color: term.brightBlack },
+      // Jinja2 / Go templates over the language underneath (ADR 0076): the
+      // delimiters in the keyword colour, the expression on a faint wash of it.
+      ".cm-jinja": { backgroundColor: `color-mix(in srgb, ${term.magenta} 13%, transparent)`, borderRadius: "2px" },
+      ".cm-jinja-delim": {
+        color: term.magenta,
+        backgroundColor: `color-mix(in srgb, ${term.magenta} 13%, transparent)`,
+        fontWeight: "bold",
+      },
+      ".cm-jinja-comment": { color: readableOn(term.brightBlack, term.background, term.foreground), fontStyle: "italic" },
     },
     { dark },
   );

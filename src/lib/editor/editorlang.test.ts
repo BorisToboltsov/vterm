@@ -279,3 +279,52 @@ describe("yamlDialectFromContent / editorLangWithDialect", () => {
     expect(editorLangWithDialect(compose, K8S).kind).toBe("compose");
   });
 });
+
+describe("templates, shebangs and modelines (ADR 0076)", () => {
+  it("reads a Jinja2 template as the language it renders to", async () => {
+    const { editorLangFor, jinjaInner } = await import("./editorlang");
+    expect(editorLangFor("templates/nginx.conf.j2")).toEqual({ kind: "nginx", label: "nginx", jinja: true });
+    expect(editorLangFor("roles/web/templates/config.yml.j2")).toMatchObject({ kind: "yaml", jinja: true });
+    expect(editorLangFor("Dockerfile.j2")).toMatchObject({ kind: "dockerfile", jinja: true });
+    expect(editorLangFor("motd.j2")).toEqual({ kind: "plain", label: "Text", jinja: true });
+    expect(jinjaInner("a.py")).toBeNull();
+  });
+
+  it("names the interpreter of a shebang", async () => {
+    const { shebangLang } = await import("./editorlang");
+    expect(shebangLang("#!/bin/bash\necho")?.kind).toBe("shell");
+    expect(shebangLang("#!/usr/bin/env python3.11\n")?.kind).toBe("python");
+    expect(shebangLang("#!/usr/bin/env -S node --no-warnings\n")?.kind).toBe("javascript");
+    expect(shebangLang("#!/usr/bin/env FOO=1 ruby\n")?.kind).toBe("ruby");
+    expect(shebangLang("echo hi")).toBeNull();
+    expect(shebangLang("#!/usr/bin/weird")).toBeNull();
+  });
+
+  it("reads vim and emacs modelines at either end", async () => {
+    const { modelineLang } = await import("./editorlang");
+    expect(modelineLang("# vim: set ft=yaml:\nkey: 1\n")?.kind).toBe("yaml");
+    expect(modelineLang("x\n".repeat(20) + "# vi: filetype=sh\n")?.kind).toBe("shell");
+    expect(modelineLang("# -*- mode: python -*-\n")?.kind).toBe("python");
+    expect(modelineLang("# -*- python -*-\n")?.kind).toBe("python");
+    expect(modelineLang("x\n".repeat(20) + "# vim: ft=yaml\n" + "y\n".repeat(20))).toBeNull();
+  });
+
+  it("asks the content only when the name says nothing", async () => {
+    const { editorLangFromContent, editorLangOrPlain } = await import("./editorlang");
+    expect(editorLangFromContent(editorLangOrPlain("deploy"), "#!/bin/sh\n").kind).toBe("shell");
+    expect(editorLangFromContent(editorLangOrPlain("run.py"), "#!/bin/sh\n").kind).toBe("python");
+    expect(editorLangFromContent(editorLangOrPlain("a.yml"), "apiVersion: v1\nkind: Pod\n").kind).toBe("k8s");
+    expect(editorLangFromContent(editorLangOrPlain("x.yml.j2"), "apiVersion: v1\nkind: Pod\n")).toMatchObject({ kind: "k8s", jinja: true });
+    expect(editorLangFromContent(editorLangOrPlain("motd.j2"), "# vim: ft=sh\n")).toMatchObject({ kind: "shell", jinja: true });
+  });
+
+  it("offers every kind once, plain text first", async () => {
+    const { LANG_CHOICES, langOfKind } = await import("./editorlang");
+    const kinds = LANG_CHOICES.map((l) => l.kind);
+    expect(new Set(kinds).size).toBe(kinds.length);
+    expect(kinds[0]).toBe("plain");
+    expect(kinds).toContain("ansible");
+    expect(langOfKind("python")).toEqual({ kind: "python", label: "Python" });
+    expect(langOfKind("yaml", true)).toEqual({ kind: "yaml", label: "YAML", jinja: true });
+  });
+});

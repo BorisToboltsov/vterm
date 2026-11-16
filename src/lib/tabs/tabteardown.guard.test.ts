@@ -102,6 +102,8 @@ describe("tab teardown guard", () => {
       "forgetCi",
       // Its watched playbook run and its plan, and their folders on the host (ADR 0071).
       "forgetScenarios",
+      // Its language servers and what was learned of them (ADR 0079).
+      "forgetLsp",
     ]) {
       expect(fn).toContain(cleanup);
     }

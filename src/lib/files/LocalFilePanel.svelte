@@ -16,6 +16,9 @@
   } from "../api";
   import { DRIVES_ROOT, navParent } from "./fspath";
   import type { FileBrowserAdapter } from "./filebrowser";
+  import type { ProjectCommand } from "./projectactions";
+  import { LISTING_STATUS_ARGS, PREFIX_ARGS, parseListingStatus } from "../git/gitlisting";
+  import { gitRun, readLocalText } from "../api";
   import FileBrowser from "./FileBrowser.svelte";
   import { t } from "../i18n";
 
@@ -35,6 +38,9 @@
     projectPinned,
     onPinProject,
     onUserNavigate,
+    kubeContext = null,
+    onProjectCommand,
+    onOpenPanel,
   }: {
     /** Owning terminal tab — the key its directory is remembered under (v1.0.14). */
     sessionId?: string | null;
@@ -55,6 +61,11 @@
     projectPinned?: (kind: ProjectKind, root: string) => boolean;
     onPinProject?: (kind: ProjectKind, root: string) => void;
     onUserNavigate?: (path: string) => void;
+    /** The k8s panel's context, told to kubectl and helm from the project strip (ADR 0077). */
+    kubeContext?: string | null;
+    /** Type a project's command into the connection's terminal, in `root` (ADR 0077). */
+    onProjectCommand?: (root: string, cmd: ProjectCommand, label: string) => void;
+    onOpenPanel?: (panel: "docker" | "k8s") => void;
   } = $props();
 
   // Local transport + Windows-aware navigation. The drives level (DRIVES_ROOT) is
@@ -74,6 +85,16 @@
     parentForUp: (dir) => navParent(dir),
     mutable: (dir) => dir !== DRIVES_ROOT,
     mirrorsToTerminal: (path) => path !== DRIVES_ROOT,
+    // The project view (ADR 0077): Git through the driver of the local tab.
+    gitStatus: async (dir) => {
+      const sid = sessionId;
+      if (!sid) return null;
+      const pre = await gitRun(sid, dir, PREFIX_ARGS, 10);
+      if (pre.exitCode !== 0) return null;
+      const out = await gitRun(sid, dir, LISTING_STATUS_ARGS, 20);
+      return out.exitCode === 0 ? parseListingStatus(out.stdout, pre.stdout.trim()) : null;
+    },
+    readText: async (path) => (await readLocalText(path, 256 * 1024)).content,
   };
 </script>
 
@@ -93,6 +114,9 @@
   {onProject}
   {projectPinned}
   {onPinProject}
+  {kubeContext}
+  {onProjectCommand}
+  {onOpenPanel}
   {onUserNavigate}
   drives
   stripLabel={t("localfiles.label")}
