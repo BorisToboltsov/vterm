@@ -98,6 +98,15 @@ export function schemasNamed(files: string[], notice: string): string[] {
   return files.filter((f) => f.endsWith(".json") && !notice.includes(f)).map((f) => `${f} is not named in NOTICE.md`);
 }
 
+/** The host of a source URL whose `${…}` parts are not filled in yet; "" when it is not a URL. */
+function hostOf(url: string): string {
+  try {
+    return new URL(url.replace(/\$\{\w+\}/g, "x")).hostname;
+  } catch {
+    return "";
+  }
+}
+
 export function pinnedSources(script: string): string[] {
   const c = code(script);
   const out: string[] = [];
@@ -106,7 +115,7 @@ export function pinnedSources(script: string): string[] {
   if (urls.length === 0) out.push("no source is listed");
   if (urls.length !== hashes.length) out.push(`${urls.length} sources, ${hashes.length} pinned hashes`);
   for (const u of urls) {
-    if (/\/(master|main|latest|HEAD)\//.test(u) || /schemastore\.org/.test(u)) out.push(`a floating source: ${u}`);
+    if (/\/(master|main|latest|HEAD)\//.test(u) || hostOf(u) === "json.schemastore.org") out.push(`a floating source: ${u}`);
     const consts = [...u.matchAll(/\$\{(\w+)\}/g)].map((m) => m[1]);
     const pinned = consts.some((name) => new RegExp(`const ${name} = "[0-9a-f]{40}"`).test(c));
     if (!pinned) out.push(`a source not at a commit: ${u}`);
@@ -161,6 +170,7 @@ describe("editor and project guard — catches what it exists for", () => {
     const pinned = 'const C = "' + "a".repeat(40) + '";\nconst S = { x: { url: `https://h/${C}/x.json`, sha256: "' + "b".repeat(64) + '" } };\nif (got !== sha256) throw 1;\nawait get(1);\nwriteFileSync(join(OUT, 1));';
     expect(pinnedSources(pinned)).toEqual([]);
     expect(pinnedSources(pinned.replace("${C}", "master"))).toHaveLength(2);
+    expect(pinnedSources(pinned.replace("https://h/${C}/x.json", "https://json.schemastore.org/x.json"))).toHaveLength(2);
     expect(pinnedSources(pinned.replace(/sha256: "b+"/, ""))).toEqual(["1 sources, 0 pinned hashes"]);
     expect(pinnedSources(pinned.replace("got !== sha256", "true"))).toEqual(["a download is not checked against its hash"]);
     expect(pinnedSources(pinned.replace("await get(1);\nwriteFileSync(join(OUT, 1));", "writeFileSync(join(OUT, 1));\nawait get(1);"))).toEqual([
