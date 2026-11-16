@@ -1,7 +1,9 @@
 // Pure logic of the standby card (v1.31): the screensaver layouts that fill a
-// large terminal area — the server's clock, four rings, the history of the time
-// away with what happened in it, a transfer under way. No DOM and no store:
-// IdleOverlay.svelte paints, this decides, idle-standby tests pin it down.
+// large terminal area. Since ADR 0075 they are calm: the server's clock, the
+// host and the status bar's verdict, one line — the pulse — over the last half
+// hour, four quiet numbers under it, one sentence about the time away and a
+// transfer under way. No DOM and no store: IdleOverlay.svelte paints, this
+// decides, the standby tests pin it down.
 
 import type { Threshold } from "../settings/settings.svelte";
 import { thresholdLevel, type ThresholdLevel } from "../monitoring/thresholds";
@@ -11,27 +13,22 @@ import { fmtUptime } from "../monitoring/format";
 import { etaSeconds, transferPct, type TransferRow } from "../files/transfer";
 import type { IdleSample } from "./idlefx";
 
-// ── History of the time away (v1.34, ADR 0065) ──────────────────────────────
-// Until v1.34 the history stretched the whole time away over the chart's width
-// and merged neighbouring points pairwise as it grew: the scale changed on every
-// poll, the line redrew itself at each merge, and a stretch nobody read was
-// crossed by a straight line. Now one stream of readings feeds two views, each
-// on a scale that holds still:
-// - the charts — CPU, memory and load, each on a scale of its own — show the
-//   last `CHART_MS` in buckets of one length aligned to the clock. A bucket keeps
-//   the lowest, the highest and the mean of its readings: a spike survives as
-//   the edge of the band while the line stays calm. The window slides right to
-//   left; it never squeezes;
-// - the strip shows the whole time away in cells aligned to the clock, each the
-//   worst level a metric reached in it against the status bar's thresholds. A
-//   cell keeps its length until the strip runs out of room; then neighbours
-//   merge pairwise — a step, not a squeeze on every poll.
+// ── History of the time away (v1.34, ADR 0065; ADR 0075) ────────────────────
+// One stream of readings, told two ways, each on a scale that holds still:
+// - the pulse — one metric's line over the last `CHART_MS` in buckets of one
+//   length aligned to the clock. A bucket keeps the lowest, the highest and the
+//   mean of its readings; the line is the mean. The window slides right to
+//   left; it never squeezes (ADR 0065);
+// - the sentence — the whole time away in words (`awayStory`): a restart of the
+//   server, a metric over its threshold, the longest stretch nothing was read,
+//   or that nothing happened. The strip of cells that told it before (ADR 0065)
+//   went with the dashboard it belonged to (ADR 0075).
 // A stretch vterm read nothing for is a gap: a failed poll, or no poll at all
 // for longer than `gapMs` — a hidden window skips its polls, a sleeping computer
-// makes none. The line breaks there, its cells stay empty and an open event
-// closes: what was not seen is not drawn.
+// makes none. The line breaks there and an open event closes: what was not
+// seen is not drawn.
 
-/** Which metric an event is about: the three charts. */
+/** Which metric an event is about: the ones the pulse can draw. */
 export type AwayKey = "cpu" | "mem" | "load";
 
 /** A stretch of time one metric spent above its status-bar threshold. */
@@ -62,6 +59,8 @@ export interface AwayReading {
   topProc: string;
   memUsed: number | null;
   memTotal: number | null;
+  /** How long the host has been up, seconds: when it booted, so a restart while away is told. */
+  uptimeSecs: number | null;
 }
 
 /** The thresholds an event is measured against (the status bar's own). */
@@ -82,7 +81,7 @@ export interface Agg {
 /** Why nothing was read before a span: a poll failed, or none was made for longer than a gap. */
 export type GapKind = "failed" | "silent";
 
-/** A stretch of the clock — a bucket of the charts or a cell of the strip — and what was read in it. */
+/** A stretch of the clock — a bucket of the pulse — and what was read in it. */
 export interface AwaySpan {
   /** Its start, wall-clock ms: a multiple of its length. */
   at: number;
@@ -109,31 +108,42 @@ export interface AwaySpan {
 export interface AwayHistory {
   /** No reading for longer than this after the last entry is a gap, ms. */
   gapMs: number;
-  /** The charts' buckets, `bucketMs` long: the last `CHART_MS` and the bucket before it. */
+  /** The pulse's buckets, `bucketMs` long: the last `CHART_MS` and the bucket before it. */
   bucketMs: number;
   buckets: AwaySpan[];
-  /** The strip's cells, `step` long: the whole time away. */
-  step: number;
-  cells: AwaySpan[];
   events: AwayEvent[];
   /** When the first entry came — the history begins there; null before it. */
   firstAt: number | null;
   /** When the last entry came — a reading or a failed poll; null before the first. */
   lastAt: number | null;
+  /** When the last reading that read something came; null before the first. */
+  lastReadAt: number | null;
   /** A gap since the last reading — and why: the next reading follows it. */
   pending: GapKind | null;
+  /** The longest stretch of the whole time away nothing was read in, once a reading followed it; null — none yet. */
+  longestGap: AwayGap | null;
+  /** When the host booted, by its newest reading; null — it did not say. */
+  bootAt: number | null;
+  /** When it booted again while watched — a restart between two readings; null — none. */
+  rebootAt: number | null;
 }
 
-/** How far back the charts look, ms. */
+/** How far back the pulse looks, ms. */
 export const CHART_MS = 30 * 60_000;
-/** The shortest span, ms: every length is this one doubled again and again, so a span merges into the next length whole. */
+/** The shortest span, ms: every length is this one doubled again and again. */
 export const SPAN_BASE_MS = 15_000;
 /** The longest span, ms (about eleven days): the doubling stops there. */
 export const SPAN_MAX_MS = SPAN_BASE_MS * 2 ** 16;
-/** Cells the strip keeps before neighbours merge. */
-export const STRIP_KEEP = 480;
 /** How many events are kept: the oldest go first — the newest are the ones to see. */
 export const AWAY_EVENTS = 50;
+/**
+ * A boot time that moved later by more than this is a restart, ms. The boot
+ * time is the reading's time less the uptime, and both wobble by the poll's own
+ * latency — seconds, never a minute.
+ */
+export const REBOOT_SLACK_MS = 60_000;
+/** The shortest stretch nothing was read in that the sentence about the time away names, ms. */
+export const STORY_GAP_MS = 60_000;
 
 /** No reading for longer than this after the last one is a gap: three beats of the poll, never under the shortest span. */
 export function gapAfter(beatMs: number): number {
@@ -154,8 +164,19 @@ export function spanLength(ms: number): number {
  */
 export function emptyAway(beatMs: number): AwayHistory {
   const gapMs = gapAfter(beatMs);
-  const len = spanLength(gapMs);
-  return { gapMs, bucketMs: len, buckets: [], step: len, cells: [], events: [], firstAt: null, lastAt: null, pending: null };
+  return {
+    gapMs,
+    bucketMs: spanLength(gapMs),
+    buckets: [],
+    events: [],
+    firstAt: null,
+    lastAt: null,
+    lastReadAt: null,
+    pending: null,
+    longestGap: null,
+    bootAt: null,
+    rebootAt: null,
+  };
 }
 
 /** A reading the overlay could not take: every series unknown at `at`. */
@@ -168,6 +189,7 @@ export const gapReading = (at: number): AwayReading => ({
   topProc: "",
   memUsed: null,
   memTotal: null,
+  uptimeSecs: null,
 });
 
 const finite = (v: number | null | undefined): v is number => v != null && Number.isFinite(v);
@@ -233,16 +255,15 @@ function readingSpan(at: number, r: AwayReading, level: Record<AwayKey, Threshol
 const peakOf = (a: AwaySpan, b: AwaySpan, key: AwayKey): AwaySpan => ((b[key]?.hi ?? -Infinity) > (a[key]?.hi ?? -Infinity) ? b : a);
 
 /**
- * Two spans as one starting at `at`, `b` after `a`. What a span says beside its
- * values comes from the span that gave the peak: the process from the higher
- * CPU, the bytes from the higher memory, the cores from the higher load. A gap
- * between the two is inside the joined span — below what it can show.
+ * Two spans as one starting at `a.at`, `b` after `a`. What a span says beside
+ * its values comes from the span that gave the peak: the process from the
+ * higher CPU, the bytes from the higher memory, the cores from the higher load.
  */
-function joinSpans(a: AwaySpan, b: AwaySpan, at = a.at): AwaySpan {
+function joinSpans(a: AwaySpan, b: AwaySpan): AwaySpan {
   const byLoad = peakOf(a, b, "load");
   const byMem = peakOf(a, b, "mem");
   return {
-    at,
+    at: a.at,
     first: Math.min(a.first, b.first),
     last: Math.max(a.last, b.last),
     n: a.n + b.n,
@@ -270,18 +291,6 @@ function addReading(
   const last = spans[spans.length - 1];
   if (last && last.at >= at) return [...spans.slice(0, -1), joinSpans(last, readingSpan(last.at, r, level, null))];
   return [...spans, readingSpan(at, r, level, gapBefore)];
-}
-
-/** `spans` (in time order) merged into spans `len` long: each falls into the one that holds its start. */
-export function mergeSpans(spans: readonly AwaySpan[], len: number): AwaySpan[] {
-  const out: AwaySpan[] = [];
-  for (const s of spans) {
-    const at = Math.floor(s.at / len) * len;
-    const last = out[out.length - 1];
-    if (last && last.at === at) out[out.length - 1] = joinSpans(last, s, at);
-    else out.push({ ...s, at });
-  }
-  return out;
 }
 
 /**
@@ -314,13 +323,19 @@ function nextEvents(events: readonly AwayEvent[], r: AwayReading, levels: Record
   return out.slice(-AWAY_EVENTS);
 }
 
+/** The longer of two stretches; the first on a tie, either when the other is missing. */
+function longer(a: AwayGap | null, b: AwayGap | null): AwayGap | null {
+  if (!a || !b) return a ?? b;
+  return b.to - b.from > a.to - a.from ? b : a;
+}
+
 /**
  * The history after one more poll. A reading after a silence longer than a gap
- * follows that gap: the open events close first. A failed poll is a gap of its
- * own. A reading joins its bucket and its cell; buckets older than the charts
- * reach are let go, and cells past `STRIP_KEEP` merge pairwise into the next
- * length. The clock may step back (a time sync): a reading is never placed
- * before the last entry.
+ * follows that gap: the open events close first, and the gap is measured for
+ * the sentence. A failed poll is a gap of its own. A reading joins its bucket;
+ * buckets older than the pulse reaches are let go. A boot time later than the
+ * last one is a restart. The clock may step back (a time sync): a reading is
+ * never placed before the last entry.
  */
 export function awayPush(h: AwayHistory, reading: AwayReading, th: AwayThresholds): AwayHistory {
   const r = h.lastAt != null && reading.at < h.lastAt ? { ...reading, at: h.lastAt } : reading;
@@ -334,24 +349,32 @@ export function awayPush(h: AwayHistory, reading: AwayReading, th: AwayThreshold
   const buckets = addReading(h.buckets, r, levels, h.bucketMs, pending).filter(
     (b) => b.at + 2 * h.bucketMs > r.at - CHART_MS,
   );
-  let step = h.step;
-  let cells = addReading(h.cells, r, levels, step, pending);
-  while (cells.length > STRIP_KEEP && step < SPAN_MAX_MS) {
-    step *= 2;
-    cells = mergeSpans(cells, step);
-  }
-  return { ...h, buckets, cells, step, events: nextEvents(seen, r, levels), firstAt, lastAt: r.at, pending: null };
+  const gap: AwayGap | null = pending && h.lastReadAt != null ? { from: h.lastReadAt, to: r.at, kind: pending } : null;
+  const bootAt = finite(r.uptimeSecs) && r.uptimeSecs >= 0 ? r.at - r.uptimeSecs * 1000 : h.bootAt;
+  const restarted = h.bootAt != null && bootAt != null && bootAt - h.bootAt > REBOOT_SLACK_MS;
+  return {
+    ...h,
+    buckets,
+    events: nextEvents(seen, r, levels),
+    firstAt,
+    lastAt: r.at,
+    lastReadAt: r.at,
+    pending: null,
+    longestGap: longer(h.longestGap, gap),
+    bootAt,
+    rebootAt: restarted ? bootAt : h.rebootAt,
+  };
 }
 
-// ── The charts ───────────────────────────────────────────────────────────────
+// ── The pulse ────────────────────────────────────────────────────────────────
 
-/** The left edge of the charts whose right edge stands at `to`. */
+/** The left edge of the pulse whose right edge stands at `to`. */
 export const chartFrom = (to: number): number => to - CHART_MS;
 
-/** Where a span stands on a chart: the middle of its readings. */
+/** Where a span stands on the pulse: the middle of its readings. */
 export const spanMid = (s: Pick<AwaySpan, "first" | "last">): number => (s.first + s.last) / 2;
 
-/** One point of a chart: a span's mean of one metric with its band, at the span's middle. */
+/** One point of the pulse: a span's mean of one metric with its band, at the span's middle. */
 export interface BandPoint {
   at: number;
   mean: number;
@@ -360,7 +383,7 @@ export interface BandPoint {
 }
 
 /**
- * One metric's chart over `len`-long spans: runs of points, broken where nothing
+ * One metric's line over `len`-long spans: runs of points, broken where nothing
  * was read — between spans that do not follow each other, before a span that
  * follows a gap — and where the metric itself was not reported.
  */
@@ -393,7 +416,7 @@ export function windowPeak(spans: readonly AwaySpan[], key: AwayKey, from: numbe
 }
 
 /**
- * The top of the load chart: the cores or the highest load in sight, whichever
+ * The top of the load pulse: the cores or the highest load in sight, whichever
  * is higher, with room above it, rounded to a step that reads well. Load past
  * the cores is drawn as it was, not cut at them.
  */
@@ -427,11 +450,11 @@ export function awayGaps(spans: readonly AwaySpan[], len: number, pending: GapKi
   return out;
 }
 
-/** What the pointer is over on a chart: a span (its index), or a gap. */
+/** What the pointer is over on the pulse: a span (its index), or a gap. */
 export type ChartHit = { span: number } | { gap: AwayGap };
 
 /**
- * What is at time `at` on a chart drawn over `from…to`: the gap it falls in, or
+ * What is at time `at` on a pulse drawn over `from…to`: the gap it falls in, or
  * else the span in sight nearest to it — or nothing, before the first reading.
  */
 export function chartHit(spans: readonly AwaySpan[], gaps: readonly AwayGap[], at: number, from: number, to: number): ChartHit | null {
@@ -451,123 +474,203 @@ export function chartHit(spans: readonly AwaySpan[], gaps: readonly AwayGap[], a
   return best < 0 ? null : { span: best };
 }
 
-// ── The strip ────────────────────────────────────────────────────────────────
+/** Which metric the pulse draws, and how it stands by the status bar. */
+export interface PulseOf {
+  key: AwayKey;
+  level: ThresholdLevel;
+}
 
-/** The strip as drawn: cells `step` long, `count` of them from `from` up to the right edge. */
-export interface StripView {
-  step: number;
-  count: number;
-  from: number;
-  cells: AwaySpan[];
+/** The status bar's problems that name a metric the pulse can draw. */
+const PULSE_OF: Readonly<Record<string, AwayKey>> = { cpu: "cpu", ram: "mem", load: "load" };
+
+/**
+ * The metric the pulse draws (ADR 0075): the first of the status bar's
+ * problems — the critical first, then in section order — that is about CPU,
+ * memory or load, at that problem's level; CPU at ok while none is.
+ */
+export function pulseOf(ps: readonly Problem[]): PulseOf {
+  for (const p of ps) {
+    const key = PULSE_OF[p.id];
+    if (key) return { key, level: p.level };
+  }
+  return { key: "cpu", level: "ok" };
 }
 
 /**
- * The strip of `count` cells whose right edge stands at `to`, the time away
- * beginning at `leftAt`: the history's own cells, merged into longer ones until
- * the whole time away fits. The length steps up only when the time away
- * outgrows the strip, so between steps the cells hold still and slide.
+ * The one event marked on the pulse: the highest peak of its metric inside
+ * `from…to`, or null. A mark per event made the line a fence nobody could read
+ * (v1.33); the rest is the tooltip's and the sentence's.
  */
-export function stripView(cells: readonly AwaySpan[], step: number, leftAt: number, to: number, count: number): StripView {
-  const n = Math.max(1, Math.floor(Number.isFinite(count) ? count : 1));
-  let len = Math.max(SPAN_BASE_MS, step);
-  let out: AwaySpan[] = [...cells];
-  while ((to - leftAt) / len > n && len < SPAN_MAX_MS) {
-    len *= 2;
-    out = mergeSpans(out, len);
+export function pulseMark(events: readonly AwayEvent[], key: AwayKey, from: number, to: number): AwayEvent | null {
+  let best: AwayEvent | null = null;
+  for (const e of events) {
+    if (e.key === key && e.peakAt >= from && e.peakAt <= to && (!best || e.peak > best.peak)) best = e;
   }
-  const from = to - n * len;
-  return { step: len, count: n, from, cells: out.filter((c) => c.at + len > from) };
+  return best;
 }
 
-/** One slot of the strip from the time away's start to its right edge: the cell read there, or null — nothing was. */
-export interface StripSlot {
-  at: number;
-  cell: AwaySpan | null;
+// ── The sentence about the time away (ADR 0075) ─────────────────────────────
+
+/**
+ * The time away in one sentence's worth: the first that applies of a restart,
+ * a metric still over its threshold, the highest peak, the longest stretch
+ * nothing was read in — or that nothing happened. `more` — the other events
+ * beside the one told. `none` — nothing read yet, nothing to say.
+ */
+export type AwayStory =
+  | { kind: "none" }
+  | { kind: "calm" }
+  | { kind: "reboot"; at: number; more: number }
+  | { kind: "open"; event: AwayEvent; more: number }
+  | { kind: "peak"; event: AwayEvent; more: number }
+  | { kind: "gap"; gap: AwayGap };
+
+/**
+ * How high an event went, comparable across metrics: CPU and memory in
+ * percent, load in percent of the cores. Load with the cores unknown is not
+ * comparable: it ranks last among its level.
+ */
+export function eventHeight(e: AwayEvent): number {
+  if (e.key !== "load") return e.peak;
+  return e.cores != null && e.cores > 0 ? (e.peak / e.cores) * 100 : 0;
 }
 
-/** The slots of `view` from the time away's start (`leftAt`) up to `to`, oldest first. */
-export function stripSlots(view: StripView, leftAt: number, to: number): StripSlot[] {
-  const byAt = new Map(view.cells.map((c) => [c.at, c]));
-  const out: StripSlot[] = [];
-  for (let at = Math.floor(Math.max(leftAt, view.from) / view.step) * view.step; at < to; at += view.step) {
-    out.push({ at, cell: byAt.get(at) ?? null });
-  }
-  return out;
+/** The worse event first: by level, then by height, then the later one. */
+const byWeight = (a: AwayEvent, b: AwayEvent): number =>
+  RANK[b.level] - RANK[a.level] || eventHeight(b) - eventHeight(a) || b.end - a.end;
+
+/** The gap still open — from the last reading to the last poll — or null. */
+export function openGap(h: AwayHistory): AwayGap | null {
+  return h.pending && h.lastReadAt != null && h.lastAt != null && h.lastAt > h.lastReadAt
+    ? { from: h.lastReadAt, to: h.lastAt, kind: h.pending }
+    : null;
 }
 
-/** The x of the start of a slot at `at` on a strip `gw` wide from `gx`. */
-export function stripX(view: StripView, at: number, gx: number, gw: number): number {
-  return gx + ((at - view.from) / (view.count * view.step)) * gw;
+/**
+ * When the host restarted while the user was away (`leftAt`): between two
+ * readings, or before the first one — it booted after the user left. Null — it
+ * did not, or it never said how long it had been up.
+ */
+export function restartedAt(h: AwayHistory, leftAt: number): number | null {
+  if (h.rebootAt != null) return h.rebootAt;
+  return h.bootAt != null && Number.isFinite(leftAt) && h.bootAt - leftAt > REBOOT_SLACK_MS ? h.bootAt : null;
 }
 
-/** The slot under `x` on a strip `gw` wide from `gx` (its index in `slots`), or -1 — none, or off the strip. */
-export function stripHit(slots: readonly StripSlot[], view: StripView, x: number, gx: number, gw: number): number {
-  if (!Number.isFinite(x) || x < gx - HOVER_SLACK || x > gx + gw + HOVER_SLACK || !(gw > 0)) return -1;
-  const span = view.count * view.step;
-  // The right edge itself belongs to the last slot, not to the one after it.
-  const at = view.from + Math.min(span - 1, ((Math.min(gx + gw, Math.max(gx, x)) - gx) / gw) * span);
-  const slot = Math.floor(at / view.step) * view.step;
-  return slots.findIndex((s) => s.at === slot);
+/** The sentence about the time away since `leftAt`, by the history read so far. */
+export function awayStory(h: AwayHistory, leftAt: number): AwayStory {
+  if (h.firstAt == null) return { kind: "none" };
+  const events = h.events;
+  const restart = restartedAt(h, leftAt);
+  if (restart != null) return { kind: "reboot", at: restart, more: events.length };
+  const ranked = [...events].sort(byWeight);
+  const open = ranked.find((e) => e.open);
+  if (open) return { kind: "open", event: open, more: events.length - 1 };
+  if (ranked[0]) return { kind: "peak", event: ranked[0], more: events.length - 1 };
+  const gap = longer(h.longestGap, openGap(h));
+  if (gap && gap.to - gap.from >= STORY_GAP_MS) return { kind: "gap", gap };
+  return { kind: "calm" };
 }
 
-/** Why nothing was read in the unread slot `i`: the gap the next cell read follows, else the one still waiting. */
-export function slotGap(slots: readonly StripSlot[], i: number, pending: GapKind | null): GapKind {
-  for (let j = i + 1; j < slots.length; j++) {
-    const cell = slots[j].cell;
-    if (cell) return cell.gapBefore ?? "silent";
-  }
-  return pending ?? "silent";
+/** The process's name from the probe's "name pct%": what the sentence and the mark say. */
+export function procName(top: string): string {
+  return top.trim().split(/\s+/)[0] ?? "";
 }
 
-// ── How the history lays itself out ──────────────────────────────────────────
+// ── How the standby screen lays itself out (ADR 0075) ────────────────────────
 
-/** Where the parts of the history stand in a block `h` px high, from its top. */
-export interface HistoryLayout {
-  /** The tops of the three charts and their height. */
-  rowY: [number, number, number];
-  rowH: number;
-  /** The time axis under the charts. */
+/** Where everything of the standby screen stands in a `W × H` area, px from its top-left. */
+export interface PulseLayout {
+  /** The side margin. */
+  pad: number;
+  /** The clock's top and size; the date line under it; "your time" under that. */
+  clockY: number;
+  clockSize: number;
+  dateY: number;
+  dateSize: number;
+  yourTimeY: number;
+  /** Small text: "your time", the times under the pulse, the gap's note. */
+  smallSize: number;
+  /** The host's line (set flush right) and the verdict under it. */
+  hostY: number;
+  hostSize: number;
+  verdictY: number;
+  verdictSize: number;
+  /** The pulse's heading: the metric on the left, the sentence on the right. */
+  headY: number;
+  headSize: number;
+  /** The pulse's box; the top `markRoom` px of it are kept for the mark's label. */
+  chart: { x: number; y: number; w: number; h: number };
+  markRoom: number;
+  /** The times under the pulse. */
   axisY: number;
-  /** The strip's title, its rows of cells (three — a row a metric — or one: the worst of the three), their height and step. */
-  stripY: number;
-  stripRows: 1 | 3;
-  cellY: number;
-  cellH: number;
-  cellStep: number;
-  /** The times under the cells. */
-  stripLabelY: number;
+  /** The four numbers: the labels' line and size, the values' line and size. */
+  labelY: number;
+  labelSize: number;
+  valueY: number;
+  valueSize: number;
+  /** A transfer under way: its box, when there is one. */
+  transfer: { y: number; h: number } | null;
+  /** The "press any key" line. */
+  hintY: number;
 }
 
-const LAYOUT = {
-  big: { rowGap: 16, axisH: 24, sep: 18, titleH: 24, cellH: 8, cellGap: 5, labelsH: 20, minRow: 44 },
-  small: { rowGap: 10, axisH: 18, sep: 10, titleH: 17, cellH: 6, cellGap: 3, labelsH: 15, minRow: 24 },
-} as const;
+/** The pulse's box height wanted, a share of the area; what is left above it is air. */
+export const PULSE_SHARE = 0.3;
 
 /**
- * The history in a block `h` px high: three charts, the time axis, the strip.
- * The strip takes a row a metric while the charts keep a height worth reading;
- * in a lower block it takes one row — the worst of the three — and the charts
- * get the rest.
+ * The standby screen in a `W × H` area: `big` — the full form, else the short
+ * one. The clock and the host take the top; the hint, a transfer and the four
+ * numbers stand on the bottom; the pulse takes the height between them up to
+ * `PULSE_SHARE` of the area — whatever is left goes above it, as air.
  */
-export function historyLayout(h: number, big: boolean): HistoryLayout {
-  const L = big ? LAYOUT.big : LAYOUT.small;
-  const stripH = (rows: number) => L.titleH + rows * L.cellH + (rows - 1) * L.cellGap + L.labelsH;
-  const rowsFor = (rows: number) => (h - 2 * L.rowGap - L.axisH - L.sep - stripH(rows)) / 3;
-  const stripRows: 1 | 3 = rowsFor(3) >= L.minRow ? 3 : 1;
-  const rowH = Math.max(8, Math.floor(rowsFor(stripRows)));
-  const axisY = 3 * rowH + 2 * L.rowGap;
-  const stripY = axisY + L.axisH + L.sep;
-  const cellY = stripY + L.titleH;
+export function pulseLayout(W: number, H: number, big: boolean, o: { yourTime: boolean; transfer: boolean }): PulseLayout {
+  const pad = big ? 96 : 32;
+  const clockSize = Math.round(Math.min(H * 0.15, W * 0.095, big ? 180 : 110));
+  const clockY = big ? 76 : 24;
+  const dateSize = big ? Math.max(14, Math.round(clockSize * 0.12)) : 12;
+  const dateY = clockY + Math.round(clockSize * 1.05);
+  const smallSize = big ? 12 : 10;
+  const yourTimeY = dateY + dateSize + (big ? 8 : 5);
+  const topBottom = o.yourTime ? yourTimeY + smallSize : dateY + dateSize;
+  const hostSize = big ? 26 : 17;
+  const hostY = clockY + (big ? 6 : 4);
+  const verdictSize = big ? 20 : 14;
+  const verdictY = hostY + Math.round(hostSize * 1.7);
+  const hintY = H - 28;
+  const transferH = big ? 78 : 44;
+  const transfer = o.transfer ? { y: hintY - (big ? 24 : 14) - transferH, h: transferH } : null;
+  const valueSize = big ? 46 : 28;
+  const labelSize = big ? 12 : 10;
+  const valueY = (transfer ? transfer.y : hintY) - (big ? 72 : 16) - valueSize;
+  const labelY = valueY - labelSize - (big ? 8 : 4);
+  const axisY = labelY - (big ? 40 : 22) - smallSize;
+  const bottom = axisY - (big ? 10 : 6);
+  const headSize = big ? 13 : 11;
+  const headGap = big ? 22 : 12;
+  const top = Math.max(topBottom + (big ? 40 : 18) + headSize + headGap, bottom - Math.round(H * PULSE_SHARE));
   return {
-    rowY: [0, rowH + L.rowGap, 2 * (rowH + L.rowGap)],
-    rowH,
+    pad,
+    clockY,
+    clockSize,
+    dateY,
+    dateSize,
+    yourTimeY,
+    smallSize,
+    hostY,
+    hostSize,
+    verdictY,
+    verdictSize,
+    headY: top - headGap - headSize,
+    headSize,
+    chart: { x: pad, y: top, w: W - 2 * pad, h: bottom - top },
+    markRoom: big ? 26 : 18,
     axisY,
-    stripY,
-    stripRows,
-    cellY,
-    cellH: L.cellH,
-    cellStep: L.cellH + L.cellGap,
-    stripLabelY: cellY + stripRows * L.cellH + (stripRows - 1) * L.cellGap + 4,
+    labelY,
+    labelSize,
+    valueY,
+    valueSize,
+    transfer,
+    hintY,
   };
 }
 
@@ -631,14 +734,13 @@ export function timeX(at: number, from: number, to: number, x0: number, w: numbe
 }
 
 // ── Under the pointer ────────────────────────────────────────────────────────
-// The charts carry no marks of their own (v1.33): every event drew a dashed line
-// and a dot, and a busy stretch became a fence nobody could read. What happened
-// at a moment is told by a tooltip over what is under the pointer: a bucket of
-// the charts, a cell of the strip, or a stretch vterm read nothing for. A
+// The pulse carries one mark at most (`pulseMark`): what happened at a moment
+// is told by a short tooltip over what is under the pointer — a bucket (its
+// time, its value, the busiest process) or a stretch vterm read nothing for. A
 // pointer that rests stops showing it — a tooltip left up for hours would hold
 // its pixels lit like any other.
 
-/** How far past a chart's sides, px, the pointer still picks what is at the end. */
+/** How far past the pulse's sides, px, the pointer still picks what is at the end. */
 export const HOVER_SLACK = 12;
 /** A pointer that has not moved for this long, ms, shows no tooltip. */
 export const HOVER_STILL_MS = 10_000;
@@ -654,49 +756,18 @@ export function timeAtX(x: number, from: number, to: number, gx: number, gw: num
   return from + ((Math.min(gx + gw, Math.max(gx, x)) - gx) / gw) * (to - from);
 }
 
-const KEY_ORDER: Record<AwayKey, number> = { cpu: 0, mem: 1, load: 2 };
-
-/** The events whose stretch shares time with `from…to`: CPU, then memory, then load. */
-export function eventsAt(events: readonly AwayEvent[], from: number, to: number): AwayEvent[] {
-  return events
-    .filter((e) => e.start <= to && e.end >= from)
-    .sort((a, b) => KEY_ORDER[a.key] - KEY_ORDER[b.key] || a.start - b.start);
-}
-
 /** A stretch of time, short: seconds under a minute, else as the uptime reads ("6m", "1h 2m", "2d 3h"). */
 export function spanLabel(ms: number): string {
   const s = Number.isFinite(ms) ? Math.max(0, Math.round(ms / 1000)) : 0;
   return s < 60 ? `${s}s` : fmtUptime(s);
 }
 
-// ── Above the charts (v1.34, ADR 0065) ───────────────────────────────────────
-// Four rings over the charts told CPU, memory and load a second time. Each
-// metric now has one place — a small ring at the start of its own chart — and
-// the room above tells what the charts do not: how the host is now, by the
-// status bar's own verdict (`barProblems`), and its disk, swap, network and
-// temperature, all from the same basic probe.
+// ── The verdict (v1.34, ADR 0065) ────────────────────────────────────────────
 
-/** Swap as the host reports it: the share used, "none" — the host has no swap, null — not reported. */
-export function swapShare(used: number | null, total: number | null): number | "none" | null {
-  if (total == null || !Number.isFinite(total)) return null;
-  if (total <= 0) return "none";
-  if (used == null || !Number.isFinite(used)) return null;
-  return Math.min(1, Math.max(0, used / total));
-}
-
-/** The smallest ring worth drawing at the start of a chart, px; below it the value is told as text. */
-export const GUTTER_RING_MIN = 13;
-
-/** The radius of the ring at the start of a chart `rowH` high, or null — too low for one. */
-export function gutterRing(rowH: number, big: boolean): number | null {
-  const r = Math.min(big ? 30 : 22, Math.floor((Number.isFinite(rowH) ? rowH : 0) / 2) - 1);
-  return r >= GUTTER_RING_MIN ? r : null;
-}
-
-/** The verdict line above the charts: nothing read yet, all OK, or the worst problem and how many more there are. */
+/** The verdict under the host: nothing read yet, all OK, or the worst problem and how many more there are. */
 export type VerdictLine = { kind: "none" } | { kind: "ok" } | { kind: "problem"; problem: Problem; more: number };
 
-/** The verdict line for the newest reading (`read` — one came back) and the problems the status bar sees in it. */
+/** The verdict for the newest reading (`read` — one came back) and the problems the status bar sees in it. */
 export function verdictLine(read: boolean, ps: readonly Problem[]): VerdictLine {
   if (!read) return { kind: "none" };
   if (!ps.length) return { kind: "ok" };
@@ -711,7 +782,7 @@ export function verdictLine(read: boolean, ps: readonly Problem[]): VerdictLine 
 // host that does not say (a local tab, a probe without `date`) has no offset:
 // the card shows this machine's time and says so.
 
-/** The server clock's lead over this machine's, in minutes, or null when `serverTime` does not say. */
+/** The server clock's lead over this machine's in minutes, from its "HH:MM …" at local time `localAt`; null when it did not say. */
 export function serverOffset(serverTime: string, localAt: number): number | null {
   const m = /^\s*(\d{1,2}):(\d{2})\b/.exec(serverTime);
   if (!m) return null;
@@ -737,28 +808,6 @@ export const shifted = (at: number, offsetMin: number): Date => new Date(at + of
 export function clockLabel(at: number, offsetMin: number): string {
   const d = shifted(at, offsetMin);
   return `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
-}
-
-/** Tick steps of the time axis, minutes. */
-const TICK_STEPS = [1, 2, 5, 10, 15, 30, 60, 120, 180, 360, 720];
-
-/**
- * Ticks of a `from…to` time axis on the server's clock: at whole minutes of a
- * round step, as few steps as keep the count at or under `maxTicks`. Returns
- * this machine's wall-clock times, ready for `timeX`.
- */
-export function timeTicks(from: number, to: number, offsetMin: number, maxTicks: number): number[] {
-  if (!(to > from) || maxTicks < 1) return [];
-  const spanMin = (to - from) / 60_000;
-  const step = TICK_STEPS.find((s) => spanMin / s <= maxTicks) ?? TICK_STEPS[TICK_STEPS.length - 1];
-  const d = shifted(from, offsetMin);
-  const minutes = d.getHours() * 60 + d.getMinutes() + (d.getSeconds() || d.getMilliseconds() ? 1 : 0);
-  d.setHours(0, Math.ceil(minutes / step) * step, 0, 0);
-  const out: number[] = [];
-  for (let at = d.getTime() - offsetMin * 60_000; at <= to && out.length < maxTicks; at += step * 60_000) {
-    out.push(at);
-  }
-  return out;
 }
 
 // ── A transfer under way ─────────────────────────────────────────────────────
@@ -794,14 +843,6 @@ export function standbyTransfer(
     eta: etaSeconds(row.transferred, row.total, rate),
     more: running.length - 1,
   };
-}
-
-// ── Layout ───────────────────────────────────────────────────────────────────
-
-/** The ring's fill 0…1 for a value against its ceiling, or null when either is unknown. */
-export function ringFraction(value: number | null, ceiling: number | null): number | null {
-  if (value == null || ceiling == null || !Number.isFinite(value) || !(ceiling > 0)) return null;
-  return Math.min(1, Math.max(0, value / ceiling));
 }
 
 // ── Burn-in ──────────────────────────────────────────────────────────────────

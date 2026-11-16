@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { BAR_MS, easeOut, LINE_MS, MERGE_MS, progress, retarget, RING_MS, still, tweenAt } from "./tween";
+import { BAR_MS, easeOut, LINE_MS, progress, retarget, RING_MS, still, tweenAt } from "./tween";
 
 describe("a value running to its reading", () => {
   it("eases from where it stood to the reading, and lands on it", () => {
@@ -78,7 +78,7 @@ describe("the curve and the pace", () => {
 
   it("finishes every change before the next reading can come", () => {
     // The shortest poll the settings allow is 2 s: animations never pile up.
-    for (const ms of [RING_MS, LINE_MS, BAR_MS, MERGE_MS]) {
+    for (const ms of [RING_MS, LINE_MS, BAR_MS]) {
       expect(ms).toBeGreaterThan(0);
       expect(ms).toBeLessThan(2000);
     }

@@ -22,8 +22,6 @@ export const BAR_MS = 300;
 export const STATUS_MS = 300;
 /** A chart's scale moving to a new ceiling. */
 export const SCALE_MS = 600;
-/** The strip of the time away giving way to the one its longer cells draw (ADR 0065). */
-export const MERGE_MS = 600;
 /** The idle card's layout giving way to the one its new room takes (a dock opened, the window resized). */
 export const TIER_MS = 400;
 
