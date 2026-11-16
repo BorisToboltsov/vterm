@@ -96,6 +96,107 @@ pub const TOOLS: &[Tool] = &[
         id: "glab",
         name: "glab",
         bin: "glab",
+    }, // The editor's formatters (ADR 0076) and language servers (ADR 0079): the
+    // user's own, installed where the project lives.
+    Tool {
+        id: "black",
+        name: "black",
+        bin: "black",
+    },
+    Tool {
+        id: "shfmt",
+        name: "shfmt",
+        bin: "shfmt",
+    },
+    Tool {
+        id: "yamlfmt",
+        name: "yamlfmt",
+        bin: "yamlfmt",
+    },
+    Tool {
+        id: "prettier",
+        name: "prettier",
+        bin: "prettier",
+    },
+    Tool {
+        id: "rustfmt",
+        name: "rustfmt",
+        bin: "rustfmt",
+    },
+    Tool {
+        id: "xmllint",
+        name: "xmllint",
+        bin: "xmllint",
+    },
+    Tool {
+        id: "clang-format",
+        name: "clang-format",
+        bin: "clang-format",
+    },
+    Tool {
+        id: "basedpyright",
+        name: "basedpyright",
+        bin: "basedpyright-langserver",
+    },
+    Tool {
+        id: "pyright",
+        name: "pyright",
+        bin: "pyright-langserver",
+    },
+    Tool {
+        id: "pylsp",
+        name: "pylsp",
+        bin: "pylsp",
+    },
+    Tool {
+        id: "rust-analyzer",
+        name: "rust-analyzer",
+        bin: "rust-analyzer",
+    },
+    Tool {
+        id: "gopls",
+        name: "gopls",
+        bin: "gopls",
+    },
+    Tool {
+        id: "terraform-ls",
+        name: "terraform-ls",
+        bin: "terraform-ls",
+    },
+    Tool {
+        id: "yaml-language-server",
+        name: "yaml-language-server",
+        bin: "yaml-language-server",
+    },
+    Tool {
+        id: "ansible-language-server",
+        name: "ansible-language-server",
+        bin: "ansible-language-server",
+    },
+    Tool {
+        id: "bash-language-server",
+        name: "bash-language-server",
+        bin: "bash-language-server",
+    },
+    Tool {
+        id: "typescript-language-server",
+        name: "typescript-language-server",
+        bin: "typescript-language-server",
+    },
+    Tool {
+        id: "docker-langserver",
+        name: "docker-langserver",
+        bin: "docker-langserver",
+    },
+    Tool {
+        id: "helm_ls",
+        name: "helm_ls",
+        bin: "helm_ls",
+    },
+    Tool {
+        id: "clangd",
+        name: "clangd",
+        bin: "clangd",
     },
 ];
 
@@ -121,7 +222,8 @@ pub struct ToolsStatus {
 /// Shell that prints `mgr=<name>` then `have=<bin>` for each installed tool — one
 /// round-trip to detect the package manager and every tool's presence.
 pub fn status_command() -> String {
-    let mut s = String::from(
+    let mut s = format!("PATH=\"{}\"; ", crate::format::TOOL_PATH);
+    s.push_str(
         "if command -v apt-get >/dev/null 2>&1; then printf 'mgr=apt\\n'; \
          elif command -v dnf >/dev/null 2>&1; then printf 'mgr=dnf\\n'; \
          elif command -v yum >/dev/null 2>&1; then printf 'mgr=yum\\n'; \
@@ -171,6 +273,14 @@ pub fn install_command(tool: &str, mgr: &str) -> Option<String> {
         })
     };
     let pip = |pkg: &str| Some(format!("pip install --user {pkg}"));
+    // A Node tool: global npm — under sudo where npm's global folder is the system's.
+    let npm = |mgr: &str, pkg: &str| -> Option<String> {
+        Some(if mgr == "brew" {
+            format!("npm install -g {pkg}")
+        } else {
+            format!("sudo npm install -g {pkg}")
+        })
+    };
     match tool {
         "shellcheck" => sys("shellcheck"),
         "yamllint" => sys("yamllint").or_else(|| pip("yamllint")),
@@ -259,6 +369,55 @@ pub fn install_command(tool: &str, mgr: &str) -> Option<String> {
                 )
             }
         }
+        // Formatters (ADR 0076).
+        "black" => {
+            if mgr == "brew" {
+                sys("black")
+            } else {
+                pip("black")
+            }
+        }
+        "shfmt" => sys("shfmt"),
+        "yamlfmt" => {
+            if mgr == "brew" {
+                sys("yamlfmt")
+            } else {
+                Some("go install github.com/google/yamlfmt/cmd/yamlfmt@latest".into())
+            }
+        }
+        "prettier" => npm(mgr, "prettier"),
+        "rustfmt" => Some("rustup component add rustfmt".into()),
+        "xmllint" => match mgr {
+            "apt" | "apk" => sys("libxml2-utils"),
+            "zypper" => sys("libxml2-tools"),
+            _ => sys("libxml2"),
+        },
+        "clang-format" => match mgr {
+            "dnf" | "yum" => sys("clang-tools-extra"),
+            "apk" => sys("clang-extra-tools"),
+            "pacman" => sys("clang"),
+            _ => sys("clang-format"),
+        },
+        // Language servers (ADR 0079).
+        "basedpyright" => pip("basedpyright"),
+        "pyright" => pip("pyright"),
+        "pylsp" => pip("python-lsp-server"),
+        "rust-analyzer" => Some("rustup component add rust-analyzer".into()),
+        "gopls" => Some("go install golang.org/x/tools/gopls@latest".into()),
+        "terraform-ls" => (mgr == "brew").then(|| "brew install hashicorp/tap/terraform-ls".into()),
+        "yaml-language-server" => npm(mgr, "yaml-language-server"),
+        "ansible-language-server" => npm(mgr, "@ansible/ansible-language-server"),
+        "bash-language-server" => npm(mgr, "bash-language-server"),
+        "typescript-language-server" => npm(mgr, "typescript-language-server typescript"),
+        "docker-langserver" => npm(mgr, "dockerfile-language-server-nodejs"),
+        "helm_ls" => (mgr == "brew").then(|| "brew install helm-ls".into()),
+        "clangd" => match mgr {
+            "dnf" | "yum" => sys("clang-tools-extra"),
+            "apk" => sys("clang-extra-tools"),
+            "pacman" => sys("clang"),
+            "brew" => sys("llvm"),
+            _ => sys("clangd"),
+        },
         _ => None,
     }
 }
@@ -442,6 +601,49 @@ mod tests {
         assert!(install_command("kubeconform", "dnf")
             .unwrap()
             .contains("kubeconform-"));
+    }
+
+    #[test]
+    fn every_formatter_and_language_server_can_be_installed_somewhere() {
+        let ids = [
+            "black",
+            "shfmt",
+            "yamlfmt",
+            "prettier",
+            "rustfmt",
+            "xmllint",
+            "clang-format",
+            "basedpyright",
+            "pyright",
+            "pylsp",
+            "rust-analyzer",
+            "gopls",
+            "terraform-ls",
+            "yaml-language-server",
+            "ansible-language-server",
+            "bash-language-server",
+            "typescript-language-server",
+            "docker-langserver",
+            "helm_ls",
+            "clangd",
+        ];
+        for id in ids {
+            assert!(TOOLS.iter().any(|t| t.id == id), "{id} in the catalogue");
+            assert!(
+                install_command(id, "apt").is_some() || install_command(id, "brew").is_some(),
+                "{id}"
+            );
+        }
+        assert_eq!(
+            install_command("pylsp", "apt").as_deref(),
+            Some("pip install --user python-lsp-server")
+        );
+        assert_eq!(
+            install_command("yaml-language-server", "apt").as_deref(),
+            Some("sudo npm install -g yaml-language-server")
+        );
+        assert_eq!(install_command("terraform-ls", "apt"), None);
+        assert!(status_command().starts_with("PATH=\""));
     }
 
     #[test]

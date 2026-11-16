@@ -27,6 +27,9 @@
   import { baseName, isRoot, joinPath, parentOf } from "./fspath";
   import { MARK_DOT, type SftpGroup } from "./groupupload";
   import type { FileBrowserAdapter } from "./filebrowser";
+  import type { ProjectCommand } from "./projectactions";
+  import { LISTING_STATUS_ARGS, PREFIX_ARGS, parseListingStatus } from "../git/gitlisting";
+  import { gitRun, sftpReadText } from "../api";
   import type { FileEntry } from "../types";
   import { notifyError } from "../stores/toasts.svelte";
   import { transfersOf, transfersState } from "../stores/transfers.svelte";
@@ -63,6 +66,9 @@
     projectPinned,
     onPinProject,
     onUserNavigate,
+    kubeContext = null,
+    onProjectCommand,
+    onOpenPanel,
   }: {
     sessionId: string;
     width?: number;
@@ -91,6 +97,11 @@
     projectPinned?: (kind: ProjectKind, root: string) => boolean;
     onPinProject?: (kind: ProjectKind, root: string) => void;
     onUserNavigate?: (path: string) => void;
+    /** The k8s panel's context, told to kubectl and helm from the project strip (ADR 0077). */
+    kubeContext?: string | null;
+    /** Type a project's command into the connection's terminal, in `root` (ADR 0077). */
+    onProjectCommand?: (root: string, cmd: ProjectCommand, label: string) => void;
+    onOpenPanel?: (panel: "docker" | "k8s") => void;
   } = $props();
 
   // The current directory the transfers/sync operate against; kept in sync via the
@@ -164,6 +175,15 @@
     upload: async (destDir) => uploadPaths(destDir, await pickUploadFiles()),
     download,
     search: (dir, q, caseInsensitive, fixed, limit) => sftpGrep(sessionId, dir, q, caseInsensitive, fixed, limit),
+    // The project view (ADR 0077): the folder's Git status through the Git driver,
+    // a manifest or a task file read like any file — small, once.
+    gitStatus: async (dir) => {
+      const pre = await gitRun(sessionId, dir, PREFIX_ARGS, 10);
+      if (pre.exitCode !== 0) return null;
+      const out = await gitRun(sessionId, dir, LISTING_STATUS_ARGS, 20);
+      return out.exitCode === 0 ? parseListingStatus(out.stdout, pre.stdout.trim()) : null;
+    },
+    readText: async (path) => (await sftpReadText(sessionId, path, 256 * 1024)).content,
   };
 
   let browser = $state<ReturnType<typeof FileBrowser>>();
@@ -246,6 +266,10 @@
   {onProject}
   {projectPinned}
   {onPinProject}
+  {prod}
+  {kubeContext}
+  {onProjectCommand}
+  {onOpenPanel}
   {onUserNavigate}
   requiresConnect
   {sessionReady}

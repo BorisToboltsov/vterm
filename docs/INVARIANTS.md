@@ -32,7 +32,7 @@
 
 1. **Граница фронт/бэк** (ADR 0001, 0036). Логика SSH/SFTP/секретов/файлов — в Rust
    (`src-tauri/src/`); Svelte ходит к ней только через `call()` и каналы событий (`term://`,
-   `sftp://`, `sync://`, `menu://`, `install://`, `ai://`, `window://`). Новая команда — в своём
+   `sftp://`, `sync://`, `menu://`, `install://`, `ai://`, `window://`, `lsp://`). Новая команда — в своём
    доменном модуле + типизированная обёртка в [src/lib/api/](../src/lib/api/); `lib.rs` только
    регистрирует её как `модуль::имя`. Команды поверх общего `AppState` и приватные мосты
    (`get_sftp`/`record_sftp`/`run_driver`) — слой-мост [commands/](../src-tauri/src/commands/) по
@@ -56,7 +56,7 @@
    доступа» с локальной вкладки — рукопожатие или **его** `bash`/`nc`/`telnet`/`curl` (ADR 0012,
    0033, 0056); **его** `curl`/`openssl` в TLS-инспекторе и HTTP-клиенте (ADR 0014); проверка и
    скачивание релиза GitHub по явному действию (ADR 0031); **его** `gh`/`glab` к **его** GitHub/GitLab
-   в панели CI (ADR 0069); **его** `ansible`/`terraform` на хосте проекта (ADR 0071). Такой трафик идёт только из Rust:
+   в панели CI (ADR 0069); **его** `ansible`/`terraform` на хосте проекта (ADR 0071); **его** форматтеры и языковые серверы на хосте файла (ADR 0076, 0079). Такой трафик идёт только из Rust:
    фронт сетевых вызовов не делает (`vterm/no-network`), CSP строгий; проксировать загрузку
    картинок или данных через Rust — то же обращение в сеть. Шрифты встроены, внешние ссылки —
    только по клику через `tauri-plugin-opener`; диагностика хоста исполняется на хосте сессии.
@@ -397,6 +397,7 @@ Git, Docker, k8s, сетевые пробы и метрики — **один к�
   [dockstate](../src/lib/stores/dockstate.svelte.ts)** по `sessionId` (подключение и каталог
   файловой панели, scope k8s, подвкладка, что открыто рядом со списком, вид лога, поиск) и чистится
   в `closeTabFully`; выделение и модалки — не туда. Забытый context k8s не вшивается в argv.
+- **Полоса проекта печатает команду в терминал, а не исполняет** (ADR 0077): тип и роли — по именам листинга (`projectmap.ts`), команда — argv под оболочку вкладки или строки по оболочкам, с `cd` в корень. Останавливающее и заменяющее спрашивает всегда, запускающее и задачи Makefile — на проде; контекст kubectl — из панели k8s, явно в argv. Полоса не рисует меню и диалогов, `files/` не пишет в терминал. Git-буквы — один `status` на листинг, пока видно. Гейт `editorwork.guard`.
 - **Подтверждения:** `isDestructive`/`needsConfirm` → `ConfirmDialog` на **любом** сервере, на
   проде — красное предупреждение (предохранитель, принцип 7).
 - **Сетевые операции — только по явной кнопке** (`fetch`/`pull`/`push`, `docker login`): трафик
@@ -784,6 +785,9 @@ Git, Docker, k8s, сетевые пробы и метрики — **один к�
   Неизвестное условие — «?» с причиной, а не пропуск и не запуск; проигрывание — порядок, а не
   время. Прогон группы — дорожки: колонка задачи и её ход — из одного списка того, что она ждёт
   (`pipelanes.ts`). Гейты `pipeline.guard`, `vterm/lazy-import`, `pipelanes.test.ts`.
+- **Формат — инструмент проекта на хосте файла, одной правкой** (ADR 0076). argv строит `format.ts`, бэкенд пускает только формы stdin (`format::check_args`: ни другой программы, ни опции, пишущей свой файл), запуск — в папке файла. Ответ ложится одной `minimalChange` и отбрасывается, если буфер ушёл вперёд; `ansible-lint --fix` — «Исправить», не формат, правит копию рядом. Формат при сохранении не останавливает запись. Гейты `editorwork.guard`, `what_the_editor_formats_with_is_allowed`.
+- **Языковой сервер — из каталога, на хосте файла, со своей вкладкой** (ADR 0079). Окно называет сервер id (`lsp::SERVERS`), argv знает бэкенд; на SSH — exec-канал через `answered`, локально — процесс. Один на вкладку, папку и сервер (`stores/lsp`, `lspStart` — только там), уходит с последним редактором, с `closeTabFully` (`forgetLsp`) и с сессией (`end_session`). Сам не стартует, на проде — после вопроса. Сообщения сервера не пишутся. Гейты `a_language_server_is_named_never_given_as_a_command`, `tabteardown.guard`.
+- **Схемы YAML — с приложением, схема с сервера — недоверенная** (ADR 0078). Проверка — интерпретатор без `eval`, схемы в `editor/schemas` только MIT/Apache-2.0 и названы в NOTICE.md; схема по URL не скачивается; `values.schema.json` и modeline-файл — через `untrustedSchema` (без `pattern`/`format`). Запущен yaml-language-server — встроенная проверка уходит. Гейт `editorwork.guard`.
 - **Линта у legacy-режимов нет — и ложных срабатываний тоже:** линт строится на error-нодах
   Lezer; включить его для StreamLanguage-языка — заменить режим на `@codemirror/lang-*`.
   Серверный линт — команда `lint_remote`.
@@ -1063,6 +1067,7 @@ Git, Docker, k8s, сетевые пробы и метрики — **один к�
   свой парсер без `eval`; шаблон `=~ /…/` длиннее 200 знаков или с вложенными кванторами не
   выполняется (`safeRegex`) — «?»; имена и шаги — текст, `{@html}` в подсистеме нет. Гейт
   `pipeline.guard`.
+- **HTML языкового сервера — только через `sanitizeLspHtml`** (ADR 0079): Markdown подсказок — от программы на чужом хосте; остаются текстовые теги и классы подсветки, без ссылок, картинок и атрибутов, `script`/`svg`/`iframe` — с содержимым. Клиент (`lspclient.ts`) получает санитайзер в конфигурации. Гейт `editorwork.guard`.
 - **Имя файла с сервера — недоверенный вход:** локальный путь — только через
   `localfile::safe_child`/`safe_join` (одна компонента, не `.`/`..`, на Windows без `\`, `:` и
   хвостовой точки/пробела); имя одного сервера на другом — `sftp::safe_child`; обход задания
@@ -1337,14 +1342,14 @@ Git, Docker, k8s, сетевые пробы и метрики — **один к�
 `overlay-z-index` · `type-scale` · `rem-sizes` · `micro-label` · `motion-duration` · `locale-binding` · `md-links`
 · `backdrop-no-close` · `each-as-t` · `path-sync-mode` · `owned-imports` (вызов, правило которого
 живёт в одном модуле, импортирует только он: `setServerPathSync`, `transferStart`,
-`importBackup`, `transferResume`, `startChat`, `netcheckRun`, `ciRun`, команды сценариев, `sftpOpenAs`, `fetchMetrics`, `fetchLiveExtras`, `fetchProcessDetail`, команды журнала, `noteJournal`, сырой `closeTab`) · `forbidden-imports` (стор вкладок
+`importBackup`, `transferResume`, `startChat`, `netcheckRun`, `ciRun`, `lspStart`, `formatRun`, команды сценариев, `sftpOpenAs`, `fetchMetrics`, `fetchLiveExtras`, `fetchProcessDetail`, команды журнала, `noteJournal`, сырой `closeTab`) · `forbidden-imports` (стор вкладок
 не знает сторов рабочих пространств и чата, стор пришедшей вкладки знает стор вкладок только
 по типу) · `owned-writes` (`settings.terminalLinks`/`terminalFileLinks` пишут только раздел
 настроек и вопрос, который он отключает) · `theme-colors` · `virtual-scroll` · `paste-caret` ·
 `scan-blocks` (гейты и скрипты вырезают блоки разметки сканером, а не регуляркой: CodeQL роняет
 на этом PR; правило действует и в тестах) · `invoke-in-call` (`invoke` — только в `api/call.ts`) ·
 `no-console` · `diag-no-secret` (поля события — литерал без секретных имён) · `lazy-import` (пакет,
-который грузится по требованию, — только `import()` своего загрузчика: `yaml` — в `pipeline/yamldoc.ts`) · `no-silent-catch`
+который грузится по требованию, — только `import()` своего загрузчика: `yaml` — в `pipeline/yamldoc.ts`, валидатор схем, миникарта, клиент LSP — в своих модулях `editor/`) · `no-silent-catch`
 (пустой `catch`, `.catch(() => {})` и подобные — ошибка обрабатывается или пишется).
 
 **Правило clippy** (`[lints.clippy]` в [Cargo.toml](../src-tauri/Cargo.toml), `-D warnings` на
@@ -1406,6 +1411,7 @@ Git, Docker, k8s, сетевые пробы и метрики — **один к�
 | `connfit.guard` | Экран подключения укладывается моделью `connfit.ts`: корень обрезает, колонка — `my-auto`, кольцо не сжимается и круглое; анимации укладки (`fluidglide.ts`) — только `transform`/`opacity` через `motionMs` |
 | `filecase.guard` | Нет путей и тестов, различающихся только регистром |
 | `pipeline.guard` | Схема пайплайна читает файлы только через `connectionFiles` (его команды — редактора и панели файлов); в подсистеме нет `{@html}`; CodeMirror не размонтируется при смене вида |
+| `editorwork.guard` | HTML языкового сервера — через `sanitizeLspHtml`; схема с сервера — `untrustedSchema`; формат — одна правка на тексте, для которого сделан; полоса проекта без меню и диалогов, `files/` не пишет в терминал; каждая схема названа в NOTICE.md |
 | `liblayout.guard` | В корне `src/lib` — только папки и `types.ts`; папки — те, что в дереве ARCHITECTURE; слои линтера существуют |
 | `i18nkeys.guard` | Каждый ключ словаря используется приложением |
 | `cspnonce.test.ts` · `editorlangs.test.ts` | Каждый `EditorView` отдаёт nonce; грамматики — по требованию |
@@ -1423,6 +1429,7 @@ Git, Docker, k8s, сетевые пробы и метрики — **один к�
 | `a_partial_copy_goes_on_only_from_a_confirmed_point_and_never_outlives_its_tab` (Rust) | Точка частичной копии — после `flush`; временный файл и смещение — из `partial::staging`; удаляет его при ошибке только тот, кого не держат; закрытая вкладка и выход не оставляют держимого |
 | `login_answers_come_only_from_the_plan` · `nothing_after_login_can_fail_the_connection` (Rust) | Ответы `keyboard-interactive` — только из `kbdauth::merge`; после входа нет `?` |
 | `what_the_git_panel_runs_is_allowed` · `what_the_docker_panel_runs_is_allowed` · `what_the_k8s_panel_runs_is_allowed` (Rust) | Политики argv драйверов пускают формы фронта и ничего опасного |
+| `what_the_editor_formats_with_is_allowed` · `nothing_else_runs_under_the_name_of_formatting` · `a_language_server_is_named_never_given_as_a_command` (Rust) | Формат — только формы stdin известных форматтеров; языковой сервер — только из каталога по id |
 | `what_the_checks_of_a_project_run_is_allowed` · `a_recipes_script_and_password_never_reach_a_command_line` (Rust) | Проверки проекта — только чтение того, что он такое, без state; рецепт и пароль sudo — через stdin фиксированной обёртки |
 | `a_sudo_password_reaches_the_backend_only_through_the_check` (Rust) | Пароль sudo принимает из окна только `sudo_check`; сохранённый читает только `commands/sudo.rs` |
 | `every_login_reads_its_own_secrets` (Rust) | Подключение читает и пишет секреты по области логина, не по id сервера; разовый логин не сохраняет ничего |

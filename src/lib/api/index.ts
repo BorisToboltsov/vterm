@@ -13,5 +13,7 @@ export * from "./container";
 export * from "./kube";
 export * from "./ci";
 export * from "./scenarios";
+export * from "./editor";
+export * from "./lsp";
 export * from "./window";
 export * from "./tabcontent";

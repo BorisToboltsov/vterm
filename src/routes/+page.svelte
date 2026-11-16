@@ -1,6 +1,6 @@
 <script lang="ts">
   import { nullWrittenByCall, writtenByCall } from "#lib/api/call.ts";
-  import { swallow, swallowed } from "#lib/api/diag.ts";
+  import { diag, swallow, swallowed } from "#lib/api/diag.ts";
   import { onMount, untrack, tick } from "svelte";
   import { tooltip } from "#lib/actions/tooltip.ts";
   import { fade } from "svelte/transition";
@@ -255,6 +255,8 @@
   import { createReconnectFlow } from "#lib/page/reconnectflow.svelte.ts";
   import { cdCommand, type CdShell } from "#lib/pathsync/cdterminal.ts";
   import { renderArgv, renderSessionCommand } from "#lib/terminal/termcmd.ts";
+  import { commandLine, type ProjectCommand } from "#lib/files/projectactions.ts";
+  import { forgetLsp } from "#lib/stores/lsp.svelte.ts";
   import { attachIcon, attachRows, attachTitle, type AttachTarget } from "#lib/tabs/tabattach.ts";
   import { submitLine } from "#lib/terminal/terminput.ts";
   import {
@@ -1185,6 +1187,30 @@
     if (/[\r\n]/.test(line)) return;
     if (!terminalShown(getWorkspace(id).layout)) showSessionView(id, TERMINAL_VIEW);
     void writeToTerminal(id, new TextEncoder().encode(submitLine(line))).catch(writtenByCall);
+  }
+
+  /**
+   * A project strip's command (ADR 0077): typed into the tab's terminal, in the
+   * project's folder — with a `cd` first unless the terminal is known to be
+   * there. The command is quoted for the shell the tab runs; one with no form
+   * in it is not typed at all.
+   */
+  function runProjectCommand(id: string, root: string, cmd: ProjectCommand, label: string) {
+    const shell = findTab(id)?.kind === "local" ? (localShellKind[id] ?? "posix") : "posix";
+    const line = commandLine(cmd, shell, renderArgv);
+    if (!line) {
+      notifyError(t("project.unsupportedShell"), { source: "terminal", sessionId: id });
+      return;
+    }
+    const here = terminalCwd[id] === root;
+    const cd = here ? null : cdCommand(root, shell);
+    if (!here && !cd) {
+      notifyError(t("page.commandUnquotable"), { source: "terminal", sessionId: id });
+      return;
+    }
+    const full = cd ? (shell === "powershell" ? `${cd}; ${line}` : `${cd} && ${line}`) : line;
+    diag.info("files", "a project command was typed into the terminal", { sid: id, label });
+    typeLine(id, full);
   }
 
   function typeInTerminal(id: string, argv: string[]) {
@@ -2399,6 +2425,8 @@
     forgetCi(sessionId);
     // Its watched playbook run and its plan, and their folders on the host (ADR 0071).
     forgetScenarios(sessionId);
+    // Its language servers (ADR 0079); the backend stops them with the session too.
+    forgetLsp(sessionId);
     closeTabStore(sessionId);
   }
 
@@ -3054,6 +3082,8 @@
         onOpenPipeline={(path, ask) => editors.openPipelineSchema(tab.sessionId, path, ask)}
         onOpenLog={(name, text) => editors.openLog(tab.sessionId, name, text)}
         onTypeInTerminal={(argv) => typeInTerminal(tab.sessionId, argv)}
+        onProjectCommand={(root, cmd, label) => runProjectCommand(tab.sessionId, root, cmd, label)}
+        onOpenPanel={(panel) => revealPanel(panel)}
       />
     {/if}
   {/if}
@@ -3970,6 +4000,13 @@
                                   })
                               : undefined}
                             onToLibrary={!isAbsolutePath(ed.path) && ed.lang.kind === "shell" ? () => void scriptToLibrary(ed.name, ed.content) : undefined}
+                            terminalHere={ed.source === "sftp" ? tab.kind === "ssh" : tab.kind === "local"}
+                            hostKey={ed.source === "sftp" && tab.kind === "ssh" ? tab.serverId : "local"}
+                            prod={ed.source === "sftp" && tab.kind === "ssh" && isProdServer(servers.find((s) => s.id === tab.serverId))}
+                            onTerminal={(argv) => {
+                              if (!terminalShown(getWorkspace(tab.sessionId).layout)) showSessionView(tab.sessionId, TERMINAL_VIEW);
+                              typeInTerminal(tab.sessionId, argv);
+                            }}
                           />
                         {/if}
                       </div>

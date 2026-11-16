@@ -245,6 +245,29 @@ export const ICONS = {
   gearPlay:
     '<path d="M12 3l1.4 2.3 2.6-.6.6 2.6L19 8.7l-1.3 2.3L19 13.3l-2.4 1.4-.6 2.6-2.6-.6L12 19l-1.4-2.3-2.6.6-.6-2.6L5 13.3 6.3 11 5 8.7l2.4-1.4.6-2.6 2.6.6z"/><path d="M10.5 9.2v3.6l3-1.8z"/>',
   cube: '<path d="M12 3l8 4.5v9L12 21l-8-4.5v-9z"/><path d="M4 7.5l8 4.5 8-4.5M12 12v9"/>',
+  // The file panel's view of a project, «as in an IDE» (ADR 0077): what a
+  // folder is for and what language a file is in, in the same line style.
+  folderCode: '<path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><path d="M10 11l-2 2 2 2M14 11l2 2-2 2"/>',
+  folderTest: '<path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><path d="M9.5 13.5l2 2 3.5-4"/>',
+  folderOff: '<path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><path d="M9.5 10.5l5 5M14.5 10.5l-5 5"/>',
+  folderVars:
+    '<path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><path d="M10 10.5c-1 0-1.2.6-1.2 1.2v.6c0 .5-.3.7-.8.7.5 0 .8.2.8.7v.6c0 .6.2 1.2 1.2 1.2M14 10.5c1 0 1.2.6 1.2 1.2v.6c0 .5.3.7.8.7-.5 0-.8.2-.8.7v.6c0 .6-.2 1.2-1.2 1.2"/>',
+  // A project's manifest (Cargo.toml, package.json, Chart.yaml…): a sheet with a seal.
+  manifest:
+    '<path d="M14 3v4a1 1 0 0 0 1 1h4"/><path d="M5 3h9l5 5v11a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1z"/><path d="M8 12.5h8M8 16.5h5"/>',
+  langPython:
+    '<path d="M12 3c-3 0-4 1-4 3v2h4.5v1H6c-2 0-3 1.5-3 4s1 4 3 4h1.5v-2.5c0-1.7 1.3-3 3-3H15c1.4 0 2.5-1.1 2.5-2.5V6c0-2-1.5-3-5.5-3z"/><path d="M12 21c3 0 4-1 4-3v-2h-4.5v-1H18c2 0 3-1.5 3-4s-1-4-3-4h-1.5"/><path d="M10 5.5h.01M14 18.5h.01"/>',
+  langRust: '<circle cx="12" cy="12" r="8.5"/><path d="M8.5 16V8h4.2a2.2 2.2 0 0 1 0 4.4H8.5M12.3 12.4 15.5 16"/>',
+  langGo: '<path d="M2 9.5h4M1 12.5h5M2 15.5h4"/><path d="M19.5 8.5A6.5 6.5 0 1 0 20 14h-5.5"/>',
+  langNode:
+    '<path d="M12 2.5l8.5 4.9v9.2L12 21.5l-8.5-4.9V7.4z"/><path d="M9 9.5v5M15 9.5c-1.5-1-3.5-.3-3 1.2.4 1.2 3.2.9 3.1 2.6-.1 1.4-2.3 1.7-3.4.7"/>',
+  helm: '<circle cx="12" cy="12" r="6"/><circle cx="12" cy="12" r="1.8"/><path d="M12 2.5v3.5M12 18v3.5M2.5 12H6M18 12h3.5M5.3 5.3l2.5 2.5M16.2 16.2l2.5 2.5M5.3 18.7l2.5-2.5M16.2 7.8l2.5-2.5"/>',
+  markdown: '<rect x="2.5" y="6" width="19" height="12" rx="2"/><path d="M6 15V9l2.5 3L11 9v6M15.5 9v6M13.5 13l2 2 2-2"/>',
+  unit: '<circle cx="12" cy="12" r="3"/><path d="M12 2.5v3M12 18.5v3M2.5 12h3M18.5 12h3M5.3 5.3l2.1 2.1M16.6 16.6l2.1 2.1M5.3 18.7l2.1-2.1M16.6 7.4l2.1-2.1"/>',
+  // The editor (ADR 0076): the miniature of the file, and formatting it.
+  minimap: '<rect x="3" y="4" width="18" height="16" rx="2"/><path d="M15 4v16M17.5 8h1M17.5 11h1M17.5 14h1M6.5 8h5M6.5 11h6M6.5 14h4"/>',
+  alignLeft: '<path d="M4 6h16M4 10h10M4 14h14M4 18h8"/>',
+  redo: '<path d="M20 7v5h-5"/><path d="M20 12a8 8 0 1 0-2.3 5.7"/>',
 } as const;
 
 export type IconName = keyof typeof ICONS;

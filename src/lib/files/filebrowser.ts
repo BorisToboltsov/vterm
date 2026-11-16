@@ -15,6 +15,7 @@
 // Everything else is shared, so it lives in <FileBrowser> once, and the pure bits
 // that can be tested without a DOM live here.
 
+import type { ListingGit } from "../git/gitlisting";
 import type { FileEntry } from "../types";
 import type { GrepOutcome } from "../sync/sync";
 import { uniqueCopyName } from "./filemove";
@@ -58,6 +59,11 @@ export interface FileBrowserAdapter {
   /** Content search (grep) under `cwd`. */
   /** `limit` — how many matches to return; absent — one page. */
   search?(cwd: string, query: string, caseInsensitive: boolean, fixedString: boolean, limit?: number): Promise<GrepOutcome>;
+  // ── Optional: the project view of a folder (ADR 0077). ──
+  /** The Git status of the folder's entries; null — not a repository. Absent — no Git here. */
+  gitStatus?(cwd: string): Promise<ListingGit | null>;
+  /** A small text file of the folder (a manifest, a task file), for the project strip. */
+  readText?(path: string): Promise<string>;
 }
 
 /**

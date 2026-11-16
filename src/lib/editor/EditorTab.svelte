@@ -1,6 +1,25 @@
+<script module lang="ts">
+  import { orNull } from "../api/diag";
+  // `.editorconfig` texts by connection and path, kept a minute: every file
+  // opened in a project would otherwise read the same files up the tree again.
+  const EC_TTL = 60_000;
+  const ecCache = new Map<string, { at: number; text: Promise<string | null> }>();
+
+  function ecRead(conn: string, path: string, read: () => Promise<string>): Promise<string | null> {
+    const k = `${conn}\u0000${path}`;
+    const hit = ecCache.get(k);
+    if (hit && Date.now() - hit.at < EC_TTL) return hit.text;
+    // A missing file is the usual answer, not a failure: written at debug only.
+    const text = read().catch(orNull("editor", "no .editorconfig at this level"));
+    ecCache.set(k, { at: Date.now(), text });
+    if (ecCache.size > 500) ecCache.delete(ecCache.keys().next().value as string);
+    return text;
+  }
+</script>
+
 <script lang="ts">
   import { swallow, swallowed } from "../api/diag";
-  import { onDestroy, onMount } from "svelte";
+  import { onDestroy, onMount, untrack } from "svelte";
   import { tooltip } from "../actions/tooltip";
   import { EditorState, Compartment, RangeSetBuilder, StateEffect, StateField } from "@codemirror/state";
   import { unifiedMergeView } from "@codemirror/merge";
@@ -16,9 +35,11 @@
     drawSelection,
   } from "@codemirror/view";
   import { defaultKeymap, history, historyKeymap, indentWithTab } from "@codemirror/commands";
+  import { closeBracketsKeymap, completionKeymap } from "@codemirror/autocomplete";
   import { searchKeymap, highlightSelectionMatches } from "@codemirror/search";
   import {
     bracketMatching,
+    foldKeymap,
     indentOnInput,
     syntaxTree,
   } from "@codemirror/language";
@@ -45,6 +66,52 @@
   import Icon from "../ui/Icon.svelte";
   import { t } from "../i18n";
   import { REFUSAL_HINT, REFUSAL_TITLE, sudoBadge } from "../sudo/sudo";
+  import { formatRun } from "../api/editor";
+  import { notifyInfo } from "../stores/toasts.svelte";
+  import { setEditorLang } from "../stores/workspaces.svelte";
+  import { parentOf } from "../files/fspath";
+  import EditorStatusBar from "./EditorStatusBar.svelte";
+  import OutlinePalette from "./OutlinePalette.svelte";
+  import ContextMenu from "../ui/ContextMenu.svelte";
+  import type { OpenMenu } from "../ui/ctxmenu";
+  import {
+    baseTheme,
+    brackets,
+    completion,
+    folding,
+    foldsByIndent,
+    indentGuides,
+    indentation,
+    multiCursor,
+    trailingSpace,
+    wrapping,
+    type EditorWords,
+  } from "./editorbase";
+  import { reindent, resolveIndent, type IndentInfo, type IndentSource } from "./indent";
+  import { editorconfigDir, editorconfigPaths, parseEditorConfig, resolveEditorConfig, type EditorConfigProps } from "./editorconfig";
+  import { langOfKind, type EditorLang, type EditorLangKind } from "./editorlang";
+  import { langKey, withOverride } from "./editorprefs";
+  import { hasTemplates, jinjaLayer } from "./jinja";
+  import { vaultArgv, vaultHeader } from "./vault";
+  import { breadcrumbs, outline } from "./outline";
+  import {
+    changedLines,
+    fixerFor,
+    formatArgv,
+    formatOrder,
+    formatResult,
+    formattersFor,
+    minimalChange,
+    runBuiltin,
+    type Formatter,
+  } from "./format";
+  import { FLASH_MS, changeFlash, changedLineNumbers, flashLines } from "./flash";
+  import { checkYaml, schemaCompletions, schemaFor, schemaRoot, type SchemaRef } from "./yamlschema";
+  import { isYamlKind } from "./outline";
+  import { minimapExtension } from "./minimap";
+  import { acquireLsp, forgetMissing, lspEntryKey, lspSaid, lspStatus, releaseLsp, type LspRequest } from "../stores/lsp.svelte";
+  import { fileUri, findRoot, languageId, lspKey, serversFor } from "./lspservers";
+  import ConfirmDialog from "../ui/ConfirmDialog.svelte";
 
   let {
     sessionId,
@@ -63,6 +130,10 @@
     onOpenFileAt,
     onScenario,
     onToLibrary,
+    terminalHere = false,
+    onTerminal,
+    hostKey = "local",
+    prod = false,
   }: {
     sessionId: string;
     doc: EditorDoc;
@@ -89,6 +160,14 @@
     onScenario?: (action: "check" | "run" | "plan") => void;
     /** A shell script not yet a file (the assistant's): into the recipe library. */
     onToLibrary?: () => void;
+    /** The terminal of this tab sees the file (it is on its server, or a local file of a local tab). */
+    terminalHere?: boolean;
+    /** Type a command into this tab's terminal (`ansible-vault view` of a vault). */
+    onTerminal?: (argv: string[]) => void;
+    /** The server the file is on (`local` for this computer) — what «start by itself» is remembered for. */
+    hostKey?: string;
+    /** A prod server: a language server there starts only after a question (ADR 0079). */
+    prod?: boolean;
   } = $props();
 
   // What this file is to the Scenarios (ADR 0071): a playbook to run, a
@@ -104,11 +183,429 @@
   );
 
   let host: HTMLDivElement;
-  let view: EditorView | undefined;
+  // Reactive, so the effects that configure it run again once it exists.
+  let view = $state.raw<EditorView | undefined>();
   const themeC = new Compartment();
   const lintC = new Compartment();
   // The grammar arrives after the view (editorlangs.ts loads it on first use).
   const langC = new Compartment();
+  // The working set of ADR 0076, each switchable without rebuilding the view.
+  const foldC = new Compartment();
+  const bracketsC = new Compartment();
+  const completeC = new Compartment();
+  const indentC = new Compartment();
+  const guidesC = new Compartment();
+  const trailingC = new Compartment();
+  const wrapC = new Compartment();
+  const jinjaC = new Compartment();
+  const minimapC = new Compartment();
+  const schemaC = new Compartment();
+  const lspC = new Compartment();
+
+  const WORDS: EditorWords = {
+    folded: (n) => t("editor.fold.folded", { n }),
+    fold: t("editor.fold.fold"),
+    unfold: t("editor.fold.unfold"),
+    snippet: t("editor.snippets"),
+  };
+
+  // How the file indents (`.editorconfig`, then the file, then the language).
+  let indentInfo = $state<IndentInfo>({ tabs: false, width: 2 });
+  let indentSource = $state<IndentSource>("language");
+  let ecProps = $state<EditorConfigProps>({});
+  // What the file was detected as, before a language set by hand.
+  let detected = $state<EditorLang>(untrack(() => doc.lang));
+  const key = $derived(langKey(doc.source, doc.path));
+  const override = $derived(settings.editor.langOverrides[key] ?? null);
+  // The cursor, for the status bar.
+  let cursorCol = $state(1);
+  let selections = $state(1);
+  let outlineOpen = $state(false);
+
+  /** The `.editorconfig` files above the file, nearest first — read once a minute per connection. */
+  async function readEditorConfig(): Promise<EditorConfigProps> {
+    const reader = connectionFiles(doc.source === "sftp" ? sessionId : null, 64 * 1024);
+    const found: { dir: string; parsed: ReturnType<typeof parseEditorConfig> }[] = [];
+    for (const path of editorconfigPaths(doc.path)) {
+      const text = await ecRead(doc.source === "sftp" ? sessionId : "local", path, () => reader.read(path));
+      if (text === null) continue;
+      const parsed = parseEditorConfig(text);
+      found.push({ dir: editorconfigDir(path), parsed });
+      if (parsed.root) break;
+    }
+    return resolveEditorConfig(doc.path, found);
+  }
+
+  function applyIndent(info: IndentInfo, source: IndentSource) {
+    indentInfo = info;
+    indentSource = source;
+    view?.dispatch({ effects: indentC.reconfigure(indentation(info)) });
+  }
+
+  /** The status bar's indent: a new unit, and — asked — the file rewritten to it. */
+  function setIndent(info: IndentInfo, convert: boolean) {
+    if (convert && view && !doc.readOnly) {
+      const cur = view.state.doc.toString();
+      const change = minimalChange(cur, reindent(cur, indentInfo, info));
+      if (change) view.dispatch({ changes: change });
+    }
+    applyIndent(info, indentSource);
+  }
+
+  /** A language picked in the status bar (null — back to the detected one), remembered for the path. */
+  function pickLang(kind: EditorLangKind | null) {
+    settings.editor.langOverrides = withOverride(settings.editor.langOverrides, key, kind);
+    setEditorLang(sessionId, doc.id, kind ? langOfKind(kind, detected.jinja === true) : detected);
+  }
+
+  // A remembered language wins over detection — at open, and when a restore
+  // or a read re-detects the file.
+  $effect(() => {
+    const want = override;
+    const lang = doc.lang;
+    if (!want) {
+      detected = lang;
+      return;
+    }
+    if (lang.kind !== want) {
+      detected = lang;
+      setEditorLang(sessionId, doc.id, langOfKind(want, lang.jinja === true));
+    }
+  });
+
+  // The grammar, the template layer and how the file folds follow its language.
+  let loadedKind: EditorLangKind | null = null;
+  $effect(() => {
+    const lang = doc.lang;
+    if (!view) return;
+    const v = view;
+    v.dispatch({
+      effects: [
+        jinjaC.reconfigure(hasTemplates(lang, doc.path) ? jinjaLayer() : []),
+        foldC.reconfigure(folding(WORDS, foldsByIndent(lang.kind))),
+        completeC.reconfigure(completion(settings.editor.autocomplete, snippets, WORDS)),
+      ],
+    });
+    if (loadedKind === lang.kind) return;
+    loadedKind = lang.kind;
+    loadLanguage(lang.kind)
+      .then((ext) => {
+        if (view === v && doc.lang.kind === lang.kind) v.dispatch({ effects: langC.reconfigure(ext) });
+      })
+      .catch(swallow("editor", "the language's grammar did not load: plain text is shown"));
+  });
+
+  // Switches of «Settings → Editor» and the status bar, live.
+  $effect(() => {
+    const e = settings.editor;
+    const effects = [
+      bracketsC.reconfigure(brackets(e.closeBrackets)),
+      guidesC.reconfigure(indentGuides(e.indentGuides)),
+      trailingC.reconfigure(trailingSpace(e.trailingSpace && !doc.readOnly)),
+      wrapC.reconfigure(wrapping(e.wrap)),
+    ];
+    view?.dispatch({ effects });
+  });
+
+  $effect(() => {
+    const on = settings.editor.minimap;
+    const v = view;
+    if (!v) return;
+    if (!on) {
+      v.dispatch({ effects: minimapC.reconfigure([]) });
+      return;
+    }
+    minimapExtension()
+      .then((ext) => {
+        if (view === v && settings.editor.minimap) v.dispatch({ effects: minimapC.reconfigure(ext) });
+      })
+      .catch(swallow("editor", "the minimap did not load: the file is shown without it"));
+  });
+
+  // YAML against its schema (ADR 0078): which one, and what the last check said.
+  let siblings = $state<string[]>([]);
+  let schemaState = $state<{ issues: number } | { unavailable: "url" | "unread" } | null>(null);
+  const schemaRef = $derived(
+    isYamlKind(doc.lang.kind) && !doc.lang.jinja && !vaultHeader(doc.content)
+      ? schemaFor(doc.path, doc.lang.kind, doc.content.slice(0, 2000), siblings)
+      : null,
+  );
+  const schemaKey = $derived(schemaRef ? JSON.stringify(schemaRef) : "");
+  const schemaReader = $derived(connectionFiles(doc.source === "sftp" ? sessionId : null, 512 * 1024));
+
+  function schemaExt(ref: SchemaRef | null) {
+    if (!ref) return [];
+    const read = (path: string) => schemaReader.read(path);
+    return [
+      linter(
+        async (v) => {
+          const res = await checkYaml(ref, v.state.doc.toString(), read);
+          if ("unavailable" in res) {
+            schemaState = res;
+            return [];
+          }
+          schemaState = { issues: res.issues.length };
+          return res.issues.map((i) => ({ from: i.from, to: i.to, severity: i.severity, message: t(i.key, i.params), source: ref.label }));
+        },
+        { delay: 700 },
+      ),
+      EditorState.languageData.of(() => [
+        {
+          autocomplete: async (ctx: import("@codemirror/autocomplete").CompletionContext) => {
+            const text = ctx.state.doc.toString();
+            const root = await schemaRoot(ref, text, ctx.pos, read);
+            if (!root) return null;
+            const res = schemaCompletions(root, text, ctx.pos);
+            if (!res || (!ctx.explicit && res.from === ctx.pos && !/:\s$/.test(text.slice(ctx.pos - 2, ctx.pos)))) return null;
+            return { from: res.from, options: res.options, validFor: /^[\w.$/-]*$/ };
+          },
+        },
+      ]),
+    ];
+  }
+
+  $effect(() => {
+    void schemaKey;
+    const ref = untrack(() => schemaRef);
+    schemaState = null;
+    view?.dispatch({ effects: schemaC.reconfigure(schemaExt(ref)) });
+  });
+
+  // A language server for the file (ADR 0079): started by a click, or by itself
+  // when asked to be on this server; one per folder, shared by its editors.
+  const lspCandidates = $derived(doc.lang.jinja || vaultHeader(doc.content) ? [] : serversFor(doc.lang.kind, doc.path));
+  let lspPick = $state(0);
+  let lspHeld = $state<LspRequest | null>(null);
+  let lspRoot: string | null = null;
+  let lspAsk = $state(false);
+  let lspMenu = $state<OpenMenu | null>(null);
+  const lspServer = $derived(lspCandidates[lspPick] ?? null);
+  const lspAutoKey = $derived(lspServer ? lspKey(hostKey, "*", lspServer.id) : null);
+  const lspAuto = $derived(lspAutoKey ? settings.editor.lspAuto.includes(lspAutoKey) : false);
+  const lspState = $derived(lspHeld ? lspStatus(lspEntryKey(lspHeld)) : lspServer && lspRoot ? lspStatus(lspEntryKey(lspRequest(lspServer.id, lspRoot))) : null);
+
+  function lspRequest(server: string, root: string): LspRequest {
+    return { sessionId, local: doc.source !== "sftp", server, root };
+  }
+
+  async function startLsp(confirmed = false) {
+    if (!view || lspHeld || !lspServer) return;
+    if (prod && !confirmed) {
+      lspAsk = true;
+      return;
+    }
+    const v = view;
+    const kind = doc.lang.kind;
+    const reader = connectionFiles(doc.source === "sftp" ? sessionId : null, 0);
+    lspRoot ??= await findRoot(doc.path, kind, (dir) => reader.list(dir).then((es) => es.map((e) => e.name)));
+    for (let i = lspPick; i < lspCandidates.length; i++) {
+      lspPick = i;
+      const req = lspRequest(lspCandidates[i].id, lspRoot);
+      lspHeld = req;
+      const handle = await acquireLsp(req);
+      if (view !== v || doc.lang.kind !== kind) {
+        releaseLsp(req);
+        return;
+      }
+      if (handle) {
+        v.dispatch({
+          effects: [
+            lspC.reconfigure(handle.extension(fileUri(doc.path), languageId(kind))),
+            // yaml-language-server checks schemas itself: the built-in check steps aside.
+            ...(req.server === "yaml-language-server" ? [schemaC.reconfigure([])] : []),
+          ],
+        });
+        return;
+      }
+      lspHeld = null;
+      if (lspStatus(lspEntryKey(req)) !== "missing") return;
+    }
+    lspPick = 0;
+    if (doc.source === "sftp" && lspCandidates[0]) onLintMissing?.(lspCandidates[0].program);
+  }
+
+  function stopLspHere() {
+    const held = lspHeld;
+    if (!held) return;
+    lspHeld = null;
+    releaseLsp(held);
+    view?.dispatch({ effects: [lspC.reconfigure([]), schemaC.reconfigure(schemaExt(schemaRef))] });
+  }
+
+  function openLspMenu(e: MouseEvent) {
+    const r = (e.currentTarget as HTMLElement).getBoundingClientRect();
+    const key = lspAutoKey;
+    lspMenu = {
+      x: r.left,
+      y: r.top - 8,
+      items: [
+        lspHeld
+          ? { icon: "stop" as const, label: t("lsp.stop"), onSelect: stopLspHere }
+          : { icon: "play" as const, label: t("lsp.start", { server: lspServer?.program ?? "" }), onSelect: () => void startLsp() },
+        ...(lspState === "missing" && lspServer && doc.source === "sftp"
+          ? [{ icon: "download" as const, label: t("lsp.install", { server: lspServer.program }), onSelect: () => onLintMissing?.(lspServer!.program) }]
+          : []),
+        ...(lspState === "missing" && lspServer
+          ? [{ icon: "refresh" as const, label: t("lsp.retry"), onSelect: () => {
+              if (lspRoot && lspServer) forgetMissing(lspRequest(lspServer.id, lspRoot));
+              lspPick = 0;
+              void startLsp();
+            } }]
+          : []),
+        { kind: "separator" as const },
+        {
+          label: t("lsp.auto"),
+          checked: lspAuto,
+          onSelect: () => {
+            if (!key) return;
+            const list = settings.editor.lspAuto.filter((k) => k !== key);
+            settings.editor.lspAuto = lspAuto ? list : [...list, key];
+          },
+        },
+      ],
+    };
+  }
+
+  // Start by itself where asked to — never on a prod server without the question.
+  $effect(() => {
+    if (view && lspServer && lspAuto && !prod && !untrack(() => lspHeld)) void untrack(() => startLsp());
+  });
+
+  // The language changed: the server of the old one is let go.
+  let lspKind: EditorLangKind | null = null;
+  $effect(() => {
+    const kind = doc.lang.kind;
+    if (lspKind !== null && lspKind !== kind) {
+      untrack(stopLspHere);
+      lspPick = 0;
+      lspRoot = null;
+    }
+    lspKind = kind;
+  });
+
+  // An Ansible Vault file: what it is, and the user's own tool to read it.
+  const vault = $derived(vaultHeader(doc.content));
+
+  // Formatting (ADR 0076): the project's tool where the file lives, or a built-in.
+  let formatting = $state(false);
+  let formatMenu = $state<OpenMenu | null>(null);
+  const formatters = $derived(formattersFor(doc.lang.kind));
+  const fixer = $derived(fixerFor(doc.lang.kind));
+  const pickedFormatter = $derived(settings.editor.formatters[doc.lang.kind] ?? formatters[0]?.id);
+  let flashTimer: ReturnType<typeof setTimeout> | undefined;
+
+  /**
+   * Format the buffer: the picked tool, then the rest of the language's list
+   * when one is not installed. One change, one undo; the lines it changed are
+   * lit for a moment. On save a missing tool is no reason to stop the save, and
+   * «whitespace» runs only when it is the one picked.
+   */
+  async function formatBuffer(opts: { onSave?: boolean; fix?: boolean } = {}): Promise<void> {
+    if (!view || doc.readOnly || formatting) return;
+    let order: Formatter[] = opts.fix && fixer ? [fixer] : formatOrder(doc.lang.kind, settings.editor.formatters[doc.lang.kind]);
+    if (opts.onSave) order = order.filter((f) => !f.builtin || f.id === pickedFormatter);
+    if (order.length === 0) return;
+    formatting = true;
+    const before = view.state.doc.toString();
+    const target = { name: doc.name, path: doc.path, indent: indentInfo, finalNewline: ecProps.finalNewline };
+    const missing: Formatter[] = [];
+    try {
+      for (const f of order) {
+        let next: string;
+        if (f.builtin) {
+          try {
+            next = runBuiltin(f.id, before, target);
+          } catch (e) {
+            notifyError(t("editor.format.failed", { tool: f.label, error: String(e instanceof Error ? e.message : e) }), {
+              source: "editor",
+              sessionId,
+            });
+            return;
+          }
+        } else {
+          const argv = formatArgv(f, target);
+          if (!argv) continue;
+          const run = await formatRun(doc.source === "sftp" ? sessionId : null, argv, parentOf(doc.path), doc.name, before);
+          if (!run.found) {
+            missing.push(f);
+            continue;
+          }
+          const res = formatResult(f, run);
+          if ("error" in res) {
+            notifyError(t("editor.format.failed", { tool: f.label, error: res.error }), { source: "editor", sessionId });
+            return;
+          }
+          next = res.text;
+        }
+        if (!view) return;
+        // The buffer moved on while the tool ran: its answer is for an older text.
+        if (view.state.doc.toString() !== before) {
+          notifyInfo(t("editor.format.stale"), { source: "editor", sessionId });
+          return;
+        }
+        const change = minimalChange(before, next);
+        if (!change) {
+          if (!opts.onSave) notifyInfo(t("editor.format.unchanged", { tool: f.label }), { source: "editor", sessionId });
+          return;
+        }
+        view.dispatch({ changes: change });
+        const lit = changedLineNumbers(before, next);
+        view.dispatch({ effects: flashLines.of(lit) });
+        clearTimeout(flashTimer);
+        flashTimer = setTimeout(() => view?.dispatch({ effects: flashLines.of(null) }), FLASH_MS);
+        notifySuccess(t("editor.format.done", { tool: f.label, n: changedLines(before, next) }), { source: "editor", sessionId });
+        return;
+      }
+      if (missing.length > 0) {
+        notifyError(t("editor.format.missing", { tools: missing.map((f) => f.program ?? f.label).join(", ") }), {
+          source: "editor",
+          sessionId,
+        });
+        if (doc.source === "sftp" && missing[0].program) onLintMissing?.(missing[0].program);
+      }
+    } catch (e) {
+      notifyError(String(e), { source: "editor", sessionId });
+    } finally {
+      formatting = false;
+    }
+  }
+
+  function openFormatMenu(e: MouseEvent) {
+    const r = (e.currentTarget as HTMLElement).getBoundingClientRect();
+    formatMenu = {
+      x: r.left,
+      y: r.bottom + 4,
+      items: [
+        ...formatters.map((f) => ({
+          label: f.builtin ? t(f.id === "json" ? "editor.format.json" : "editor.format.whitespace") : f.label,
+          checked: f.id === pickedFormatter,
+          onSelect: () => {
+            settings.editor.formatters = { ...settings.editor.formatters, [doc.lang.kind]: f.id };
+            void formatBuffer();
+          },
+        })),
+        ...(fixer
+          ? [
+              { kind: "separator" as const },
+              { icon: "wrench" as const, label: t("editor.format.fix", { tool: fixer.label }), onSelect: () => void formatBuffer({ fix: true }) },
+            ]
+          : []),
+        { kind: "separator" as const },
+        {
+          label: t("editor.format.onSave"),
+          checked: settings.editor.formatOnSave,
+          onSelect: () => (settings.editor.formatOnSave = !settings.editor.formatOnSave),
+        },
+      ],
+    };
+  }
+
+  /** Save — formatted first when «format on save» is on. */
+  async function saveNow() {
+    if (doc.readOnly) return;
+    if (settings.editor.formatOnSave && doc.content !== doc.baseContent) await formatBuffer({ onSave: true });
+    onsave?.();
+  }
 
   // Custom merge-chunk controls for the git inline diff. The buffer IS the
   // working-tree file (diffed against HEAD), so CodeMirror's "accept" ("keep my
@@ -260,6 +757,13 @@
   /** The editor's cursor line, for the schema beside it to pick the job. */
   let cursorLine = $state<number | null>(null);
   const codeHidden = $derived(preview || (!!pipelineKind && pipeView === "schema"));
+  // The symbols and the path to the cursor (ADR 0076) — skipped on a huge file.
+  const BIG = 1_000_000;
+  const crumbs = $derived(
+    !codeHidden && doc.content.length < BIG && cursorLine ? breadcrumbs(doc.lang.kind, doc.content, cursorLine, doc.name) : [],
+  );
+  const syms = $derived(outlineOpen ? outline(doc.lang.kind, doc.content, doc.name) : []);
+
   const pipeReader = $derived(connectionFiles(doc.source === "sftp" ? sessionId : null, settings.sftp.maxOpenMb * 1024 * 1024));
   // Asked again for the schema of a file already open ("Pipeline schema" in the file panel).
   $effect(() => {
@@ -410,7 +914,7 @@
   }
 
   function triggerSave(): boolean {
-    if (!doc.readOnly) onsave?.();
+    void saveNow();
     return true;
   }
 
@@ -467,7 +971,20 @@
         bracketMatching(),
         indentOnInput(),
         highlightSelectionMatches(),
-        EditorView.lineWrapping,
+        multiCursor(),
+        baseTheme,
+        changeFlash(),
+        foldC.of(folding(WORDS, foldsByIndent(doc.lang.kind))),
+        bracketsC.of(brackets(settings.editor.closeBrackets)),
+        completeC.of(completion(settings.editor.autocomplete, snippets, WORDS)),
+        indentC.of(indentation(indentInfo)),
+        guidesC.of(indentGuides(settings.editor.indentGuides)),
+        trailingC.of(trailingSpace(settings.editor.trailingSpace && !doc.readOnly)),
+        wrapC.of(wrapping(settings.editor.wrap)),
+        jinjaC.of([]),
+        minimapC.of([]),
+        schemaC.of([]),
+        lspC.of([]),
         EditorState.readOnly.of(doc.readOnly),
         // Opened from the git panel → editable inline diff against the HEAD
         // version (deletions shown struck-through, additions highlighted, with
@@ -490,22 +1007,67 @@
           { key: "Mod-c", run: cmCopy },
           { key: "Mod-x", run: cmCut },
           { key: "Mod-v", run: cmPaste },
+          {
+            key: "Mod-Shift-o",
+            preventDefault: true,
+            run: () => {
+              outlineOpen = true;
+              return true;
+            },
+          },
+          {
+            key: "Shift-Alt-f",
+            preventDefault: true,
+            run: () => {
+              void formatBuffer();
+              return true;
+            },
+          },
         ]),
-        keymap.of([...defaultKeymap, ...historyKeymap, ...searchKeymap, indentWithTab]),
+        keymap.of([
+          ...closeBracketsKeymap,
+          ...completionKeymap,
+          ...foldKeymap,
+          ...defaultKeymap,
+          ...historyKeymap,
+          ...searchKeymap,
+          indentWithTab,
+        ]),
         EditorView.updateListener.of((u) => {
           if (u.docChanged) setEditorContent(sessionId, doc.id, u.state.doc.toString());
-          if (u.selectionSet || u.docChanged) cursorLine = u.state.doc.lineAt(u.state.selection.main.head).number;
+          if (u.selectionSet || u.docChanged) {
+            const head = u.state.selection.main.head;
+            const line = u.state.doc.lineAt(head);
+            cursorLine = line.number;
+            cursorCol = head - line.from + 1;
+            selections = u.state.selection.ranges.length;
+          }
         }),
       ],
     });
     view = new EditorView({ state, parent: host });
+    cursorLine = 1;
+    // How the file indents: what it does now, then `.editorconfig` when it is read.
+    const first = resolveIndent(doc.content, doc.lang.kind, doc.name, {});
+    applyIndent(first.info, first.source);
     const created = view;
-    loadLanguage(doc.lang.kind)
-      .then((ext) => {
-        // The view may be gone (file closed) before its grammar arrives.
-        if (view === created) view.dispatch({ effects: langC.reconfigure(ext) });
+    // A chart's values file is checked against the chart's own schema beside it.
+    if (/^values.*\.ya?ml$/i.test(doc.name)) {
+      void connectionFiles(doc.source === "sftp" ? sessionId : null, 0)
+        .list(parentOf(doc.path))
+        .then((entries) => {
+          if (view === created) siblings = entries.map((e) => e.name);
+        })
+        .catch(swallow("editor", "the folder of a values file was not listed: it is not checked against the chart's schema"));
+    }
+    void readEditorConfig()
+      .then((ec) => {
+        if (view !== created) return;
+        ecProps = ec;
+        const r = resolveIndent(doc.content, doc.lang.kind, doc.name, ec);
+        applyIndent(r.info, r.source);
       })
-      .catch(swallow("editor", "the language's grammar did not load: plain text is shown"));
+      .catch(swallow("editor", "the .editorconfig files were not read: the file's own indentation is used"));
     // Jump to a requested place (a content-search hit, `x.c:42:5` in output).
     if (doc.gotoLine && (doc.gotoLine > 1 || (doc.gotoColumn ?? 1) > 1)) jumpTo(doc.gotoLine, doc.gotoColumn);
   });
@@ -535,7 +1097,10 @@
     view?.dispatch({ effects: themeC.reconfigure(editorTheme(activeTerminalTheme())) });
   });
 
-  onDestroy(() => view?.destroy());
+  onDestroy(() => {
+    if (lspHeld) releaseLsp(lspHeld);
+    view?.destroy();
+  });
 
   /** The colour of the sudo badge's tone, from the theme's tokens. */
   const BADGE_TONE = {
@@ -672,6 +1237,27 @@
           <Icon name="check" size={13} />
           {linting ? t("editor.linting") : t("editor.lintServer")}
         </button>
+      {/if}
+      {#if !doc.readOnly && !codeHidden}
+        <!-- Format (ADR 0076): the picked tool on a click, the list and the fixer on ▾. -->
+        <div class="flex overflow-hidden rounded border border-edge" data-testid="editor-format">
+          <button
+            class="flex items-center gap-1 px-2 py-0.5 text-muted hover:bg-edge hover:text-text disabled:opacity-40"
+            use:tooltip={t("editor.format.hint")}
+            disabled={formatting}
+            onclick={() => void formatBuffer()}
+          >
+            <Icon name="alignLeft" size={13} />
+            {formatting ? t("editor.format.running") : t("editor.format.button")}
+          </button>
+          <button
+            class="border-l border-edge px-1 text-muted hover:bg-edge hover:text-text"
+            aria-label={t("editor.format.menu")}
+            use:tooltip={t("editor.format.menu")}
+            data-testid="editor-format-menu"
+            onclick={openFormatMenu}
+          ><Icon name="chevronDown" size={12} /></button>
+        </div>
       {/if}
       {#if snippets.length > 0 && !doc.readOnly && !codeHidden}
         <div class="relative">
@@ -813,9 +1399,58 @@
       </div>
     {/if}
   </div>
+  {#if vault && !codeHidden}
+    <!-- An Ansible Vault file (ADR 0076): hex is not something to edit here. -->
+    <div class="flex shrink-0 flex-wrap items-center gap-2 border-b border-edge bg-warn/10 px-2 py-1 text-xs" data-testid="editor-vault">
+      <Icon name="lock" size={13} class="shrink-0 text-warn" />
+      <span class="text-text">{t("editor.vault.title")}</span>
+      <span class="text-muted">{t("editor.vault.hint")}</span>
+      {#if terminalHere && onTerminal}
+        <span class="flex-1"></span>
+        <button
+          class="rounded border border-edge px-2 py-0.5 text-caption text-text hover:bg-edge"
+          onclick={() => onTerminal?.(vaultArgv(doc.path, false, vault.label))}
+        >{t("editor.vault.view")}</button>
+        <button
+          class="rounded border border-edge px-2 py-0.5 text-caption text-text hover:bg-edge"
+          onclick={() => onTerminal?.(vaultArgv(doc.path, true, vault.label))}
+        >{t("editor.vault.edit")}</button>
+      {/if}
+    </div>
+  {/if}
+  {#if crumbs.length > 0}
+    <!-- Where the cursor is in the document (ADR 0076); a click goes there. -->
+    <div class="flex h-6 shrink-0 items-center gap-1 overflow-hidden border-b border-edge px-2 text-meta text-muted" data-testid="editor-crumbs">
+      {#each crumbs as c, i (c.line + ":" + i)}
+        {#if i > 0}<Icon name="chevronRight" size={10} class="shrink-0" />{/if}
+        <button type="button" class="max-w-[16rem] shrink truncate hover:text-text {i === crumbs.length - 1 ? 'text-text' : ''}" onclick={() => jumpToLine(c.line)}>{c.name}</button>
+      {/each}
+      <span class="flex-1"></span>
+      <button
+        type="button"
+        class="shrink-0 hover:text-text"
+        aria-label={t("editor.outline.title")}
+        use:tooltip={t("editor.outline.hint")}
+        onclick={() => (outlineOpen = true)}
+      ><Icon name="hierarchy" size={12} /></button>
+    </div>
+  {/if}
   <!-- CodeMirror host (always mounted so edits keep flowing); hidden in the
        markdown preview and on a pipeline's schema, beside the schema otherwise. -->
-  <div class="min-h-0 flex-1 {preview ? 'hidden' : 'flex'}">
+  <div class="relative min-h-0 flex-1 {preview ? 'hidden' : 'flex'}">
+    {#if outlineOpen}
+      <OutlinePalette
+        {syms}
+        onpick={(line) => {
+          outlineOpen = false;
+          jumpToLine(line);
+        }}
+        onclose={() => {
+          outlineOpen = false;
+          view?.focus();
+        }}
+      />
+    {/if}
     <div
       bind:this={host}
       class="min-h-0 min-w-0 flex-1 overflow-hidden text-sm [&_.cm-editor]:h-full {codeHidden ? 'hidden' : ''} {pipelineKind && pipeView === 'split'
@@ -851,6 +1486,42 @@
       {/if}
     </div>
   {/if}
+  {#if !codeHidden && !preview}
+    <EditorStatusBar
+      left={schemaRef || lspServer ? statusLeft : undefined}
+      line={cursorLine ?? 1}
+      col={cursorCol}
+      {selections}
+      indent={indentInfo}
+      {indentSource}
+      encoding={doc.encoding}
+      eol={doc.eol}
+      lang={doc.lang}
+      {detected}
+      overridden={override !== null}
+      wrap={settings.editor.wrap}
+      minimap={settings.editor.minimap}
+      readOnly={doc.readOnly}
+      onlang={pickLang}
+      onindent={setIndent}
+      onwrap={() => (settings.editor.wrap = !settings.editor.wrap)}
+      onminimap={() => (settings.editor.minimap = !settings.editor.minimap)}
+    />
+  {/if}
+  <ContextMenu menu={formatMenu} onclose={() => (formatMenu = null)} />
+  <ContextMenu menu={lspMenu} onclose={() => (lspMenu = null)} />
+  <ConfirmDialog
+    open={lspAsk}
+    title={t("lsp.prodTitle")}
+    confirmLabel={t("lsp.startAnyway")}
+    onconfirm={() => {
+      lspAsk = false;
+      void startLsp(true);
+    }}
+    oncancel={() => (lspAsk = false)}
+  >
+    <p>{t("lsp.prodBody", { server: lspServer?.program ?? "" })}</p>
+  </ConfirmDialog>
   {#if lintMessages && lintMessages.length > 0}
     <!-- Server-side lint results (Phase 12.7): click to jump to the line. -->
     <div class="max-h-40 shrink-0 overflow-auto border-t border-edge text-xs">
@@ -886,6 +1557,42 @@
     </div>
   {/if}
 </div>
+
+{#snippet statusLeft()}
+  {#if lspServer}
+    {@const dot = lspState === "running" ? "bg-ok" : lspState === "starting" ? "bg-warn" : lspState === "failed" ? "bg-bad" : "bg-edge"}
+    <button
+      type="button"
+      class="flex items-center gap-1 hover:text-text"
+      data-testid="editor-lsp"
+      use:tooltip={lspHeld && lspSaid(lspEntryKey(lspHeld)) ? (lspSaid(lspEntryKey(lspHeld)) ?? "") : t(`lsp.state.${lspState ?? "off"}`)}
+      onclick={openLspMenu}
+    >
+      <span class="size-1.5 rounded-full {dot}"></span>
+      {lspServer.program}
+      {#if lspState === "missing"}<span class="text-warn">· {t("lsp.state.missing")}</span>{/if}
+    </button>
+  {/if}
+  {@render schemaChip()}
+{/snippet}
+
+{#snippet schemaChip()}
+  {#if schemaRef}
+    <span
+      class="flex items-center gap-1 {schemaState && 'issues' in schemaState && schemaState.issues > 0 ? 'text-warn' : ''}"
+      data-testid="editor-schema"
+      use:tooltip={schemaState && "unavailable" in schemaState
+        ? t(schemaState.unavailable === "url" ? "schema.urlNotFetched" : "schema.unread")
+        : t("schema.hint")}
+    >
+      <Icon name={schemaState && "unavailable" in schemaState ? "circleOff" : "listCheck"} size={11} />
+      {t("schema.chip", { label: schemaRef.label })}
+      {#if schemaState && "issues" in schemaState}
+        {#if schemaState.issues === 0}<Icon name="check" size={11} class="text-ok" />{:else}· {t("schema.issues", { n: schemaState.issues })}{/if}
+      {/if}
+    </span>
+  {/if}
+{/snippet}
 
 <!--
   Styling for the {@html}-rendered markdown preview. Svelte's scoped styles don't

@@ -116,6 +116,14 @@ export default defineConfig(
       "vterm/owned-imports": [
         "error",
         {
+          lspStart: {
+            owners: ["src/lib/stores/lsp.svelte.ts"],
+            why: "one language server per tab, folder and kind, stopped with the last editor and the tab — a second starter leaks servers (ADR 0079)",
+          },
+          formatRun: {
+            owners: ["src/lib/editor/EditorTab.svelte"],
+            why: "a format applies as one change after checking the buffer did not move on while the tool ran (ADR 0076)",
+          },
           setServerPathSync: {
             owners: ["src/lib/page/pathsyncflow.svelte.ts"],
             why: "a server's path-sync answer is written by the form and by the path-sync question, nowhere else",
@@ -254,6 +262,18 @@ export default defineConfig(
           yaml: {
             owner: "src/lib/pipeline/yamldoc.ts",
             why: "the YAML parser is loaded when a pipeline schema is first drawn, not with the app, and its options (alias cap, duplicate keys) are set in one place",
+          },
+          "@cfworker/json-schema": {
+            owner: "src/lib/editor/yamlschema.ts",
+            why: "the schema validator is loaded when a YAML file with a schema is first checked (ADR 0078)",
+          },
+          "@replit/codemirror-minimap": {
+            owner: "src/lib/editor/minimap.ts",
+            why: "the minimap is loaded when it is first switched on (ADR 0076)",
+          },
+          "@codemirror/lsp-client": {
+            owner: "src/lib/editor/lspclient.ts",
+            why: "the language server client is loaded when a language server is first started (ADR 0079)",
           },
         },
       ],

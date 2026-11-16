@@ -13,6 +13,7 @@ mod error;
 mod exec;
 mod fileuser;
 mod folders;
+mod format;
 mod git;
 mod journal;
 mod kbdauth;
@@ -21,6 +22,7 @@ mod kube;
 mod localenv;
 mod localfile;
 mod locks;
+mod lsp;
 mod metrics;
 mod model;
 mod netcheck;
@@ -157,6 +159,16 @@ pub(crate) async fn end_session(app: &AppHandle, session_id: &str) {
     // Transfers reading from this session or writing to it stop here: each
     // holds the session open until it notices, and removes what it staged.
     app.state::<transfers::Jobs>().cancel_session(session_id);
+    // Its language servers stop with it (ADR 0079): they run in its folders.
+    let servers = app.state::<lsp::Lsps>().stop_session(session_id);
+    if servers > 0 {
+        tracing::info!(
+            source = "editor",
+            sid = session_id,
+            servers,
+            "language servers stopped with the session"
+        );
+    }
     // So does its sync run, between two files (v1.36: the run is the backend's,
     // no window's teardown stops it any more).
     let run = state.sync_runs.locked().remove(session_id);
@@ -363,6 +375,7 @@ pub fn run() {
         .manage(kbdauth::PendingPrompts::default())
         .manage(appwin::Windows::default())
         .manage(transfers::Jobs::default())
+        .manage(lsp::Lsps::default())
         // Read before any window asks: a journal that does not parse is
         // quarantined in time for the main window to be told.
         .manage(journal::Journal::load())
@@ -460,6 +473,10 @@ pub fn run() {
             commands::sftp::sync_run_of,
             commands::sftp::sftp_grep,
             commands::sftp::lint_remote,
+            commands::editor::format_run,
+            commands::editor::lsp_start,
+            commands::editor::lsp_send,
+            commands::editor::lsp_stop,
             commands::sftp::nginx_config_files,
             commands::sftp::server_tools_status,
             commands::sftp::run_tool_install,

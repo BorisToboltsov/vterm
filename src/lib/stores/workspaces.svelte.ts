@@ -416,6 +416,14 @@ export function setEditorContent(sessionId: string, id: string, content: string)
 }
 
 /**
+ * The language of an open file, set by hand in the status bar or by the
+ * remembered choice for its path (ADR 0076) — highlighting, lint and format follow.
+ */
+export function setEditorLang(sessionId: string, id: string, lang: EditorLang): void {
+  updateDoc(sessionId, id, { lang });
+}
+
+/**
  * Move an open editor to a line (v1.24): a click on `file:line` in terminal
  * output, or a search hit, on a file that is already open — opening it again
  * would only show it where it was.

@@ -5,6 +5,7 @@
 // automatically whenever the relevant settings change.
 
 import { sanitizeForges, type Forge } from "../ci/forge";
+import { EDITOR_DEFAULTS, sanitizeEditorSettings, type EditorSettings } from "../editor/editorprefs";
 import { diag, swallowed } from "../api/diag";
 import { DEFAULT_PROD_TINT, sanitizeProdTint, type ProdTint } from "../appearance/prodtint";
 import { DEFAULT_FONT, migrateFont, themeFont, type FontMode } from "../appearance/fonts";
@@ -163,18 +164,8 @@ export interface HighlightRule {
   background: boolean; // colour the background instead of the text
 }
 
-/** Config-editor behaviour (Phase 12.3). */
-export interface EditorSettings {
-  /** Show a before/after diff dialog before writing a changed file to the server. */
-  diffBeforeSave: boolean;
-  /** Keep a `.bak` copy of the file on the server before overwriting (Phase 12.6). */
-  backupOnSave: boolean;
-  /**
-   * The first file of a connection opens in a zone of its own beside the
-   * terminal, not over it (v1.35) — when the terminal has the room.
-   */
-  openBeside: boolean;
-}
+/** Config-editor behaviour (Phase 12.3; ADR 0076). */
+export type { EditorSettings } from "../editor/editorprefs";
 
 /** SFTP behaviour (Phase 12). */
 export interface SftpSettings {
@@ -182,6 +173,8 @@ export interface SftpSettings {
   maxOpenMb: number;
   /** Show dotfiles in the SFTP listing (off by default). */
   showHiddenFiles: boolean;
+  /** Hide what a project's tools made — `target/`, `.venv`, `node_modules` (ADR 0077; off by default). */
+  hideGenerated: boolean;
 }
 
 /** Hard ceiling (MB) for the editor open size — the setting is clamped to this. */
@@ -486,9 +479,9 @@ const DEFAULTS: Settings = {
   recordMaskPasswords: true,
   recordMode: "commands",
   recordIdlePauseSecs: 20,
-  editor: { diffBeforeSave: true, backupOnSave: false, openBeside: false },
+  editor: { ...EDITOR_DEFAULTS },
   snippets: defaultSnippets(),
-  sftp: { maxOpenMb: 2, showHiddenFiles: false },
+  sftp: { maxOpenMb: 2, showHiddenFiles: false, hideGenerated: false },
   hostKeyPolicy: "ask",
   ai: defaultAiSettings(),
   idleEffect: DEFAULT_IDLE_EFFECT,
@@ -629,11 +622,12 @@ function load(): Settings {
         typeof raw.recordIdlePauseSecs === "number" && raw.recordIdlePauseSecs >= 0
           ? Math.floor(raw.recordIdlePauseSecs)
           : DEFAULTS.recordIdlePauseSecs,
-      editor: { ...DEFAULTS.editor, ...(raw.editor ?? {}) },
+      editor: sanitizeEditorSettings(raw.editor),
       snippets: "snippets" in raw ? sanitizeSnippets(raw.snippets) : defaultSnippets(),
       sftp: {
         maxOpenMb: clampMaxOpenMb((raw.sftp ?? {}).maxOpenMb),
         showHiddenFiles: (raw.sftp ?? {}).showHiddenFiles === true,
+        hideGenerated: (raw.sftp ?? {}).hideGenerated === true,
       },
       ai: sanitizeAiSettings(raw.ai),
       idleEffect: isIdleSetting(raw.idleEffect) ? raw.idleEffect : DEFAULTS.idleEffect,
@@ -676,7 +670,7 @@ function load(): Settings {
       smartLogs: { ...DEFAULTS.smartLogs },
       highlightRules: defaultHighlightRules(),
       searchOptions: { ...DEFAULTS.searchOptions },
-      editor: { ...DEFAULTS.editor },
+      editor: { ...EDITOR_DEFAULTS },
       snippets: defaultSnippets(),
       sftp: { ...DEFAULTS.sftp },
       ai: defaultAiSettings(),
@@ -876,13 +870,14 @@ export function applyImportedSettings(raw: unknown): void {
     next.searchOptions = { ...DEFAULTS.searchOptions, ...(r.searchOptions as Partial<SearchOptions>) };
   }
   if (r.editor && typeof r.editor === "object") {
-    next.editor = { ...DEFAULTS.editor, ...(r.editor as Partial<EditorSettings>) };
+    next.editor = sanitizeEditorSettings(r.editor);
   }
   if (r.sftp && typeof r.sftp === "object") {
     const s = r.sftp as Partial<SftpSettings>;
     next.sftp = {
       maxOpenMb: clampMaxOpenMb(s.maxOpenMb),
       showHiddenFiles: s.showHiddenFiles === true,
+      hideGenerated: s.hideGenerated === true,
     };
   }
   if (r.ai !== undefined) {

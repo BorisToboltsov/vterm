@@ -147,6 +147,7 @@ pub async fn iac_run(
                 stdin: None,
                 missing: exec::Missing::Exit127,
                 timeout_hint: "",
+                cwd: None,
             },
             timeout,
         )

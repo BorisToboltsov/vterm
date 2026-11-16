@@ -19,6 +19,7 @@ import {
 import { UI_SCALE_KEY } from "../appearance/uiscale";
 import { ANIMATIONS_KEY, reducedMotion } from "../ui/motion";
 import { captureDiag } from "../api/diag";
+import { EDITOR_DEFAULTS } from "../editor/editorprefs";
 import { DEFAULT_THEME_ID, getTheme } from "../appearance/themes";
 
 const STORAGE_KEY = "vterm.settings";
@@ -337,7 +338,7 @@ describe("smartLogs (Phase 10)", () => {
 
 describe("editor settings (Phase 12)", () => {
   it("defaults to diff-before-save on", () => {
-    expect(settings.editor).toEqual({ diffBeforeSave: true, backupOnSave: false, openBeside: false });
+    expect(settings.editor).toEqual(EDITOR_DEFAULTS);
   });
 
   it("merges a partial backup snapshot onto defaults", () => {
@@ -350,13 +351,13 @@ describe("editor settings (Phase 12)", () => {
   it("is restored to defaults by resetSettings", () => {
     settings.editor.diffBeforeSave = false;
     resetSettings();
-    expect(settings.editor).toEqual({ diffBeforeSave: true, backupOnSave: false, openBeside: false });
+    expect(settings.editor).toEqual(EDITOR_DEFAULTS);
   });
 });
 
 describe("sftp settings (Phase 12)", () => {
   it("defaults max open size to 2 MB and hides dotfiles", () => {
-    expect(settings.sftp).toEqual({ maxOpenMb: 2, showHiddenFiles: false });
+    expect(settings.sftp).toEqual({ maxOpenMb: 2, showHiddenFiles: false, hideGenerated: false });
   });
 
   it("imports and persists the show-hidden-files toggle (junk → false)", () => {

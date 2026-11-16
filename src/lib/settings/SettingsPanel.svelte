@@ -508,6 +508,35 @@
             <input type="checkbox" bind:checked={settings.editor.openBeside} data-testid="editor-open-beside" />
             {t("settings.editorOpenBeside")}<InfoHint text={t("settings.editorOpenBesideHint")} />
           </label>
+          <!-- The working set of ADR 0076; the status bar switches wrap and the minimap too. -->
+          <label class="mt-2 flex items-center gap-2 text-xs text-muted">
+            <input type="checkbox" bind:checked={settings.editor.formatOnSave} data-testid="editor-format-on-save" />
+            {t("editor.format.onSave")}<InfoHint text={t("settings.editorFormatOnSaveHint")} />
+          </label>
+          <label class="mt-2 flex items-center gap-2 text-xs text-muted">
+            <input type="checkbox" bind:checked={settings.editor.autocomplete} />
+            {t("settings.editorAutocomplete")}
+          </label>
+          <label class="mt-2 flex items-center gap-2 text-xs text-muted">
+            <input type="checkbox" bind:checked={settings.editor.closeBrackets} />
+            {t("settings.editorCloseBrackets")}
+          </label>
+          <label class="mt-2 flex items-center gap-2 text-xs text-muted">
+            <input type="checkbox" bind:checked={settings.editor.indentGuides} />
+            {t("settings.editorIndentGuides")}
+          </label>
+          <label class="mt-2 flex items-center gap-2 text-xs text-muted">
+            <input type="checkbox" bind:checked={settings.editor.trailingSpace} />
+            {t("settings.editorTrailingSpace")}
+          </label>
+          <label class="mt-2 flex items-center gap-2 text-xs text-muted">
+            <input type="checkbox" bind:checked={settings.editor.wrap} />
+            {t("editor.status.wrap")}
+          </label>
+          <label class="mt-2 flex items-center gap-2 text-xs text-muted">
+            <input type="checkbox" bind:checked={settings.editor.minimap} />
+            {t("editor.status.minimap")}
+          </label>
         </section>
 
         {/if}
