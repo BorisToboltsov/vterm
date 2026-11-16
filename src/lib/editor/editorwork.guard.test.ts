@@ -13,6 +13,9 @@
 //   5. A project's command reaches the terminal through the page only: nothing
 //      in `files/` writes to a terminal.
 //   6. Every vendored schema is named, with its source and license, in NOTICE.md.
+//   7. The script that vendors them takes each source at one commit and checks
+//      its SHA-256 before writing anything — a source replaced upstream cannot
+//      slip into the repository (CodeQL #497).
 //
 // Every check is a function over source text with comments stripped, and the
 // second `describe` shows each one catching the violation it exists for.
@@ -95,6 +98,35 @@ export function schemasNamed(files: string[], notice: string): string[] {
   return files.filter((f) => f.endsWith(".json") && !notice.includes(f)).map((f) => `${f} is not named in NOTICE.md`);
 }
 
+/** The host of a source URL whose `${…}` parts are not filled in yet; "" when it is not a URL. */
+function hostOf(url: string): string {
+  try {
+    return new URL(url.replace(/\$\{\w+\}/g, "x")).hostname;
+  } catch {
+    return "";
+  }
+}
+
+export function pinnedSources(script: string): string[] {
+  const c = code(script);
+  const out: string[] = [];
+  const urls = [...c.matchAll(/url:\s*`([^`]+)`/g)].map((m) => m[1]);
+  const hashes = c.match(/sha256:\s*"[0-9a-f]{64}"/g) ?? [];
+  if (urls.length === 0) out.push("no source is listed");
+  if (urls.length !== hashes.length) out.push(`${urls.length} sources, ${hashes.length} pinned hashes`);
+  for (const u of urls) {
+    if (/\/(master|main|latest|HEAD)\//.test(u) || hostOf(u) === "json.schemastore.org") out.push(`a floating source: ${u}`);
+    const consts = [...u.matchAll(/\$\{(\w+)\}/g)].map((m) => m[1]);
+    const pinned = consts.some((name) => new RegExp(`const ${name} = "[0-9a-f]{40}"`).test(c));
+    if (!pinned) out.push(`a source not at a commit: ${u}`);
+  }
+  if (!/got !== sha256/.test(c)) out.push("a download is not checked against its hash");
+  const firstWrite = c.indexOf("writeFileSync(join(OUT");
+  const lastGet = c.lastIndexOf("await get(");
+  if (firstWrite >= 0 && lastGet > firstWrite) out.push("a file is written before every source was checked");
+  return out;
+}
+
 const filesDir = () => {
   const out: Record<string, string> = {};
   for (const f of readdirSync(join(LIB, "files"))) {
@@ -122,6 +154,9 @@ describe("editor and project guard", () => {
   it("every vendored schema is named with its license", () => {
     expect(schemasNamed(readdirSync(join(LIB, "editor/schemas")), read("editor/schemas/NOTICE.md"))).toEqual([]);
   });
+  it("the schemas come from pinned, checked sources", () => {
+    expect(pinnedSources(readFileSync(join(process.cwd(), "scripts/schemas.mjs"), "utf8"))).toEqual([]);
+  });
 });
 
 describe("editor and project guard — catches what it exists for", () => {
@@ -132,6 +167,15 @@ describe("editor and project guard — catches what it exists for", () => {
     expect(stripDrawsNoDialog('import ContextMenu from "../ui/ContextMenu.svelte";')).toHaveLength(1);
     expect(filesWriteNoTerminal({ "files/x.ts": 'import { writeToTerminal } from "../terminal/termwrite";' })).toHaveLength(1);
     expect(schemasNamed(["a.json", "NOTICE.md"], "nothing")).toEqual(["a.json is not named in NOTICE.md"]);
+    const pinned = 'const C = "' + "a".repeat(40) + '";\nconst S = { x: { url: `https://h/${C}/x.json`, sha256: "' + "b".repeat(64) + '" } };\nif (got !== sha256) throw 1;\nawait get(1);\nwriteFileSync(join(OUT, 1));';
+    expect(pinnedSources(pinned)).toEqual([]);
+    expect(pinnedSources(pinned.replace("${C}", "master"))).toHaveLength(2);
+    expect(pinnedSources(pinned.replace("https://h/${C}/x.json", "https://json.schemastore.org/x.json"))).toHaveLength(2);
+    expect(pinnedSources(pinned.replace(/sha256: "b+"/, ""))).toEqual(["1 sources, 0 pinned hashes"]);
+    expect(pinnedSources(pinned.replace("got !== sha256", "true"))).toEqual(["a download is not checked against its hash"]);
+    expect(pinnedSources(pinned.replace("await get(1);\nwriteFileSync(join(OUT, 1));", "writeFileSync(join(OUT, 1));\nawait get(1);"))).toEqual([
+      "a file is written before every source was checked",
+    ]);
   });
 
   it("comments do not count", () => {

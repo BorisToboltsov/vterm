@@ -78,14 +78,16 @@ mod tests {
     /// the sudo password it was never asked about stays, so does the jump host's.
     #[test]
     fn a_refused_login_forgets_only_the_login_secret() {
-        let secrets_src = include_str!("secrets.rs");
-        let login = body(secrets_src, "delete_login");
+        // The keychain module's source text — code, not a secret (CodeQL #496
+        // took the old name `secrets_src` for one).
+        let module_src = include_str!("secrets.rs");
+        let login = body(module_src, "delete_login");
         assert!(login.contains("delete_password(id)") && login.contains("delete_passphrase(id)"));
         assert!(
             !login.contains("sudo") && !login.contains("proxy"),
             "{login}"
         );
-        let all = body(secrets_src, "delete_all");
+        let all = body(module_src, "delete_all");
         assert!(
             all.contains("delete_sudo_password(id)"),
             "the form's «Forget» takes sudo's too"

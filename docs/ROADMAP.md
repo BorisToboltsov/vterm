@@ -369,7 +369,7 @@ PR в `main`. Patch 1.25.9: находки Security и PR Dependabot после 
   `editorconfig`, строка состояния, `outline` (путь и `⌘⇧O`), `jinja`, `vault`; формат — `format.ts` и
   `format_run` с политикой `format::check_args`, одна правка `minimalChange`. Проект — `projectmap`,
   `projectactions`, `ProjectStrip`, Git-буквы `gitlisting`; команды печатаются в терминал (`runProjectCommand`).
-  Схемы — `yamlschema` и вендоренные `schemas/` (`scripts/schemas.mjs`, NOTICE.md). LSP — `lsp.rs`
+  Схемы — `yamlschema` и вендоренные `schemas/` (`scripts/schemas.mjs` с коммитов и сверкой SHA-256, NOTICE.md). LSP — `lsp.rs`
   (каталог, кадры, реестр по сессии), `stores/lsp`, `lspclient`, `lspsanitize`. Гейт `editorwork.guard`.
   Номер даст выпуск.
 - **🔜 Готовится — спокойный экран ожидания (ADR 0065, 0075).** `standby.ts`: корзины за `CHART_MS`
