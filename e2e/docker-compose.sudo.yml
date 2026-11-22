@@ -3,10 +3,13 @@
 #   docker compose -f e2e/docker-compose.sudo.yml up -d --build --wait
 #   cargo test --manifest-path src-tauri/Cargo.toml --lib live_fileuser -- --ignored
 #   docker compose -f e2e/docker-compose.sudo.yml down
+#
+# The passwords are in this repository and some open root, so the port is on
+# 127.0.0.1 alone (gate: stands.guard) and sshd forwards nothing (sudo/Dockerfile).
 
 services:
   sudo:
     build: ./sudo
     container_name: vterm-test-sudo
     ports:
-      - "2224:2222"
+      - "127.0.0.1:2224:2222"

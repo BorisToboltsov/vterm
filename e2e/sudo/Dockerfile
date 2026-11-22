@@ -25,7 +25,8 @@ RUN useradd -m -s /bin/bash limited && echo 'limited:limited' | chpasswd \
  && echo 'limited ALL=(root) /usr/bin/id' > /etc/sudoers.d/limited && chmod 440 /etc/sudoers.d/limited
 RUN useradd -m -s /bin/bash -G sudo ttyonly && echo 'ttyonly:ttyonly' | chpasswd \
  && echo 'Defaults:ttyonly requiretty' > /etc/sudoers.d/ttyonly && chmod 440 /etc/sudoers.d/ttyonly
-RUN printf 'Port 2222\nPasswordAuthentication yes\n' > /etc/ssh/sshd_config.d/sudo.conf
+# The passwords are public: logins get sessions, no tunnel of any kind.
+RUN printf 'Port 2222\nPasswordAuthentication yes\nDisableForwarding yes\n' > /etc/ssh/sshd_config.d/sudo.conf
 # sshd itself stays root: it must switch to the logging-in user. An unprivileged port, though.
 EXPOSE 2222
 HEALTHCHECK --interval=5s --timeout=3s --retries=6 CMD bash -c 'echo > /dev/tcp/127.0.0.1/2222' || exit 1

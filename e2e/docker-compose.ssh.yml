@@ -6,6 +6,8 @@
 #   docker compose -f e2e/docker-compose.ssh.yml down
 #
 # CI brings it up with the same command (.github/actions/test-sshd, used by deep.yml).
+# The password is in this file, so the port is on 127.0.0.1 alone (gate:
+# stands.guard) and sshd forwards nothing.
 
 services:
   ssh:
@@ -20,5 +22,15 @@ services:
       - USER_PASSWORD=testpass
       - SUDO_ACCESS=false
     ports:
-      - "2222:2222"
+      - "127.0.0.1:2222:2222"
+    volumes:
+      # Read-only, so the image's chown leaves the checkout's file alone (it
+      # says so in the log). Without the file `up` fails: by default Compose
+      # would mount an empty directory, and forwarding would be back.
+      - type: bind
+        source: ./ssh/noforward.conf
+        target: /config/sshd/sshd_config.d/noforward.conf
+        read_only: true
+        bind:
+          create_host_path: false
     restart: unless-stopped

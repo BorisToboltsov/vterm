@@ -5,10 +5,13 @@
 #   docker compose -f e2e/docker-compose.kbdint.yml down
 #
 # Scratch codes are single-use: `down` + `up` before running the suite again.
+#
+# The passwords and codes are in this repository, so the port is on 127.0.0.1
+# alone (gate: stands.guard) and sshd forwards nothing (kbdint/kbdint.conf).
 
 services:
   kbdint:
     build: ./kbdint
     container_name: vterm-test-kbdint
     ports:
-      - "2223:2222"
+      - "127.0.0.1:2223:2222"

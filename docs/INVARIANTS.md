@@ -1090,6 +1090,9 @@ PostgreSQL и MySQL/MariaDB — [ADR 0080](adr/0080-databases.md). Панель 
   advisory живёт, пока ему есть что исключать; npm ставится только `--frozen-lockfile`, у каждого
   пакета. Модель — [SECURITY.md](../SECURITY.md). Гейты `tauri-security.guard`,
   `releaseassets.guard`.
+- **Тестовый стенд слушает только `127.0.0.1`:** каждый опубликованный порт compose-файла в `e2e/`
+  называет этот адрес — пароли стендов в репозитории, и порт без адреса открыт всей сети машины.
+  Гейт `stands.guard`.
 - **Любой `EditorView` включает `cspNonceExtension()`** ([cspnonce.ts](../src/lib/editor/cspnonce.ts)):
   в `tauri build` nonce в `style-src` отменяет `'unsafe-inline'`, и стили CodeMirror без nonce не
   применяются — только в упакованной сборке. Дублировать стили в app.css и ослаблять CSP
@@ -1468,6 +1471,7 @@ PostgreSQL и MySQL/MariaDB — [ADR 0080](adr/0080-databases.md). Панель 
 | `releaseassets.guard` · `dependabot.guard` | Релиз — по тегу версии и после всех гейтов, экшены по SHA, `--frozen-lockfile`; группы Dependabot с выдержкой, `windows-core` — только вместе с `windows` |
 | `cidoc.guard` | Схемы CI — то, что выдаёт `scripts/ci-diagrams.mjs` из самих workflow, а `docs/CI.md` называет каждый workflow и каждую джобу |
 | `ci.guard` | Общие шаги CI — только экшены `.github/actions/`; Rust, Node и pnpm одни у CI и Linux-контейнера (`rust-toolchain.toml`); релиз без кэша; у каждой заботы один сканер, `unsafe` — у clippy; подавленное `nosemgrep` в Security не едет; рабочее дерево — LF на всех ОС (`.gitattributes`) |
+| `stands.guard` | Каждый опубликованный порт compose-файлов `e2e/` называет `127.0.0.1`; нечитаемое гейтом — переменная, порт из другого файла, сеть хоста — нарушение |
 | `untrusted.fuzz.test.ts` · `textenc::props` | Свойства недоверенного входа на произвольных данных: markdown не даёт исполняемого, декодер не паникует |
 | `version.guard` · `webview2runtime.test.ts` · `updater.guard` | Версия только в `package.json`; формат хвоста WebView2 один в Rust и CI; границы обновления |
 | `no_file_attributes_built_from_a_template` (Rust) | `FileAttributes` не строится из шаблона |

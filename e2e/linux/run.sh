@@ -8,7 +8,9 @@
 # The debug binary is driven unless VTERM_E2E_PROFILE says otherwise — this is
 # for writing specs; CI runs the release build on its own runner.
 # The specs that need the test sshd (docker-compose.ssh.yml) reach it on the
-# host: it publishes its port there, not inside this container.
+# host: it publishes its port there, on 127.0.0.1 alone, and Docker Desktop
+# carries host.docker.internal to it (Docker Engine on Linux does not: there
+# the suite runs without the box, as in CI).
 set -euo pipefail
 
 export VTERM_E2E_PROFILE="${VTERM_E2E_PROFILE:-debug}"
