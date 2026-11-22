@@ -781,6 +781,11 @@ prod/noAi-гейт + согласие (consent) + маскирование (reda
   Linux-only: `zbus` 5 под `keyring` (Secret Service) и плагинами Tauri `opener` и
   `single-instance`. Снять исключение, когда они перейдут на `zbus` 6: сам `zbus` 6 уже
   стабилен, но `secret-service` 5.2 и плагины 2.x на 2026-10-28 ещё на `zbus` 5.
+- **chrono (RUSTSEC-2026-0543).** Unmaintained, все версии; это смена статуса, а не уязвимость.
+  vterm его не использует: на всех ОС он приходит через `russh-sftp` 3 (функции, которых мы не
+  зовём), под wasm32 — через `russh-util` 0.52. Исключение действует только для этих двух
+  родителей (`bans.deny` с `wrappers`). Снять вместе с запретом, когда `russh-sftp` обновлён до 4
+  и выйдет `russh-util` без `chrono` (в апстриме готов, на 2026-11-22 не выпущен).
 - **npm, уровень low (не блокируют CI: `pnpm audit --audit-level moderate`).** `deepmerge`
   ≤ 4.3.1 (GHSA-gcqx-w48m-w2h4, загрязнение прототипа в `mergeObject()`) — сборочная
   зависимость `@sveltejs/vite-plugin-svelte`, в бандл не попадает; исправленной версии нет
@@ -797,6 +802,8 @@ prod/noAi-гейт + согласие (consent) + маскирование (reda
 - **`zip` (RUSTSEC-2026-0367…0369)** — не исключение: закрыты обновлением до `zip` 9. vterm
   `extract()` не вызывал — записи бэкапа читаются по одной, имя проверяет
   `safe_recording_name`.
+- **`url` (RUSTSEC-2026-0592)** — не исключение: закрыт обновлением до 2.5.9. `Url::origin()`,
+  в котором переполнялся стек, не вызывали ни vterm, ни крейты его дерева.
 - **Trivy, секреты `aws-access-key-id`, `slack-access-token`, `stripe-secret-token` — только
   `src/lib/ai/redact.cases.json`.** Это не ключи, а общие примеры, на которых проверяется маска
   секретов с обеих сторон — `redactSecrets` во фронте и маска писателя диагностики

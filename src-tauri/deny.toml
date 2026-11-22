@@ -12,10 +12,11 @@
 #
 # Triage note: of the ignores below, exactly ONE (RUSTSEC-2023-0071, rsa) is an
 # actual vulnerability; the rest are `unmaintained` STATUS advisories, all
-# transitive, not crates we depend on directly: Tauri's Linux WebKitGTK backend
-# and the zbus 5 helper crates under `keyring` and two Tauri plugins (Linux
-# D-Bus). We cannot swap or drop them without dropping Linux, the GUI framework or
-# the Secret Service keychain — the realistic fix is an upstream move (exactly how
+# transitive, not crates we depend on directly: Tauri's Linux WebKitGTK backend,
+# the zbus 5 helper crates under `keyring` and two Tauri plugins (Linux D-Bus),
+# and chrono under the russh crates. We cannot swap or drop them without dropping
+# Linux, the GUI framework, the Secret Service keychain or the SSH stack — the
+# realistic fix is an upstream move (exactly how
 # the quick-xml and unic-* advisories cleared — see the notes in the block). So the
 # standing action for this block is "keep the lockfile, Tauri and keyring current
 # (`cargo update`) and re-triage", not "find a replacement crate".
@@ -84,6 +85,17 @@ ignore = [
   "RUSTSEC-2026-0370",
   "RUSTSEC-2026-0371",
   "RUSTSEC-2026-0372",
+
+  # ── Unmaintained: chrono under the russh crates ─────────────────────────────
+  # chrono — `unmaintained` (`patched = []`): a status change, not a
+  # vulnerability. vterm does not use it; `cargo tree --target all -i chrono`
+  # shows two parents: russh-sftp 3 (every OS; only `File::longname` and the
+  # `Metadata` → `FileAttributes` conversion, neither of which we call) and
+  # russh-util 0.52 ← russh (wasm32 only, which we do not build).
+  # Clears when BOTH move: russh-sftp 4.0 (2026-11-21, breaking) dropped chrono;
+  # russh-util dropped it upstream, unreleased as of 2026-11-22 — it alone keeps
+  # chrono in Cargo.lock. `[bans]` keeps any third crate from using the exception.
+  "RUSTSEC-2026-0543",
 ]
 
 [licenses]
@@ -111,6 +123,9 @@ allow = [
 [bans]
 multiple-versions = "warn"
 wildcards = "warn"
+# The scope of RUSTSEC-2026-0543: chrono only under these parents. A new one — or
+# a direct dependency — fails; delete together with the ignore.
+deny = [{ crate = "chrono", wrappers = ["russh-sftp", "russh-util"] }]
 
 [sources]
 unknown-registry = "deny"
