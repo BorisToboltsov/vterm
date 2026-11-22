@@ -1756,16 +1756,6 @@ mod tests {
         assert_eq!(tree.skipped, 3);
     }
 
-    /// Source of a backend module before its tests, line comments stripped.
-    fn code(src: &str) -> String {
-        let src = src.replace("\r\n", "\n");
-        src[..src.find("#[cfg(test)]").expect("tests")]
-            .lines()
-            .map(|l| l.split("//").next().unwrap_or(""))
-            .collect::<Vec<_>>()
-            .join("\n")
-    }
-
     /// Body of `fn name(` up to the next function at the same depth.
     fn body<'a>(src: &'a str, name: &str) -> &'a str {
         let at = src
@@ -1778,7 +1768,10 @@ mod tests {
     /// Where a local path is built from a name the server chose without asking
     /// `localfile::safe_child` / `safe_join` / `safe_rel`. Empty when none is.
     fn server_name_violations(transfers: &str, sync: &str) -> Vec<&'static str> {
-        let (transfers, sync) = (code(transfers), code(sync));
+        let (transfers, sync) = (
+            crate::srcscan::shipped(transfers),
+            crate::srcscan::shipped(sync),
+        );
         let mut out = Vec::new();
         // A job's walk: every name the source listed reaches the destination
         // through `child_path`, and through nothing else.

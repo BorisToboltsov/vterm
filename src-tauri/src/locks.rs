@@ -21,6 +21,7 @@ impl<T> Locked<T> for Mutex<T> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::srcscan::shipped_code;
     use std::sync::Arc;
 
     #[test]
@@ -38,27 +39,17 @@ mod tests {
         assert_eq!(*m.locked(), vec![1, 2]);
     }
 
-    /// How many times code outside tests would still panic on a poisoned lock: a
-    /// bare `.lock().unwrap()` or `.lock().expect(…)`. Line comments are dropped
-    /// (the docs may name the pattern) and whitespace is squeezed out, because
-    /// rustfmt puts each call of a long chain on its own line.
-    fn bare_lock_unwraps(src: &str) -> usize {
-        // Up to the first test MODULE: a `#[cfg(test)]` on a single item (a
-        // test-only variant in sftp.rs, a helper in webview2.rs) sits in the
-        // middle of production code.
-        let end = src
-            .match_indices("#[cfg(test)]")
-            .map(|(i, m)| i + m.len())
-            .find(|&after| src[after..].trim_start().starts_with("mod "))
-            .map_or(src.len(), |after| after - "#[cfg(test)]".len());
-        let code = &src[..end];
-        let squeezed: String = code
-            .lines()
-            .map(|l| l.split("//").next().unwrap_or(l))
-            .flat_map(str::chars)
-            .filter(|c| !c.is_whitespace())
-            .collect();
-        squeezed.matches(".lock().unwrap()").count() + squeezed.matches(".lock().expect(").count()
+    /// How many times code outside test modules takes a lock a poisoned one
+    /// refuses: it would panic (`unwrap`, `expect`) or skip in silence what the
+    /// lock guards (`if let Ok(g) = ….lock() {`, `match`, `let … else`, `ok()`).
+    /// Whitespace is squeezed out, because rustfmt puts each call of a long chain
+    /// on its own line.
+    fn bare_locks(src: &str) -> usize {
+        let squeezed: String = shipped_code(src).split_whitespace().collect();
+        [".unwrap()", ".expect(", "{", "else{", ".ok()"]
+            .into_iter()
+            .map(|next| squeezed.matches(&format!(".lock(){next}")).count())
+            .sum()
     }
 
     fn sources(dir: &std::path::Path, out: &mut Vec<(String, String)>) {
@@ -85,40 +76,92 @@ mod tests {
         assert!(files.len() > 10);
         let offenders: Vec<String> = files
             .iter()
-            .filter(|(path, _)| !path.ends_with("locks.rs"))
-            .filter_map(|(path, src)| match bare_lock_unwraps(src) {
+            .filter_map(|(path, src)| match bare_locks(src) {
                 0 => None,
                 n => Some(format!("{path}: {n}")),
             })
             .collect();
         assert!(
             offenders.is_empty(),
-            "use `.locked()` (crate::locks::Locked) instead of a bare lock unwrap:\n{}",
+            "use `.locked()` (crate::locks::Locked), which neither panics on a poisoned lock nor skips it:\n{}",
             offenders.join("\n")
         );
     }
 
     #[test]
     fn the_gate_catches_its_own_violations() {
-        assert_eq!(bare_lock_unwraps("let a = m.lock().unwrap();"), 1);
-        assert_eq!(bare_lock_unwraps("let a = m.lock() .expect(\"x\");"), 1);
+        assert_eq!(bare_locks("let a = m.lock().unwrap();"), 1);
+        assert_eq!(bare_locks("let a = m.lock() .expect(\"x\");"), 1);
         let split =
             "let a = state\n            .servers\n            .lock()\n            .unwrap();";
-        assert_eq!(bare_lock_unwraps(split), 1);
-        assert_eq!(bare_lock_unwraps("// m.lock().unwrap() in a comment"), 0);
+        assert_eq!(bare_locks(split), 1);
+        assert_eq!(bare_locks("// m.lock().unwrap() in a comment"), 0);
         assert_eq!(
-            bare_lock_unwraps("let a = m.locked(); // not m.lock().unwrap()"),
+            bare_locks("let a = m.locked(); // not m.lock().unwrap()"),
             0
         );
-        assert_eq!(bare_lock_unwraps("let a = m.locked();"), 0);
+        assert_eq!(bare_locks("let a = m.locked();"), 0);
+        // Skipping a poisoned lock in silence is the same fault as panicking on it.
+        for skip in [
+            "if let Ok(mut g) = m.lock() { g.push(1); }",
+            "if let Ok(g) = self.rec\n    .lock()\n{\n}",
+            "while let Ok(g) = m.lock() {}",
+            "match m.lock() { Ok(g) => g.len(), Err(_) => 0 };",
+            "let Ok(g) = m.lock() else { return; };",
+            "if let Some(g) = m.lock().ok() {}",
+        ] {
+            assert_eq!(bare_locks(skip), 1, "{skip}");
+        }
+        // A tokio lock has no poison, a guard of one's own method is no `Result`.
+        for fine in [
+            "if let Some(s) = map.lock().await.get(id) {}",
+            "let g = m.lock().unwrap_or_else(|e| e.into_inner());",
+            "if self.lock().held.is_none() {}",
+        ] {
+            assert_eq!(bare_locks(fine), 0, "{fine}");
+        }
         assert_eq!(
-            bare_lock_unwraps("fn f() {}\n#[cfg(test)]\nmod t { fn f() { m.lock().unwrap(); } }"),
+            bare_locks("fn f() {}\n#[cfg(test)]\nmod t { fn f() { m.lock().unwrap(); } }"),
             0
         );
         // A test-only item before production code does not hide what follows it.
         assert_eq!(
-            bare_lock_unwraps("#[cfg(test)]\nfn helper() {}\nfn f() { m.lock().unwrap(); }"),
+            bare_locks("#[cfg(test)]\nfn helper() {}\nfn f() { m.lock().unwrap(); }"),
             1
         );
+        // Nor does a test module in the middle of a file, or a second one after it.
+        let bad = "fn f() { m.lock().unwrap(); }";
+        let module = format!("#[cfg(test)]\nmod t {{ {bad} }}\n");
+        assert_eq!(bare_locks(&format!("{module}{bad}")), 1);
+        assert_eq!(bare_locks(&format!("{module}{bad}\n{module}{bad}")), 2);
+        let visible = format!("#[cfg(test)]\npub(crate) mod t {{ {bad} }}");
+        assert_eq!(bare_locks(&visible), 0);
+        // A test-only field is no module, whatever module follows it.
+        let field = format!("struct S {{\n#[cfg(test)]\nx: u8,\n}}\nmod live {{ {bad} }}");
+        assert_eq!(bare_locks(&field), 1);
+        // A brace or an attribute inside a literal or a comment is no code.
+        for text in [
+            r#""}""#,
+            r#""{""#,
+            r#""\"{""#,
+            r##"r#"" {"#"##,
+            r##"br#"{"#"##,
+            r#"cr"{""#,
+            "b'{'",
+            "'\\''; '{'",
+            "'}'",
+            "'\\u{7d}'",
+            "/* /* */ { */",
+            "// {\n",
+        ] {
+            let test = format!("#[cfg(test)]\nmod t {{ {text}; {bad} }}\n{bad}");
+            assert_eq!(bare_locks(&test), 1, "{text}");
+        }
+        let quoted = format!("const M: &str = \"#[cfg(test)] mod t {{\";\n{bad}");
+        assert_eq!(bare_locks(&quoted), 1);
+        let url = "fn f() { open(\"https://x\", m.lock().unwrap()); }";
+        assert_eq!(bare_locks(url), 1);
+        let lifetime = format!("fn g<'a>(x: &'a str) {{}}\n{bad}");
+        assert_eq!(bare_locks(&lifetime), 1);
     }
 }

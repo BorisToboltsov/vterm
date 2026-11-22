@@ -559,18 +559,34 @@ mod login_gate {
     /// ADR 0074: each login reads and writes its own secrets — its keychain
     /// scope — never the server's first login's by the server id, and a one-off
     /// login keeps nothing.
+    /// What lets a login read or keep a secret that is not its own.
+    fn login_faults(src: &str) -> Vec<&'static str> {
+        let code = crate::srcscan::shipped_code(src);
+        let mut faults = reads_by_server_id(&code);
+        let connect = body(&code, "connect_session");
+        if !connect.contains("resolve_login(") {
+            faults.push("the login is not resolved before anything is read");
+        }
+        if !connect.contains("Some(scope)") {
+            faults.push("remembering does not need the login's scope");
+        }
+        faults
+    }
+
     #[test]
     fn every_login_reads_its_own_secrets() {
-        let src = include_str!("session.rs");
-        assert_eq!(reads_by_server_id(src), Vec::<&str>::new());
-        let connect = body(src, "connect_session");
-        assert!(
-            connect.contains("resolve_login("),
-            "the login is resolved before anything is read"
+        let src = &include_str!("session.rs").replace("\r\n", "\n");
+        assert_eq!(login_faults(src), Vec::<&str>::new());
+        // …and the check catches what it is for: naming the scope is not needing it.
+        let scopeless = src.replacen(
+            "    if let (true, Some(s), Some(scope), Some(login_id)) =",
+            "    // Some(scope)\n    if let (true, Some(s), Some( scope), Some(login_id)) =",
+            1,
         );
-        assert!(
-            connect.contains("Some(scope)"),
-            "remembering needs the login's scope"
+        assert_ne!(&scopeless, src, "the mutation no longer applies");
+        assert_eq!(
+            login_faults(&scopeless),
+            ["remembering does not need the login's scope"]
         );
         // The check sees what it is for.
         let leaking = src.replacen(

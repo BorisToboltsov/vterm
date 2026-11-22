@@ -287,16 +287,6 @@ mod tests {
         }
     }
 
-    /// Source without `//` comments, so a comment naming a call can't satisfy
-    /// (or trip) the guard.
-    fn code(src: &str) -> String {
-        src.replace("\r\n", "\n")
-            .lines()
-            .map(|l| l.split("//").next().unwrap_or(""))
-            .collect::<Vec<_>>()
-            .join("\n")
-    }
-
     /// Guard (v1.0.38): what goes back to the server's questions is decided in
     /// one place. The stored password must reach only the hidden password
     /// question `plan` picked — a second `respond` call, or one fed anything but
@@ -307,7 +297,9 @@ mod tests {
     /// waits forever.
     #[test]
     fn login_answers_come_only_from_the_plan() {
-        let ssh = code(include_str!("ssh.rs"));
+        // Without comments, so one naming a call can't satisfy (or trip) the guard;
+        // with the tests, so none of them answers a question either.
+        let ssh = crate::srcscan::without_comments(include_str!("ssh.rs"));
         let calls: Vec<_> = ssh
             .match_indices("authenticate_keyboard_interactive_respond(")
             .collect();
@@ -332,7 +324,7 @@ mod tests {
             "questions reach the UI only via kbdauth::ask"
         );
 
-        let lib = code(&crate::commands::bridge_source());
+        let lib = crate::commands::bridge_source();
         let body = |name: &str| {
             let at = lib.find(name).unwrap_or_else(|| panic!("{name} not found"));
             let rest = &lib[at..];

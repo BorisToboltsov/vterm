@@ -3116,13 +3116,9 @@ mod tests {
     }
 
     // ── MetricsSamples ─────────────────────────────────────────────────────────
-    #[test]
-    fn clear_session_covers_every_field_of_the_struct() {
-        // The test below seeds and checks eight stores **by hand**, so adding a
-        // ninth field leaks one entry per closed session and that test stays
-        // green — which is exactly how the original net/disk leak survived. This
-        // one reads the struct instead, so the guard grows with the struct.
-        let src = include_str!("mod.rs");
+    /// The fields of `MetricsSamples` that `clear_session` leaves behind.
+    fn uncleared(src: &str) -> Vec<String> {
+        let src = crate::srcscan::shipped_code(src);
         let decl = src
             .split_once("pub struct MetricsSamples {")
             .expect("struct declaration")
@@ -3145,14 +3141,33 @@ mod tests {
             .1;
         let cleared = cleared.split_once("\n    }").expect("end of fn").0;
 
-        let missed: Vec<&&str> = fields
-            .iter()
+        fields
+            .into_iter()
             .filter(|f| !cleared.contains(&format!("self.{f}")))
-            .collect();
+            .map(str::to_owned)
+            .collect()
+    }
+
+    #[test]
+    fn clear_session_covers_every_field_of_the_struct() {
+        // The test below seeds and checks eight stores **by hand**, so adding a
+        // ninth field leaks one entry per closed session and that test stays
+        // green — which is exactly how the original net/disk leak survived. This
+        // one reads the struct instead, so the guard grows with the struct.
+        let src = include_str!("mod.rs").replace("\r\n", "\n");
+        let missed = uncleared(&src);
         assert!(
             missed.is_empty(),
             "clear_session does not clear {missed:?} — each leaks one entry per closed session"
         );
+        // …and the check catches what it is for: a store cleared in a comment is kept.
+        let kept = src.replacen(
+            "        self.cpu_samples.locked().remove(id);",
+            "        // self.cpu_samples.locked().remove(id);",
+            1,
+        );
+        assert_ne!(kept, src, "the mutation no longer applies");
+        assert_eq!(uncleared(&kept), ["cpu_samples"]);
     }
 
     #[test]

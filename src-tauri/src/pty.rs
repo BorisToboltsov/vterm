@@ -114,11 +114,9 @@ impl LocalPty {
     /// Fire-and-forget a message to the recorder thread (no-op if not recording).
     /// The lock is held only for the (non-blocking) channel send.
     fn record(&self, msg: RecMsg) {
-        if let Ok(g) = self.rec_tx.lock() {
-            if let Some(tx) = g.as_ref() {
-                tx.send(msg)
-                    .log_debug("recording", "the recorder did not get its message");
-            }
+        if let Some(tx) = self.rec_tx.locked().as_ref() {
+            tx.send(msg)
+                .log_debug("recording", "the recorder did not get its message");
         }
     }
 
@@ -365,10 +363,8 @@ fn open_with_gate(
                     // Hand the chunk to the recorder thread (if recording) — a
                     // non-blocking channel send, never a file write here — so the
                     // drain keeps up with ConPTY and the shell never back-pressures.
-                    if let Ok(g) = rec_tx_reader.lock() {
-                        if let Some(tx) = g.as_ref() {
-                            recorder_gone.note(tx.send(RecMsg::Output(buf[..n].to_vec())));
-                        }
+                    if let Some(tx) = rec_tx_reader.locked().as_ref() {
+                        recorder_gone.note(tx.send(RecMsg::Output(buf[..n].to_vec())));
                     }
                     gate_reader.output(buf[..n].to_vec());
                 }
@@ -581,6 +577,61 @@ mod tests {
         assert!(until(&|c| c.as_deref() == Some("/")), "sleep never ended");
         pty.write_input(b"\r".to_vec()).unwrap();
         assert_eq!(pty.submitted_cwd(), None, "not noted while nobody watches");
+    }
+
+    /// A recording outlives a panic over its lock (INVARIANTS principle 8): both
+    /// what is handed to the recorder and what the shell prints still reach it.
+    #[cfg(unix)]
+    #[test]
+    fn a_recording_goes_on_over_a_poisoned_lock() {
+        use crate::outgate::Emit;
+        use std::time::Duration;
+
+        let (heard, printed) = mpsc::channel();
+        let heard = Mutex::new(heard);
+        let gate = Arc::new(OutputGate::new(Box::new(move |e| {
+            if let Emit::Output(bytes) = e {
+                heard.locked().send(bytes).log_unheard("terminal", "output");
+            }
+        })));
+        let pty = match open_with_gate(gate, 80, 24, Some("/bin/sh".into()), None) {
+            Ok(pty) => pty,
+            Err(e) => {
+                eprintln!("skipped: cannot open a pty here ({e})");
+                return;
+            }
+        };
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("t.cast");
+        pty.begin_recording(recorder_at(&path));
+        let held = pty.rec_tx.clone();
+        let panicked = std::thread::spawn(move || {
+            let _guard = held.locked();
+            panic!("poison it");
+        })
+        .join();
+        assert!(panicked.is_err() && pty.rec_tx.is_poisoned());
+
+        pty.record_output(b"audit-line\r\n");
+        pty.write_input(b"echo out-$((40+2))\n".to_vec()).unwrap();
+        let mut seen = Vec::new();
+        while !String::from_utf8_lossy(&seen).contains("out-42") {
+            let bytes: Vec<u8> = printed
+                .recv_timeout(Duration::from_secs(10))
+                .expect("the shell never answered");
+            seen.extend(bytes);
+        }
+        pty.end_recording().expect("it was recording");
+        let recorded: String = std::fs::read_to_string(&path)
+            .unwrap()
+            .lines()
+            .skip(1)
+            .filter_map(|line| serde_json::from_str::<(f64, String, String)>(line).ok())
+            .filter(|(_, kind, _)| kind == "o")
+            .map(|(_, _, text)| text)
+            .collect();
+        assert!(recorded.contains("audit-line"), "handed over: {recorded:?}");
+        assert!(recorded.contains("out-42"), "printed: {recorded:?}");
     }
 
     /// A plain full-mode Recorder writing to `path` for the actor tests.

@@ -180,6 +180,8 @@ pub async fn sudo_check(
 
 #[cfg(test)]
 mod tests {
+    use crate::srcscan::shipped_code;
+
     /// The commands of a bridge source with a text parameter named for a password
     /// — each `#[tauri::command]`'s signature, up to its body. A flag about
     /// passwords (`mask_passwords: bool`) is no password.
@@ -211,7 +213,7 @@ mod tests {
                     dirs.push(path);
                 } else if path.extension().is_some_and(|e| e == "rs") {
                     let text = std::fs::read_to_string(&path).unwrap();
-                    let code = text.split("#[cfg(test)]").next().unwrap_or("");
+                    let code = shipped_code(&text);
                     if code.contains("get_sudo_password(") && !path.ends_with("secrets.rs") {
                         let rel = path
                             .strip_prefix(&root)

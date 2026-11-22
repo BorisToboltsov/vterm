@@ -337,18 +337,12 @@ mod tests {
         resume_session("nobody");
     }
 
-    /// The source of `file` without its tests and its `//` comments.
+    /// The source of `file` as it ships.
     fn code(file: &str) -> String {
         let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("src")
             .join(file);
-        let src = std::fs::read_to_string(path).unwrap();
-        let live = src.split("#[cfg(test)]").next().unwrap_or("");
-        live.lines()
-            .map(|l| l.split(" //").next().unwrap_or(l))
-            .filter(|l| !l.trim_start().starts_with("//"))
-            .collect::<Vec<_>>()
-            .join("\n")
+        crate::srcscan::shipped(&std::fs::read_to_string(path).unwrap())
     }
 
     /// The body of `fn name(` in `src`, up to the next item at the same depth.

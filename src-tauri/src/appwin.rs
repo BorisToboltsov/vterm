@@ -1713,16 +1713,6 @@ mod tests {
         assert!(reg.raise("win-2"));
     }
 
-    /// This file before its tests, line comments stripped.
-    fn code() -> String {
-        let src = include_str!("appwin.rs").replace("\r\n", "\n");
-        src[..src.find("#[cfg(test)]").expect("tests")]
-            .lines()
-            .map(|l| l.split("//").next().unwrap_or(""))
-            .collect::<Vec<_>>()
-            .join("\n")
-    }
-
     /// Body of the top-level `fn name` (to the next top-level item).
     fn body<'a>(code: &'a str, name: &str) -> &'a str {
         let at = code
@@ -1769,7 +1759,7 @@ mod tests {
         // tabs of its own. Rolling a handoff back used to close "the window that
         // never took it" — right for a window opened for that tab, and the loss
         // of every session in a window that was merely offered one.
-        let code = code();
+        let code = crate::srcscan::shipped(include_str!("appwin.rs"));
         let commit = body(&code, "detach_commit");
         assert_eq!(commit.matches(".destroy()").count(), 1);
         let destroy = commit.find(".destroy()").expect("closes the new window");

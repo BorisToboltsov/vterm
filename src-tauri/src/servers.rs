@@ -67,6 +67,7 @@ pub fn add_server(profile: NewServerProfile, state: State<AppState>) -> AppResul
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::srcscan::shipped_code;
 
     /// The body of `fn name` in `src`, up to its closing brace.
     fn body<'a>(src: &'a str, name: &str) -> &'a str {
@@ -75,30 +76,59 @@ mod tests {
         &rest[..rest.find("\n}\n").map_or(rest.len(), |e| e + 2)]
     }
 
-    /// A refused login forgets the login's secret and nothing else (ADR 0073):
+    /// What makes a refused login forget other than the login's secret (ADR 0073):
     /// the sudo password it was never asked about stays, so does the jump host's.
+    fn forget_faults(secrets: &str, servers: &str) -> Vec<&'static str> {
+        let (secrets, servers) = (shipped_code(secrets), shipped_code(servers));
+        let login = body(&secrets, "delete_login");
+        let mut faults = Vec::new();
+        if !login.contains("delete_password(id)") || !login.contains("delete_passphrase(id)") {
+            faults.push("a refused login keeps its password or its passphrase");
+        }
+        if login.contains("sudo") || login.contains("proxy") {
+            faults.push("a refused login forgets sudo's or the jump host's");
+        }
+        if !body(&secrets, "delete_all").contains("delete_sudo_password(id)") {
+            faults.push("the form's «Forget» keeps sudo's");
+        }
+        let cmd = body(&servers, "forget_login_secret");
+        if !cmd.contains("secrets::delete_login(") || cmd.contains("delete_all") {
+            faults.push("the command forgets more than the login");
+        }
+        if cmd.contains("has_saved_sudo") {
+            faults.push("the command marks sudo's as forgotten");
+        }
+        faults
+    }
+
     #[test]
     fn a_refused_login_forgets_only_the_login_secret() {
         // The keychain module's source text — code, not a secret (CodeQL #496
         // took the old name `secrets_src` for one).
-        let module_src = include_str!("secrets.rs");
-        let login = body(module_src, "delete_login");
-        assert!(login.contains("delete_password(id)") && login.contains("delete_passphrase(id)"));
-        assert!(
-            !login.contains("sudo") && !login.contains("proxy"),
-            "{login}"
+        let module_src = include_str!("secrets.rs").replace("\r\n", "\n");
+        let servers = include_str!("servers.rs").replace("\r\n", "\n");
+        assert_eq!(forget_faults(&module_src, &servers), Vec::<&str>::new());
+        // …and the check catches what it is for: naming a step is not taking it.
+        let kept = module_src.replacen(
+            "    delete_password(id)?;\n    delete_passphrase(id)\n}",
+            "    delete_password(id) // and delete_passphrase(id)\n}",
+            1,
         );
-        let all = body(module_src, "delete_all");
-        assert!(
-            all.contains("delete_sudo_password(id)"),
-            "the form's «Forget» takes sudo's too"
+        assert_ne!(kept, module_src, "the mutation no longer applies");
+        assert_eq!(
+            forget_faults(&kept, &servers),
+            ["a refused login keeps its password or its passphrase"]
         );
-        let cmd = body(include_str!("servers.rs"), "forget_login_secret");
-        assert!(
-            cmd.contains("secrets::delete_login(") && !cmd.contains("delete_all"),
-            "{cmd}"
+        let all = module_src.replacen(
+            "    delete_sudo_password(id)?;\n    for login in logins {",
+            "    // delete_sudo_password(id)?;\n    for login in logins {",
+            1,
         );
-        assert!(!cmd.contains("has_saved_sudo"), "{cmd}");
+        assert_ne!(all, module_src, "the mutation no longer applies");
+        assert_eq!(
+            forget_faults(&all, &servers),
+            ["the form's «Forget» keeps sudo's"]
+        );
     }
 
     fn sample(id: &str) -> ServerProfile {
@@ -167,7 +197,7 @@ pub fn update_server(
 ) -> AppResult<ServerProfile> {
     let gone;
     let snapshot = {
-        let mut servers = state.servers.lock().unwrap();
+        let mut servers = state.servers.locked();
         match servers.iter_mut().find(|s| s.id == id) {
             Some(server) => {
                 let (logins, removed) = crate::model::merge_logins(&server.logins, profile.logins)?;
@@ -266,7 +296,7 @@ pub fn set_server_notes(
     state: State<AppState>,
 ) -> AppResult<ServerProfile> {
     let snapshot = {
-        let mut servers = state.servers.lock().unwrap();
+        let mut servers = state.servers.locked();
         match servers.iter_mut().find(|s| s.id == id) {
             Some(server) => server.notes = notes,
             None => return Err(AppError::UnknownServer),
@@ -291,7 +321,7 @@ pub fn set_server_path_sync(
     mode: Option<String>,
     state: State<AppState>,
 ) -> AppResult<ServerProfile> {
-    let mut servers = state.servers.lock().unwrap();
+    let mut servers = state.servers.locked();
     path_sync_persisted(&mut servers, &id, mode, store::save_servers)
 }
 
@@ -318,7 +348,7 @@ pub async fn delete_server(id: String, state: State<'_, AppState>) -> AppResult<
     let mut logins = Vec::new();
     let mut databases = Vec::new();
     let snapshot = {
-        let mut servers = state.servers.lock().unwrap();
+        let mut servers = state.servers.locked();
         if let Some(gone) = servers.iter().find(|s| s.id == id) {
             logins = gone.login_ids();
             databases = gone.database_ids();
@@ -376,7 +406,7 @@ pub fn forget_secrets(id: String, state: State<AppState>) -> AppResult<()> {
         .unwrap_or_default();
     secrets::delete_all(&id, &logins, &databases)?;
     let snapshot = {
-        let mut servers = state.servers.lock().unwrap();
+        let mut servers = state.servers.locked();
         if let Some(p) = servers.iter_mut().find(|p| p.id == id) {
             p.has_saved_password = false;
             p.has_saved_sudo = false;
@@ -418,7 +448,7 @@ pub fn save_server_secret(
         ));
     }
     let snapshot = {
-        let mut servers = state.servers.lock().unwrap();
+        let mut servers = state.servers.locked();
         let server = servers
             .iter_mut()
             .find(|s| s.id == server_id)
@@ -457,7 +487,7 @@ pub fn save_proxy_secret(
     // Wrap so vterm's own in-memory copy is wiped on drop (keychain stays canonical).
     let secret = Zeroizing::new(secret);
     let snapshot = {
-        let mut servers = state.servers.lock().unwrap();
+        let mut servers = state.servers.locked();
         let server = servers
             .iter_mut()
             .find(|s| s.id == server_id)

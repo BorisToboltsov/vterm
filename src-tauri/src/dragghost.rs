@@ -219,16 +219,6 @@ mod tests {
         );
     }
 
-    /// A source file before its tests, line comments stripped.
-    fn code(src: &str) -> String {
-        let src = src.replace("\r\n", "\n");
-        src[..src.find("#[cfg(test)]").expect("tests")]
-            .lines()
-            .map(|l| l.split("//").next().unwrap_or(""))
-            .collect::<Vec<_>>()
-            .join("\n")
-    }
-
     #[test]
     fn the_floating_label_is_a_picture_and_never_a_window_of_the_app() {
         // Guard (v1.4.0, ADR 0018). The label is a real window, and each of the
@@ -239,7 +229,7 @@ mod tests {
         //    can never reach a window lying under it;
         //  - named like a window of the app, it gets that window's capability
         //    and is offered to the others as a place to move a tab to.
-        let ghost = code(include_str!("dragghost.rs"));
+        let ghost = crate::srcscan::shipped(include_str!("dragghost.rs"));
         for needed in [
             ".focused(false)",
             ".focusable(false)",
@@ -255,7 +245,7 @@ mod tests {
         let loaded = show.find("LOADED.load(").expect("waits for the page");
         assert!(loaded < show.find("ghost.show()").expect("shows the window"));
         // And it is never what the pointer is found to be over.
-        let windows = code(include_str!("appwin.rs"));
+        let windows = crate::srcscan::shipped(include_str!("appwin.rs"));
         let asked = &windows[windows
             .find("async fn pointer_window(")
             .expect("the question")..];
