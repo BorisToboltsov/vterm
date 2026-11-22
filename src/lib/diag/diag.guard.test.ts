@@ -120,19 +120,217 @@ function sourcesUnder(dir: string, exts: string[]): [string, string][] {
   return out;
 }
 
-/** The Rust before its tests: the gates' own samples are not events. */
-const rustCode = (src: string): string => src.split("\n#[cfg(test)]\nmod tests {")[0].split("\nmod gates {")[0];
+/**
+ * The Rust as it ships, like `srcscan::shipped` of the Rust gates: no comments,
+ * no `#[cfg(test)]` modules wherever they stand — the gates' own samples are not
+ * events — and the literals as written. The modules are cut with a number
+ * standing in for each literal, so a brace inside one opens nothing.
+ */
+function rustCode(src: string): string {
+  const literals: string[] = [];
+  let code = "";
+  let at = 0;
+  while (at < src.length) {
+    if (src.startsWith("//", at)) {
+      const end = src.indexOf("\n", at);
+      at = end < 0 ? src.length : end;
+    } else if (src.startsWith("/*", at)) {
+      at = commentEnd(src, at);
+      code += " ";
+    } else {
+      const end = literalEnd(src, at);
+      if (end === null) {
+        code += src[at++];
+      } else {
+        code += `"${literals.push(src.slice(at, end)) - 1}"`;
+        at = end;
+      }
+    }
+  }
+  return withoutTestModules(code).replace(/"(\d+)"/g, (_, n: string) => literals[Number(n)]);
+}
 
-/** The argument text of every call that starts at a match of `head`. */
-function callArgs(text: string, head: RegExp): string[] {
+/** Where the block comment at `at` ends; they nest. */
+function commentEnd(src: string, at: number): number {
+  let depth = 0;
+  for (let i = at; i < src.length - 1; i++) {
+    if (src.startsWith("/*", i)) depth++;
+    else if (src.startsWith("*/", i)) depth--;
+    else continue;
+    i++;
+    if (depth === 0) return i + 1;
+  }
+  throw new Error("a comment that never closes");
+}
+
+/** Where the string or char literal at `at` ends, if one starts there. */
+function literalEnd(src: string, at: number): number | null {
+  const raw = /[bc]?r(#*)"/y;
+  raw.lastIndex = at;
+  const open = raw.exec(src);
+  if (open && !/[\p{L}\p{N}_]/u.test(src[at - 1] ?? "")) {
+    const end = src.indexOf(`"${open[1]}`, raw.lastIndex);
+    if (end < 0) throw new Error("a raw string that never closes");
+    return end + 1 + open[1].length;
+  }
+  const quote = src[at];
+  if (quote !== '"' && quote !== "'") return null;
+  if (quote === "'" && src[at + 1] !== "\\") {
+    // A quote that does not close after one char is a lifetime's.
+    const close = at + ((src.codePointAt(at + 1) ?? 0) > 0xffff ? 3 : 2);
+    return src[close] === "'" ? close + 1 : null;
+  }
+  for (let i = at + 1; i < src.length; i++) {
+    if (src[i] === "\\") i++;
+    else if (src[i] === quote) return i + 1;
+  }
+  throw new Error("a literal that never closes");
+}
+
+/** `code` (no comment, no literal's text) without its test modules. */
+function withoutTestModules(code: string): string {
+  const marker = "#[cfg(test)]";
+  let kept = "";
+  let rest = code;
+  for (let at = rest.indexOf(marker); at >= 0; at = rest.indexOf(marker)) {
+    kept += rest.slice(0, at);
+    rest = rest.slice(at + marker.length);
+    const open = rest.search(/[{;]/);
+    if (rest[open] !== "{" || !/^\s*(?:pub(?:\(crate\))?\s+)?mod\s+\S+\s*$/.test(rest.slice(0, open))) continue;
+    let depth = 1;
+    let end = open + 1;
+    for (; end < rest.length && depth > 0; end++) {
+      if (rest[end] === "{") depth++;
+      else if (rest[end] === "}") depth--;
+    }
+    if (depth > 0) throw new Error("a block that never closes");
+    rest = rest.slice(end);
+  }
+  return kept + rest;
+}
+
+/** Words after which a `/` starts a regex rather than a division. */
+const BEFORE_A_REGEX = new Set(["return", "typeof", "case", "in", "of", "new", "delete", "void", "throw", "else", "do", "yield", "await"]);
+
+/**
+ * `src` with every comment and the inside of every string, template and regex
+ * blanked, the length kept: a place in it is the same place in `src`, and a
+ * bracket or a call written inside one is none. In a Svelte file only the
+ * scripts and the markup's `{…}` are code — its text is left as it is, its
+ * styles and HTML comments are blanked.
+ */
+function blanked(src: string, svelte: boolean): string {
+  const out = src.split("");
+  const blank = (from: number, to: number) => {
+    for (let k = from; k < to; k++) if (out[k] !== "\n") out[k] = " ";
+  };
+  const regexAt = (i: number): boolean => {
+    let k = i - 1;
+    while (k >= 0 && /\s/.test(out[k])) k--;
+    if (k < 0) return true;
+    if (!/[\w$]/.test(out[k])) return !/[)\]}"'`]/.test(out[k]);
+    let from = k;
+    while (from > 0 && /[\w$]/.test(out[from - 1])) from--;
+    return BEFORE_A_REGEX.has(out.slice(from, k + 1).join(""));
+  };
+  /** Code from `at` until `done(i, depth)`; returns where it stopped. */
+  const code = (at: number, done: (i: number, depth: number) => boolean): number => {
+    let depth = 0;
+    const resume: number[] = []; // the depth at which each open `${` goes back to its template
+    const template = (from: number): number => {
+      for (let j = from; j < src.length; j++) {
+        if (src[j] === "\\") j++;
+        else if (src[j] === "`") {
+          blank(from, j);
+          return j + 1;
+        } else if (src.startsWith("${", j)) {
+          blank(from, j);
+          resume.push(depth++);
+          return j + 2;
+        }
+      }
+      throw new Error("a template that never closes");
+    };
+    let i = at;
+    while (i < src.length && !done(i, depth)) {
+      const c = src[i];
+      if (src.startsWith("//", i)) {
+        const end = src.indexOf("\n", i);
+        blank(i, end < 0 ? src.length : end);
+        i = end < 0 ? src.length : end;
+      } else if (src.startsWith("/*", i)) {
+        const end = src.indexOf("*/", i + 2);
+        if (end < 0) throw new Error("a comment that never closes");
+        blank(i, end + 2);
+        i = end + 2;
+      } else if (c === '"' || c === "'") {
+        let j = i + 1;
+        while (j < src.length && src[j] !== c && src[j] !== "\n") j += src[j] === "\\" ? 2 : 1;
+        blank(i + 1, j);
+        i = j + 1;
+      } else if (c === "`") {
+        i = template(i + 1);
+      } else if (c === "/" && regexAt(i)) {
+        let j = i + 1;
+        for (let inClass = false; j < src.length && src[j] !== "\n"; j++) {
+          if (src[j] === "\\") j++;
+          else if (src[j] === "[") inClass = true;
+          else if (src[j] === "]") inClass = false;
+          else if (src[j] === "/" && !inClass) break;
+        }
+        blank(i + 1, j);
+        i = j + 1;
+      } else {
+        if (c === "{") depth++;
+        else if (c === "}" && --depth === resume.at(-1)) {
+          resume.pop();
+          i = template(i + 1);
+          continue;
+        }
+        i++;
+      }
+    }
+    return i;
+  };
+  if (!svelte) {
+    code(0, () => false);
+    return out.join("");
+  }
+  for (let i = 0; i < src.length; ) {
+    if (src.startsWith("<!--", i)) {
+      const end = src.indexOf("-->", i);
+      const to = end < 0 ? src.length : end + 3;
+      blank(i, to);
+      i = to;
+    } else if (src.startsWith("<style", i)) {
+      const end = src.indexOf("</style>", i);
+      const to = end < 0 ? src.length : end;
+      blank(i, to);
+      i = to;
+    } else if (src.startsWith("<script", i)) {
+      const close = src.indexOf("</script>", i);
+      i = code(src.indexOf(">", i) + 1, (k) => k >= close) + "</script>".length;
+    } else if (src[i] === "{") {
+      // `{/if}` closes a block and holds no code; the rest of a `{…}` is an expression.
+      i = src[i + 1] === "/" ? src.indexOf("}", i) + 1 : code(i + 1, (k, depth) => depth === 0 && src[k] === "}") + 1;
+    } else {
+      i++;
+    }
+  }
+  return out.join("");
+}
+
+/** The argument text of every call that starts at a match of `head`: a head or a bracket inside a literal or a comment is none. */
+function callArgs(text: string, head: RegExp, svelte: boolean): string[] {
+  const shape = blanked(text, svelte);
   const out: string[] = [];
-  for (const m of text.matchAll(head)) {
+  for (const m of shape.matchAll(head)) {
     let depth = 1;
     let i = (m.index ?? 0) + m[0].length;
     const start = i;
-    for (; i < text.length && depth > 0; i++) {
-      if (text[i] === "(") depth++;
-      else if (text[i] === ")") depth--;
+    for (; i < shape.length && depth > 0; i++) {
+      if (shape[i] === "(") depth++;
+      else if (shape[i] === ")") depth--;
     }
     out.push(text.slice(start, i));
   }
@@ -147,7 +345,7 @@ function callArgs(text: string, head: RegExp): string[] {
 function codesWritten(files: [string, string][]): Set<string> {
   const found = new Set<string>();
   for (const [path, text] of files) {
-    const places = path.endsWith(".rs") ? [text] : callArgs(text, /\b(?:diag\.(?:error|warn|info|debug)|diagEvent)\(/g);
+    const places = path.endsWith(".rs") ? [text] : callArgs(text, /\b(?:diag\.(?:error|warn|info|debug)|diagEvent)\(/g, path.endsWith(".svelte"));
     const shape = path.endsWith(".rs") ? /\bcode = (?:Some\()?"([a-z0-9-]+)"/g : /\bcode: "([a-z0-9-]+)"/g;
     for (const place of places) for (const m of place.matchAll(shape)) found.add(m[1]);
   }
@@ -257,6 +455,47 @@ describe("diagnostics guard — catches what it exists for", () => {
     expect(codeViolations(files, ["brand-new", "gone"])).toEqual(['title "gone" is worn by no event']);
     const facade: [string, string][] = [["b.ts", 'diag.info("ai", "x", undefined, { code: "deny-list" });']];
     expect(codeViolations(facade, [])).toEqual(['code "deny-list" has no title']);
+  });
+
+  it("a kind written below a test module or after a `//` in a string, never a test's or a comment's", () => {
+    const event = (code: string) => `tracing::info!(source = "app", code = "${code}", "x");`;
+    const found = (rust: string) => [...codesWritten([["a.rs", rustCode(rust)]])];
+    const module = (name: string, text: string) => `#[cfg(test)]\n${name} {\n${text}\n}\n`;
+    const live = event("live");
+    for (const name of ["mod tests", "mod gates", "pub(crate) mod login_gate"]) {
+      expect(found(`${module(name, event("sample"))}${live}\n${module(name, event("sample"))}`), name).toEqual(["live"]);
+    }
+    // A brace or a marker inside a literal or a comment is no code.
+    for (const text of ['"}"', '"{"', '"\\"{"', 'r#"" {"#', 'br#"{"#', 'cr"{"', "b'{'", "'\\''; '{'", "'}'", "'\\u{7d}'", "/* /* */ { */", "// {"]) {
+      expect(found(`${module("mod t", `${text};\n${event("sample")}`)}${live}`), text).toEqual(["live"]);
+    }
+    expect(found(`const M: &str = "#[cfg(test)] mod t {";\n${live}`)).toEqual(["live"]);
+    expect(found(`open("https://x"); ${live}`)).toEqual(["live"]);
+    expect(found(`fn g<'a>(x: &'a str) {}\n${live}`)).toEqual(["live"]);
+    // A test-only item is no module and hides nothing.
+    expect(found(`#[cfg(test)]\nfn helper() {}\n${live}`)).toEqual(["live"]);
+    expect(found(`// ${event("doc")}\n/* ${event("old")} */\n${live}`)).toEqual(["live"]);
+  });
+
+  it("a call's arguments end at its own bracket — not at one in a string, a template, a regex or a comment", () => {
+    const call = (text: string) => `diag.info("ai", ${text}, undefined, { code: "deny-list" });`;
+    for (const text of ['"step 1) done"', "'a)'", "`t ${f(')')} )`", "/* ) */ 1", "/\\)/.source", "`a ${`b)`} c`"]) {
+      expect([...codesWritten([["b.ts", call(text)]])], text).toEqual(["deny-list"]);
+    }
+    // A call named in a string or a comment is no call.
+    const named = `const s = "diag.info("; // diag.warn(\n/* diagEvent( */ f({ code: "group-keys-on" });`;
+    expect([...codesWritten([["b.ts", named]])]).toEqual([]);
+    // In Svelte the scripts and the markup's {…} are code; the text and an HTML comment are not.
+    const svelte = [
+      '<script lang="ts">',
+      `  ${call('"a)"')}`,
+      "</script>",
+      "<p>it's {name}</p>",
+      '<!-- diag.warn("ui", "x", undefined, { code: "gone" }) -->',
+      '{#if open}<button onclick={() => diag.warn("ui", "b)", undefined, { code: "group-keys-on" })}>x</button>{/if}',
+      "<style>p { content: \"(\"; }</style>",
+    ].join("\n");
+    expect([...codesWritten([["c.svelte", svelte]])].sort()).toEqual(["deny-list", "group-keys-on"]);
   });
 
   it("a print let through", () => {

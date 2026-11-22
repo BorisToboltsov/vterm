@@ -55,7 +55,7 @@ const FLUSH_WAIT: Duration = Duration::from_secs(2);
 /// The parts of the app an event comes from: the journal's sources
 /// (`notifications/journal.ts`, `JOURNAL_SOURCES`), `app` and `storage` —
 /// mirrored by `DIAG_SOURCES` in `diag/diag.ts` (gate `diag.guard`).
-pub const SOURCES: [&str; 21] = [
+pub const SOURCES: [&str; 22] = [
     "connection",
     "terminal",
     "files",
@@ -70,6 +70,7 @@ pub const SOURCES: [&str; 21] = [
     "ai",
     "netcheck",
     "scenarios",
+    "db",
     "monitoring",
     "servers",
     "settings",
@@ -1237,11 +1238,14 @@ mod tests {
 #[cfg(test)]
 mod gates {
     use super::is_secret_field;
+    use crate::srcscan::{call_args, code_only, shipped, without_comments};
     use std::path::{Path, PathBuf};
 
     const LEVELS: [&str; 5] = ["error", "warn", "info", "debug", "trace"];
 
-    /// Every `.rs` file under `src/`, with its path relative to it.
+    /// Every `.rs` file under `src/`, tests and all, with its path relative to
+    /// it and without comments. These gates' module alone is cut out — its
+    /// samples are violations on purpose — and what follows it is not.
     fn sources() -> Vec<(String, String)> {
         let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
         let mut out = Vec::new();
@@ -1257,66 +1261,33 @@ mod gates {
                         .expect("under src")
                         .to_string_lossy()
                         .replace('\\', "/");
-                    let mut text = std::fs::read_to_string(&path).expect("read source");
-                    // These gates' own samples are violations on purpose.
-                    if let Some(at) = text.find("\nmod gates {") {
-                        text.truncate(at);
-                    }
-                    out.push((rel, without_comments(&text)));
+                    let text = std::fs::read_to_string(&path)
+                        .expect("read source")
+                        .replace("\r\n", "\n");
+                    let gates = text
+                        .find("#[cfg(test)]\nmod gates {")
+                        .filter(|_| rel == "diag/mod.rs")
+                        .unwrap_or(text.len());
+                    let code = without_comments(&text[..gates]) + &shipped(&text[gates..]);
+                    out.push((rel, code));
                 }
             }
         }
         out
-    }
-
-    /// The code of `src`, line comments cut (a doc line names macros freely).
-    fn without_comments(src: &str) -> String {
-        src.lines()
-            .map(|l| {
-                let t = l.trim_start();
-                if t.starts_with("//") {
-                    ""
-                } else {
-                    l
-                }
-            })
-            .collect::<Vec<_>>()
-            .join("\n")
     }
 
     /// The argument text of every `tracing::<level>!(…)` event in `src`.
     fn events(src: &str) -> Vec<String> {
-        let mut out = Vec::new();
-        for level in LEVELS {
-            let head = format!("tracing::{level}!(");
-            let mut from = 0;
-            while let Some(at) = src[from..].find(&head) {
-                let start = from + at + head.len();
-                let mut depth = 1;
-                let mut end = start;
-                for (i, c) in src[start..].char_indices() {
-                    match c {
-                        '(' => depth += 1,
-                        ')' => depth -= 1,
-                        _ => {}
-                    }
-                    if depth == 0 {
-                        end = start + i;
-                        break;
-                    }
-                }
-                out.push(src[start..end].to_owned());
-                from = end.max(start);
-            }
-        }
-        out
+        call_args(src, &LEVELS.map(|level| format!("tracing::{level}!(")))
     }
 
-    /// Events that do not say their source.
+    /// Events that do not say their source: no field named `source`, outside
+    /// a literal.
     fn untagged(src: &str) -> Vec<String> {
+        let tag = regex::Regex::new(r"(?:^|[,(\s])source\s*=[^=]").expect("pattern");
         events(src)
             .into_iter()
-            .filter(|args| !args.contains("source ="))
+            .filter(|args| !tag.is_match(&code_only(args)))
             .collect()
     }
 
@@ -1349,6 +1320,34 @@ mod gates {
         assert_eq!(secret_fields(bad).len(), 2);
         let good = r#"tracing::warn!(source = "storage", path = %p, tokens_in = 3, "known_hosts not written");"#;
         assert!(untagged(good).is_empty() && secret_fields(good).is_empty());
+        // A bracket or a tag inside a literal is neither one.
+        for text in [
+            r#""a) done""#,
+            r##"r#"a) "done""#"##,
+            "')'",
+            r#""\") done""#,
+        ] {
+            let leak = format!("tracing::info!(source = \"app\", note = {text}, password = pw)");
+            assert_eq!(secret_fields(&leak).len(), 1, "{text}");
+        }
+        let opened = r#"tracing::info!(source = "app", "a ( left open"); f(password = pw);"#;
+        assert!(
+            secret_fields(opened).is_empty(),
+            "the event ends at its own bracket"
+        );
+        let quoted = r#"tracing::info!(note = "a) source = app", "x");"#;
+        assert_eq!(untagged(quoted).len(), 1, "a tag in a string is no tag");
+        let resourced = r#"tracing::info!(resource = r, "x");"#;
+        assert_eq!(
+            untagged(resourced).len(),
+            1,
+            "a field that ends in `source` is no tag"
+        );
+        let named = r#"let sample = "tracing::info!("; f();"#;
+        assert!(
+            untagged(named).is_empty(),
+            "a macro named in a string is no event"
+        );
 
         let mut offenders = Vec::new();
         for (file, src) in sources() {

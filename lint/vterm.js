@@ -870,6 +870,33 @@ const rules = {
     },
   ),
 
+  "derived-no-create": rule(
+    "State is not created inside $derived or a markup expression",
+    "{{name}}() creates the session's dock state on first access — a state write, which Svelte refuses inside $derived and in markup (state_unsafe_mutation): the first panel of a restored tab turned the app into \"500 Internal Error\". Read with peekDockState() or another getter that does not create.",
+    (_, report) => {
+      // dockstate.svelte.ts: each of these writes an empty entry when there is none.
+      const CREATES = new Set(["dockState", "storedSub", "logView", "fileSearch"]);
+      const FN = new Set(["ArrowFunctionExpression", "FunctionExpression", "FunctionDeclaration"]);
+      const isDerived = (c) =>
+        (c.type === "Identifier" && c.name === "$derived") ||
+        (c.type === "MemberExpression" && c.object.type === "Identifier" && c.object.name === "$derived" && c.property.name === "by");
+      return {
+        CallExpression(node) {
+          if (node.callee.type !== "Identifier" || !CREATES.has(node.callee.name)) return;
+          let inFunction = false;
+          for (let n = node.parent; n; n = n.parent) {
+            // `$derived.by(() => …)`: the function is the derived's own body.
+            if (n.type === "CallExpression" && isDerived(n.callee)) return report(node, { name: node.callee.name });
+            if (n.type === "SvelteScriptElement") return;
+            if (FN.has(n.type)) inFunction = true;
+            // Markup outside a handler is evaluated as the template renders.
+            else if (!inFunction && n.type.startsWith("Svelte")) return report(node, { name: node.callee.name });
+          }
+        },
+      };
+    },
+  ),
+
   "each-as-t": rule(
     "An each-block variable is not named t",
     "Don't name the {#each} variable `t`: it shadows the translation function t() for the whole block.",

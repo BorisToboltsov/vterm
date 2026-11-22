@@ -2127,16 +2127,6 @@ mod tests {
         assert!(audit_body(&up, &done).ends_with("interrupted: the session ended"));
     }
 
-    /// Source of this module before its tests, line comments stripped.
-    fn code() -> String {
-        let src = include_str!("transfers.rs").replace("\r\n", "\n");
-        src[..src.find("#[cfg(test)]").expect("tests")]
-            .lines()
-            .map(|l| l.split("//").next().unwrap_or(""))
-            .collect::<Vec<_>>()
-            .join("\n")
-    }
-
     #[test]
     fn a_job_is_told_only_to_the_windows_of_its_sessions() {
         // Guard (v1.12, ADR 0025). A job's state goes to whichever window shows
@@ -2144,7 +2134,7 @@ mod tests {
         // a tab move to another window with its transfer under way. Sent to the
         // window that started the job, or to every window, the row would stay
         // behind in a window that no longer has the tab.
-        let code = code();
+        let code = crate::srcscan::shipped(include_str!("transfers.rs"));
         // One place sends, and it sends to the audience.
         assert_eq!(code.matches("emit_to(").count(), 1, "one place sends a job");
         assert!(!code.contains(".emit("), "a job is never broadcast");

@@ -241,6 +241,9 @@ const CASES: Record<string, { bad: [string, string][]; good: [string, string][] 
       // A monitoring section polling GPUs itself, or reading a process in a loop.
       ["src/lib/monitoring/MonGpu.svelte", svelte(`import { fetchLiveExtras } from "../api";\nvoid fetchLiveExtras;`)],
       ["src/lib/monitoring/MonitoringOverlay.svelte", svelte(`import { fetchProcessDetail } from "../api";\nvoid fetchProcessDetail;`)],
+      // A database asked past its store: no question, no turn, no end with the tab (ADR 0080).
+      ["src/lib/db/DbConsole.svelte", svelte(`import { dbQuery } from "../api/db";\nvoid dbQuery;`)],
+      ["src/lib/db/DbPanel.svelte", svelte(`import { dbConnect } from "../api/db";\nvoid dbConnect;`)],
       // A second poller of the basic metrics — the status bar asking on its own timer.
       ["src/lib/monitoring/StatusBar.svelte", svelte(`import { fetchMetrics } from "../api";\nvoid fetchMetrics;`)],
       // A message slipped into the journal unmasked, or the list read past the store.
@@ -372,6 +375,19 @@ const CASES: Record<string, { bad: [string, string][]; good: [string, string][] 
         "src/lib/ui/zz_probe.ts",
         `import { pathSyncMode } from "../pathsync/pathsync";\ndeclare const list: { pathSync?: string }[];\nexport const m = pathSyncMode(list.find(Boolean)?.pathSync);`,
       ],
+    ],
+  },
+  "derived-no-create": {
+    bad: [
+      // DockPanel as it was: a restored tab's first file panel read this before the entry existed.
+      ["src/lib/files/ZzProbe.svelte", svelte(`import { dockState, peekDockState } from "../stores/dockstate.svelte";\nlet { sessionId }: { sessionId: string } = $props();\nconst ctx = $derived(dockState(sessionId).k8sScope?.context ?? null);\nvoid ctx; void peekDockState;`)],
+      ["src/lib/files/ZzProbe.svelte", svelte(`import { dockState, peekDockState } from "../stores/dockstate.svelte";\nlet { sessionId }: { sessionId: string } = $props();\nconst cwd = $derived.by(() => dockState(sessionId).cwd);\nvoid cwd; void peekDockState;`)],
+      ["src/lib/files/ZzProbe.svelte", svelte(`import { dockState, peekDockState } from "../stores/dockstate.svelte";\nlet { sessionId }: { sessionId: string } = $props();\nvoid peekDockState;`, `<span>{dockState(sessionId).cwd}</span>`)],
+    ],
+    good: [
+      ["src/lib/files/ZzProbe.svelte", svelte(`import { dockState, peekDockState } from "../stores/dockstate.svelte";\nlet { sessionId }: { sessionId: string } = $props();\nconst ctx = $derived(peekDockState(sessionId)?.k8sScope?.context ?? null);\nvoid ctx; void dockState;`)],
+      // At init and in a handler the write is the component's own, not a derived's.
+      ["src/lib/files/ZzProbe.svelte", svelte(`import { dockState, peekDockState } from "../stores/dockstate.svelte";\nlet { sessionId }: { sessionId: string } = $props();\nconst saved = dockState(sessionId).cwd;\nvoid saved; void peekDockState;`, `<button onclick={() => (dockState(sessionId).cwd = "/")}>x</button>`)],
     ],
   },
   "each-as-t": {

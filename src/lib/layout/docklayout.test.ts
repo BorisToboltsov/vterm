@@ -65,10 +65,11 @@ describe("guards and bounds", () => {
     expect(isDockSide("top")).toBe(false);
   });
 
-  it("treats the server tree and the Scenarios panel as the global panels", () => {
+  it("treats the server tree, the Scenarios and the Databases panels as the global panels", () => {
     expect(isSessionPanel("servers")).toBe(false);
     expect(isSessionPanel("scenarios")).toBe(false);
-    for (const id of PANEL_IDS.filter((p) => p !== "servers" && p !== "scenarios")) expect(isSessionPanel(id)).toBe(true);
+    expect(isSessionPanel("db")).toBe(false);
+    for (const id of PANEL_IDS.filter((p) => p !== "servers" && p !== "scenarios" && p !== "db")) expect(isSessionPanel(id)).toBe(true);
   });
 
   it("clamps values and dock sizes", () => {
@@ -139,9 +140,9 @@ describe("guards and bounds", () => {
 });
 
 describe("defaultDocks", () => {
-  it("puts the tree left, files/git/AI right and Docker/k8s/CI/Scenarios at the bottom", () => {
+  it("puts the tree and the databases left, files/git/AI right and Docker/k8s/CI/Scenarios at the bottom", () => {
     const d = defaultDocks();
-    expect(d.left.panels).toEqual(["servers"]);
+    expect(d.left.panels).toEqual(["servers", "db"]);
     expect(d.right.panels).toEqual(["files", "git", "ai"]);
     expect(d.bottom.panels).toEqual(["docker", "k8s", "ci", "scenarios"]);
     expect(d.left.collapsed).toBe(false);
@@ -153,14 +154,14 @@ describe("defaultDocks", () => {
   it("returns a fresh object every time", () => {
     const a = defaultDocks();
     a.left.panels.push("ai");
-    expect(defaultDocks().left.panels).toEqual(["servers"]);
+    expect(defaultDocks().left.panels).toEqual(["servers", "db"]);
   });
 });
 
 describe("sanitizeDocks", () => {
   it("keeps a valid layout as it is", () => {
     const d = defaultDocks();
-    d.left.panels = ["servers", "docker"];
+    d.left.panels = ["servers", "db", "docker"];
     d.bottom.panels = ["k8s", "ci", "scenarios"];
     d.bottom.active = "k8s";
     d.left.active = "docker";
@@ -175,7 +176,8 @@ describe("sanitizeDocks", () => {
       right: { panels: ["git", "files", "files", 7] },
       bottom: { panels: ["docker", "k8s", "ai"] },
     });
-    expect(d.left.panels).toEqual(["servers", "git"]);
+    // The databases are missing from the stored layout: they come back into their own dock.
+    expect(d.left.panels).toEqual(["servers", "git", "db"]);
     expect(d.right.panels).toEqual(["files"]);
     // CI and Scenarios are missing from the stored layout: they come back into their own dock.
     expect(d.bottom.panels).toEqual(["docker", "k8s", "ai", "ci", "scenarios"]);
@@ -267,7 +269,7 @@ describe("loadDocks", () => {
     const stored = persistedLayout(movePanel(defaultDocks(), "docker", "left"));
     expect(stored.version).toBe(LAYOUT_VERSION);
     const d = loadDocks(JSON.parse(JSON.stringify(stored)));
-    expect(d.left.panels).toEqual(["servers", "docker"]);
+    expect(d.left.panels).toEqual(["servers", "db", "docker"]);
     expectWellFormed(d);
   });
 
@@ -301,7 +303,7 @@ describe("loadDocks", () => {
     const docks = defaultDocks();
     const stored = persistedLayout(docks);
     stored.docks.left.panels.push("ai");
-    expect(docks.left.panels).toEqual(["servers"]);
+    expect(docks.left.panels).toEqual(["servers", "db"]);
   });
 });
 
@@ -451,8 +453,8 @@ describe("revealPanel", () => {
 describe("what a dock shows", () => {
   it("offers session panels only while there is a session", () => {
     const d = movePanel(defaultDocks(), "docker", "left");
-    expect(availablePanels(d.left, true)).toEqual(["servers", "docker"]);
-    expect(availablePanels(d.left, false)).toEqual(["servers"]);
+    expect(availablePanels(d.left, true)).toEqual(["servers", "db", "docker"]);
+    expect(availablePanels(d.left, false)).toEqual(["servers", "db"]);
     expect(availablePanels(d.right, false)).toEqual([]);
   });
 
@@ -487,7 +489,7 @@ describe("insertionIndex", () => {
 
 describe("hidden panels", () => {
   it("lets every panel be hidden except the server tree", () => {
-    expect(HIDEABLE_PANELS).toEqual(["files", "git", "docker", "k8s", "ci", "scenarios", "ai"]);
+    expect(HIDEABLE_PANELS).toEqual(["db", "files", "git", "docker", "k8s", "ci", "scenarios", "ai"]);
     expect(canHidePanel("docker")).toBe(true);
     expect(canHidePanel("servers")).toBe(false);
   });
@@ -555,7 +557,7 @@ describe("previewPanels", () => {
   it("is the current order while the tab is over nothing", () => {
     const d = defaultDocks();
     expect(previewPanels(d, "docker", null)).toEqual({
-      left: ["servers"],
+      left: ["servers", "db"],
       right: ["files", "git", "ai"],
       bottom: ["docker", "k8s", "ci", "scenarios"],
     });
@@ -564,7 +566,7 @@ describe("previewPanels", () => {
   it("opens a slot in the dock under the pointer and closes the one it left", () => {
     const d = defaultDocks();
     expect(previewPanels(d, "docker", { side: "right", index: 1 })).toEqual({
-      left: ["servers"],
+      left: ["servers", "db"],
       right: ["files", "docker", "git", "ai"],
       bottom: ["k8s", "ci", "scenarios"],
     });

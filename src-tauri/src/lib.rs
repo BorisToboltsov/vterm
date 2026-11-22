@@ -5,6 +5,7 @@ mod backup;
 mod ci;
 mod commands;
 mod container;
+mod db;
 mod diag;
 mod dragghost;
 mod dragout;
@@ -37,6 +38,8 @@ mod secrets;
 mod servers;
 mod servertools;
 mod sftp;
+#[cfg(test)]
+mod srcscan;
 mod ssh;
 mod store;
 mod sudo;
@@ -112,7 +115,7 @@ impl AppState {
     }
 
     /// The current profile of the server an SSH session was opened for.
-    fn session_server(&self, session_id: &str) -> Option<ServerProfile> {
+    pub(crate) fn session_server(&self, session_id: &str) -> Option<ServerProfile> {
         let server_id = self.session_servers.locked().get(session_id).cloned()?;
         self.servers
             .locked()
@@ -169,6 +172,17 @@ pub(crate) async fn end_session(app: &AppHandle, session_id: &str) {
             "language servers stopped with the session"
         );
     }
+    // So do its database connections (ADR 0080): they run through it.
+    let dbs = app.state::<db::Dbs>().close_session(session_id);
+    if !dbs.is_empty() {
+        tracing::info!(
+            source = "db",
+            sid = session_id,
+            connections = dbs.len(),
+            "database connections closed with the session"
+        );
+    }
+    dbs.into_iter().for_each(db::let_go);
     // So does its sync run, between two files (v1.36: the run is the backend's,
     // no window's teardown stops it any more).
     let run = state.sync_runs.locked().remove(session_id);
@@ -376,6 +390,7 @@ pub fn run() {
         .manage(appwin::Windows::default())
         .manage(transfers::Jobs::default())
         .manage(lsp::Lsps::default())
+        .manage(db::Dbs::default())
         // Read before any window asks: a journal that does not parse is
         // quarantined in time for the main window to be told.
         .manage(journal::Journal::load())
@@ -477,6 +492,15 @@ pub fn run() {
             commands::editor::lsp_start,
             commands::editor::lsp_send,
             commands::editor::lsp_stop,
+            commands::db::db_local_list,
+            commands::db::db_save_local,
+            commands::db::set_server_databases,
+            commands::db::db_forget_password,
+            commands::db::db_connect,
+            commands::db::db_query,
+            commands::db::db_apply,
+            commands::db::db_cancel,
+            commands::db::db_close,
             commands::sftp::nginx_config_files,
             commands::sftp::server_tools_status,
             commands::sftp::run_tool_install,
@@ -621,10 +645,9 @@ mod tests {
         // Guard (deep-check E2E, v1.0.31): once `ssh::connect` succeeded the session is
         // live, and an early return drops it. A keychain `set_password(..)?` did
         // exactly that on Linux without a Secret Service — the user authenticated
-        // and got an error instead of a shell. Scans the code (comments stripped)
-        // between the login and the end of the command for any `?`.
-        // A Windows checkout carries CRLF (core.autocrlf); the markers below are LF.
-        let src = crate::commands::bridge_source();
+        // and got an error instead of a shell. Scans the code (no comments, the
+        // literals emptied) between the login and the end of the command for any `?`.
+        let src = crate::srcscan::code_only(&crate::commands::bridge_source());
         let body = &src[src
             .find("async fn connect_session(")
             .expect("connect_session")..];
@@ -633,29 +656,19 @@ mod tests {
         // The login is the statement that calls it: whatever ends it, what follows
         // runs with the session live.
         let after_login = &after_login[after_login.find(";\n").expect("end of the login") + 2..];
-        let code: String = after_login
-            .lines()
-            .map(|l| l.split("//").next().unwrap_or(""))
-            .collect::<Vec<_>>()
-            .join("\n");
         assert!(
-            !code.contains('?'),
-            "connect_session propagates an error after login — the live session would be dropped:\n{code}"
+            !after_login.contains('?'),
+            "connect_session propagates an error after login — the live session would be dropped:\n{after_login}"
         );
     }
 
-    /// The body of `async fn <name>(` up to its closing `}` at column 0, with
-    /// line comments stripped.
+    /// The body of `async fn <name>(` up to its closing `}` at column 0.
     fn command_code(src: &str, name: &str) -> String {
         let at = src
             .find(&format!("async fn {name}("))
             .unwrap_or_else(|| panic!("{name} not found"));
         let body = &src[at..];
-        let body = &body[..body.find("\n}\n").expect("end of fn")];
-        body.lines()
-            .map(|l| l.split("//").next().unwrap_or(""))
-            .collect::<Vec<_>>()
-            .join("\n")
+        body[..body.find("\n}\n").expect("end of fn")].to_string()
     }
 
     #[test]
@@ -713,24 +726,14 @@ mod tests {
         assert!(!netcheck_is_stoppable(&planted));
     }
 
-    /// Everything before the tests, line comments stripped.
-    fn code_of(src: &str) -> String {
-        let src = src.replace("\r\n", "\n");
-        src[..src.find("#[cfg(test)]").unwrap_or(src.len())]
-            .lines()
-            .map(|l| l.split("//").next().unwrap_or(""))
-            .collect::<Vec<_>>()
-            .join("\n")
-    }
-
     #[test]
     fn quitting_always_goes_through_the_confirmation() {
         // Guard (v1.0.33): the predefined `quit()` menu item terminates the app
         // natively, past `request_quit` — ⌘Q would silently drop every session the
         // quit dialog exists to list. And a close request must be the one the
         // guard can veto (`prevent_close`), not left to close the window.
-        let code = code_of(&crate::commands::bridge_source());
-        let windows = code_of(include_str!("appwin.rs"));
+        let code = crate::commands::bridge_source();
+        let windows = crate::srcscan::shipped(include_str!("appwin.rs"));
         assert!(
             !code.contains(".quit()") && !windows.contains(".quit()"),
             "native Quit bypasses the confirmation"
@@ -749,8 +752,7 @@ mod tests {
             .expect("close request")..];
         let asks = &asks[..asks.find("WindowEvent::Destroyed").expect("next arm")];
         assert!(asks.contains("request_quit(app);"));
-        // (`code_of` cuts a line at `//`, so the event name ends at its scheme.)
-        assert!(asks.contains("app.emit_to(label, \"window:"));
+        assert!(asks.contains("app.emit_to(label, \"window://close\""));
     }
 
     #[test]
@@ -760,7 +762,7 @@ mod tests {
         // the `disconnect` a window sends reaches it only past the owner check —
         // otherwise the window that gave a tab away would end the session behind
         // the new owner's back with its ordinary teardown.
-        let code = code_of(&crate::commands::bridge_source());
+        let code = crate::commands::bridge_source();
         for removal in [
             "sessions.lock().await.remove(",
             "local_ptys.locked().remove(",
@@ -780,7 +782,7 @@ mod tests {
             .expect("owner check");
         assert!(check < disconnect.find("end_session(").expect("ends the session"));
         // A window that is gone has its sessions ended for it.
-        let windows = code_of(include_str!("appwin.rs"));
+        let windows = crate::srcscan::shipped(include_str!("appwin.rs"));
         let destroyed = &windows[windows.find("WindowEvent::Destroyed").expect("destroyed")..];
         assert!(
             destroyed[..destroyed.find("_ => false").expect("end of arms")]

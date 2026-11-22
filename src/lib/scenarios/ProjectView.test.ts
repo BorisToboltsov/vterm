@@ -79,6 +79,7 @@ const db: ServerProfile = {
   logins: [],
   defaultLogin: "",
   askLogin: false,
+  databases: [],
   group: null,
   tags: [],
   prod: true,

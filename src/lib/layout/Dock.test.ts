@@ -514,7 +514,7 @@ describe("Dock — moving a panel", () => {
     expect(screen.queryByRole("menuitem", { name: "Move to the left panel" })).toBeNull();
     await fireEvent.click(screen.getByRole("menuitem", { name: "Move to the bottom panel" }));
     expect(layout.docks.bottom.panels).toEqual(["docker", "k8s", "ci", "scenarios", "servers"]);
-    expect(layout.docks.left.panels).toEqual([]);
+    expect(layout.docks.left.panels).toEqual(["db"]);
   });
 
   it("offers its window edge as a drop zone only while empty and a tab is dragged", () => {

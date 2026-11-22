@@ -11,7 +11,7 @@
 // and ports the user typed, only a TCP handshake that is closed at once with no
 // payload. The route-source lookup uses a *connected UDP socket*, which sends
 // nothing — it only asks the kernel which address it would use. The gate
-// `app_originated_sockets_live_only_in_ssh_and_netcheck` keeps it that narrow.
+// `app_originated_sockets_live_only_in_ssh_netcheck_and_db` keeps it that narrow.
 //
 // Output is the same tab-separated line protocol the remote script prints
 // (documented in netcheck.ts), with verdicts already classified (`N` lines), so
@@ -933,17 +933,6 @@ mod tests {
     /// (`every_local_cli_spawn_hides_the_console_window`) sees only real ones.
     const SPAWN: &str = concat!("tokio::process::", "Command::new(");
 
-    /// Code before the tests, line comments dropped.
-    fn code(src: &str) -> String {
-        let src = src.replace("\r\n", "\n");
-        let end = src.find("#[cfg(test)]").unwrap_or(src.len());
-        src[..end]
-            .lines()
-            .map(|l| l.split("//").next().unwrap_or(""))
-            .collect::<Vec<_>>()
-            .join("\n")
-    }
-
     /// The body of top-level `fn <name>(` (async or not) up to its closing `}`
     /// at column 0.
     fn body_of(code: &str, name: &str) -> String {
@@ -960,7 +949,7 @@ mod tests {
     /// takes the tool by `LocalTool::parse`, and the local branch hands the
     /// runner no `args` from the page.
     fn tools_take_only_their_name(netcheck: &str, lib: &str) -> bool {
-        let nc = code(netcheck);
+        let nc = crate::srcscan::shipped(netcheck);
         let spawns = nc.matches(SPAWN).count();
         let once = body_of(&nc, "tool_once");
         let calls: Vec<&str> = nc
@@ -971,9 +960,8 @@ mod tests {
             .iter()
             .filter(|c| !c.starts_with("tool_once(\n    program: &OsStr"))
             .collect();
-        let lib = code(lib);
-        let run = body_of(&lib, "netcheck_run");
-        let exec = body_of(&lib, "netcheck_exec");
+        let run = body_of(lib, "netcheck_run");
+        let exec = body_of(lib, "netcheck_exec");
         let local = &exec[exec.find("local_pty(").unwrap_or(0)..];
         spawns == 1
             && once.contains(".args(&argv)")
@@ -1019,17 +1007,30 @@ mod tests {
     }
 
     /// Gate (v1.0.36): the app opens sockets of its own only for SSH (incl. the
-    /// user's proxy) and for the explicit local access check. Any other module
-    /// dialing out would break the offline invariant (ADR 0004) silently — the
-    /// network is only ever reached on the user's behalf. Scans code with line
-    /// comments stripped, so docs may name the primitives.
+    /// user's proxy), for the explicit local access check, and for a database
+    /// (ADR 0080) — of this computer at its loopback or a socket, or the MySQL
+    /// relay's one-connection door. Any other module dialing out would break the
+    /// offline invariant (ADR 0004) silently — the network is only ever reached
+    /// on the user's behalf. A driver that dials by itself counts too
+    /// (`mysql_async::Conn::new`). Scans code and tests with comments stripped,
+    /// so docs may name the primitives.
     #[test]
-    fn app_originated_sockets_live_only_in_ssh_and_netcheck() {
-        const ALLOWED: &[&str] = &["ssh.rs", "netcheck.rs"];
+    fn app_originated_sockets_live_only_in_ssh_netcheck_and_db() {
+        const ALLOWED: &[&str] = &[
+            "ssh.rs",
+            "netcheck.rs",
+            "db/net.rs",
+            "db/relay.rs",
+            "db/my.rs",
+        ];
         const PRIMITIVES: &[&str] = &[
             "TcpStream::connect",
             "TcpSocket::",
             "UdpSocket::",
+            "TcpListener::bind",
+            "UnixListener::bind",
+            "UnixStream::connect",
+            "mysql_async::Conn::new",
             "lookup_host(",
             "to_socket_addrs(",
         ];
@@ -1046,26 +1047,25 @@ mod tests {
                 if path.extension().and_then(|e| e.to_str()) != Some("rs") {
                     continue;
                 }
-                let name = path.file_name().unwrap().to_string_lossy().to_string();
-                if ALLOWED.contains(&name.as_str()) {
+                let rel = path
+                    .strip_prefix(&root)
+                    .unwrap()
+                    .to_string_lossy()
+                    .replace('\\', "/");
+                if ALLOWED.contains(&rel.as_str()) {
                     continue;
                 }
                 let src = std::fs::read_to_string(&path).unwrap();
-                for (i, line) in src.lines().enumerate() {
-                    let code = line.split("//").next().unwrap_or("");
+                for (i, code) in crate::srcscan::without_comments(&src).lines().enumerate() {
                     if PRIMITIVES.iter().any(|p| code.contains(p)) {
-                        offenders.push(format!(
-                            "{}:{}",
-                            path.strip_prefix(&root).unwrap().display(),
-                            i + 1
-                        ));
+                        offenders.push(format!("{rel}:{}", i + 1));
                     }
                 }
             }
         }
         assert!(
             offenders.is_empty(),
-            "sockets opened outside ssh.rs/netcheck.rs (offline invariant): {offenders:?}"
+            "sockets opened outside ssh.rs/netcheck.rs/db (offline invariant): {offenders:?}"
         );
     }
 }

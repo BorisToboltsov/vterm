@@ -13,6 +13,8 @@ export function panelLabel(id: PanelId): string {
   switch (id) {
     case "servers":
       return t("tree.servers");
+    case "db":
+      return t("db.panelTitle");
     case "files":
       return "SFTP";
     case "git":

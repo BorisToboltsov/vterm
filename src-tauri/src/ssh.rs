@@ -230,10 +230,8 @@ impl SshSession {
 
     /// Send user keystrokes to the remote shell (recording input first if active).
     pub async fn write_input(&self, data: Vec<u8>) -> AppResult<()> {
-        if let Ok(mut g) = self.recorder.lock() {
-            if let Some(r) = g.as_mut() {
-                r.input(&data);
-            }
+        if let Some(r) = self.recorder.locked().as_mut() {
+            r.input(&data);
         }
         self.write
             .data_bytes(data)
@@ -567,13 +565,42 @@ impl SshSession {
         Ok(channel)
     }
 
+    /// A channel to `host:port` as the server sees it (`direct-tcpip`, ADR 0080):
+    /// a database the server reaches, spoken to through this connection — no
+    /// socket opens on this computer.
+    pub async fn direct_tcpip(
+        &self,
+        host: &str,
+        port: u16,
+    ) -> AppResult<russh::Channel<client::Msg>> {
+        answered(
+            self.handle.channel_open_direct_tcpip(
+                host.to_string(),
+                u32::from(port),
+                "127.0.0.1",
+                0,
+            ),
+            &format!("{host}:{port}"),
+        )
+        .await
+    }
+
+    /// A channel to a unix socket on the server (`direct-streamlocal@openssh.com`,
+    /// ADR 0080): a database listening on a socket file there.
+    pub async fn direct_streamlocal(&self, path: &str) -> AppResult<russh::Channel<client::Msg>> {
+        answered(
+            self.handle
+                .channel_open_direct_streamlocal(path.to_string()),
+            path,
+        )
+        .await
+    }
+
     /// Push bytes into the active recording as output (no-op if not recording).
     /// Used to mirror AI-executed commands into the session recording (17.8).
     pub fn record_output(&self, data: &[u8]) {
-        if let Ok(mut g) = self.recorder.lock() {
-            if let Some(r) = g.as_mut() {
-                r.output(data);
-            }
+        if let Some(r) = self.recorder.locked().as_mut() {
+            r.output(data);
         }
     }
 }
@@ -1320,10 +1347,8 @@ pub async fn connect(
             match read.wait().await {
                 Some(ChannelMsg::Data { data }) | Some(ChannelMsg::ExtendedData { data, .. }) => {
                     let bytes = data.to_vec();
-                    if let Ok(mut g) = rec_for_reader.lock() {
-                        if let Some(r) = g.as_mut() {
-                            r.output(&bytes);
-                        }
+                    if let Some(r) = rec_for_reader.locked().as_mut() {
+                        r.output(&bytes);
                     }
                     gate_for_reader.output(bytes);
                 }
@@ -1404,7 +1429,7 @@ mod tests {
     /// How many `channel_open_session()` calls in `src` — outside its tests —
     /// are not inside an `answered(…)`.
     fn unanswered_opens(src: &str) -> usize {
-        let code = src.split("#[cfg(test)]").next().unwrap_or(src);
+        let code = crate::srcscan::shipped_code(src);
         code.match_indices("channel_open_session()")
             .filter(|(at, _)| {
                 let before = &code[at.saturating_sub(60)..*at];
@@ -1418,14 +1443,13 @@ mod tests {
         // Gate: a channel the app opens on a dead link fails within
         // CHANNEL_STEP_TIMEOUT instead of waiting out the keepalive, with every
         // poll and file call queued behind it.
-        // A Windows checkout carries CRLF (core.autocrlf); the window below counts LF.
         for (name, src) in [
             ("ssh.rs", include_str!("ssh.rs")),
             ("fileuser.rs", include_str!("fileuser.rs")),
             ("sftp.rs", include_str!("sftp.rs")),
         ] {
             assert_eq!(
-                unanswered_opens(&src.replace("\r\n", "\n")),
+                unanswered_opens(src),
                 0,
                 "{name} opens a channel without a deadline"
             );

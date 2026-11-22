@@ -63,6 +63,9 @@ export function backendViolations(raw: string): string[] {
   const check = fn.indexOf("backup::check_catalog(");
   const save = fn.indexOf("store::save_servers(");
   if (check < 0 || save < 0 || check > save) out.push("the catalog is written before it is checked");
+  // ADR 0080: an archive says nothing of this computer's keychain.
+  const flags = fn.indexOf("keep_password_flags(");
+  if (flags < 0 || flags > save) out.push("a database's saved-password flag is written as the archive has it");
   if (!/store::save_servers\(&c\.servers\)/.test(fn)) out.push("the import writes something but the given catalog");
   return out;
 }
@@ -80,14 +83,17 @@ export function frontendViolations(dialog: string, settingsSection: string, rema
     out.push("the import is not given the chosen catalog");
   }
   const r = strip(body(strip(remap), /export function remapServers\(/));
-  // The server's own login, its jump host's, and each other login's (ADR 0074).
-  if ((r.match(/hasSavedPassword:/g) ?? []).length !== 3) {
-    out.push("the saved-password hint is set other than in the three places");
+  // The server's own login, its jump host's, each other login's (ADR 0074) and
+  // each database's, for the same place and user alone (ADR 0080).
+  if ((r.match(/hasSavedPassword:/g) ?? []).length !== 4) {
+    out.push("the saved-password hint is set other than in the four places");
   }
   if (
     !/hasSavedPassword:\s*mine\?\.hasSavedPassword\s*\?\?\s*false/.test(r) ||
     !/hasSavedPassword:\s*mine\?\.proxy\?\.hasSavedPassword\s*\?\?\s*false/.test(r) ||
-    !/hasSavedPassword:\s*here\?\.hasSavedPassword\s*\?\?\s*false/.test(r)
+    !/hasSavedPassword:\s*here\?\.hasSavedPassword\s*\?\?\s*false/.test(r) ||
+    !/hasSavedPassword:\s*same\s*&&\s*here\.hasSavedPassword/.test(r) ||
+    !/const same = !!here && here\.kind === d\.kind &&.*here\.host.*here\.port === d\.port && here\.user === d\.user/.test(r)
   ) {
     out.push("the saved-password hint is taken from the backup");
   }
@@ -134,6 +140,18 @@ describe("backup import guard", () => {
     expect(frontendViolations(read(DIALOG), read(SECTION), src)).toContain(
       "the saved-password hint is taken from the backup",
     );
+  });
+
+  it("catches a database's password hint carried over, or following another place (ADR 0080)", () => {
+    for (const [from, to] of [
+      ["hasSavedPassword: same && here.hasSavedPassword", "hasSavedPassword: d.hasSavedPassword"],
+      [" && here.port === d.port", ""],
+    ]) {
+      const src = read(REMAP).replace(from, to);
+      expect(frontendViolations(read(DIALOG), read(SECTION), src)).toContain("the saved-password hint is taken from the backup");
+    }
+    const lib = read(LIB).replace("crate::db::keep_password_flags(&state.servers.locked(), &mut c.servers);", "");
+    expect(backendViolations(lib)).toContain("a database's saved-password flag is written as the archive has it");
   });
 
   it("catches another login's hint carried over from the backup (ADR 0074)", () => {

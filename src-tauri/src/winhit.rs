@@ -205,16 +205,6 @@ fn at_pointer(_app: &AppHandle) -> Option<Hit> {
 
 #[cfg(test)]
 mod tests {
-    /// This file before its tests, line comments stripped.
-    fn code() -> String {
-        let src = include_str!("winhit.rs").replace("\r\n", "\n");
-        src[..src.find("#[cfg(test)]").expect("tests")]
-            .lines()
-            .map(|l| l.split("//").next().unwrap_or(""))
-            .collect::<Vec<_>>()
-            .join("\n")
-    }
-
     #[test]
     fn the_window_under_the_pointer_is_asked_of_the_os_never_guessed() {
         // Guard (v1.4.0, ADR 0018): what is frontmost at a point is the window
@@ -223,7 +213,7 @@ mod tests {
         // rectangles sends a tab into a window the user cannot see.
         // (`scale_factor` is not in the list: it turns the client pixels the
         // window system reported into CSS px, and decides nothing.)
-        let code = code();
+        let code = crate::srcscan::shipped(include_str!("winhit.rs"));
         for geometry in [
             "outer_position",
             "inner_position",

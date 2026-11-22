@@ -17,6 +17,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use serde::{Deserialize, Serialize};
 
 use crate::error::AppResult;
+use crate::locks::Locked;
 use crate::model::ServerProfile;
 
 fn config_file(name: &str) -> Option<PathBuf> {
@@ -170,12 +171,10 @@ where
                     "store file did not parse and could not be moved aside: its data is at risk"
                 ),
             }
-            if let Ok(mut w) = warnings().lock() {
-                w.push(StoreWarning {
-                    file: path.display().to_string(),
-                    quarantined,
-                });
-            }
+            warnings().locked().push(StoreWarning {
+                file: path.display().to_string(),
+                quarantined,
+            });
             T::default()
         }
     }
@@ -242,6 +241,31 @@ pub fn load_folders() -> Vec<String> {
 pub fn save_folders(folders: &[String]) -> AppResult<()> {
     let path = folders_path().ok_or("could not resolve config directory")?;
     let json = serde_json::to_vec_pretty(folders).map_err(|e| format!("serialize: {e}"))?;
+    write_atomic(&path, &json)?;
+    catalog_changed();
+    Ok(())
+}
+
+// ── Databases of this computer (ADR 0080) ──────────────────────────────────────
+//
+// A server's databases live in its profile (`ServerProfile.databases`) and travel
+// with it; the ones this computer reaches itself have no server to live in. Part
+// of the catalog: a change tells every window to read it again.
+
+fn databases_path() -> Option<PathBuf> {
+    config_file("databases.json")
+}
+
+pub fn load_local_databases() -> Vec<crate::model::DbProfile> {
+    let Some(path) = databases_path() else {
+        return Vec::new();
+    };
+    read_store(&path)
+}
+
+pub fn save_local_databases(dbs: &[crate::model::DbProfile]) -> AppResult<()> {
+    let path = databases_path().ok_or("could not resolve config directory")?;
+    let json = serde_json::to_vec_pretty(dbs).map_err(|e| format!("serialize: {e}"))?;
     write_atomic(&path, &json)?;
     catalog_changed();
     Ok(())
@@ -466,6 +490,7 @@ mod tests {
             logins: Vec::new(),
             default_login: String::new(),
             ask_login: false,
+            databases: Vec::new(),
         }
     }
 
@@ -695,6 +720,29 @@ mod tests {
 
         // Draining is what makes the toast show exactly once.
         assert!(take_warnings().is_empty());
+    }
+
+    #[test]
+    fn a_warning_is_kept_over_a_poisoned_lock() {
+        let _g = warnings_guard();
+        take_warnings();
+        let panicked = std::thread::spawn(|| {
+            let _held = warnings().lock();
+            panic!("poison it");
+        })
+        .join();
+        assert!(panicked.is_err() && warnings().is_poisoned());
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("folders.json");
+        fs::write(&path, b"not json at all").unwrap();
+
+        let _: Vec<String> = read_store(&path);
+        let told = take_warnings();
+        warnings().clear_poison();
+        assert!(
+            told.iter().any(|w| w.file == path.display().to_string()),
+            "a warning lost to a poisoned lock: {told:?}"
+        );
     }
 
     #[test]

@@ -136,6 +136,45 @@ pub struct ServerProfile {
     /// Ask which login on every connect, instead of the default one.
     #[serde(default)]
     pub ask_login: bool,
+    /// The databases this server reaches (ADR 0080): spoken to through its SSH
+    /// connection, addressed as the server sees them. Older builds read none.
+    #[serde(default)]
+    pub databases: Vec<DbProfile>,
+}
+
+/// Which database server a profile speaks to (ADR 0080).
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum DbKind {
+    Postgres,
+    Mysql,
+}
+
+/// A database a server — or this computer — reaches (ADR 0080). `host` is as
+/// the server sees it (`127.0.0.1`, a container's address, a host of its
+/// network) or, starting with `/`, a unix socket: PostgreSQL's socket folder,
+/// MySQL's socket file. Its password lives in the keychain under
+/// `secrets::db_scope`, never here.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct DbProfile {
+    pub id: String,
+    #[serde(default)]
+    pub name: String,
+    pub kind: DbKind,
+    pub host: String,
+    pub port: u16,
+    #[serde(default)]
+    pub database: String,
+    pub user: String,
+    #[serde(default)]
+    pub has_saved_password: bool,
+    /// Opened read-only. A prod server's databases are read-only whatever this says.
+    #[serde(default)]
+    pub read_only: bool,
+    /// The container it was found in: the console runs its client there.
+    #[serde(default)]
+    pub container: Option<String>,
 }
 
 /// Another login of a server (ADR 0074): whom it logs in as and how. Its
@@ -310,6 +349,11 @@ impl ServerProfile {
     /// The ids of the other logins — whose keychain scopes go with the server.
     pub fn login_ids(&self) -> Vec<String> {
         self.logins.iter().map(|l| l.id.clone()).collect()
+    }
+
+    /// Ids of the server's databases (ADR 0080) — whose passwords go with it.
+    pub fn database_ids(&self) -> Vec<String> {
+        self.databases.iter().map(|d| d.id.clone()).collect()
     }
 
     /// Whether this is a production server. The same rule as `isProdServer`
@@ -556,6 +600,7 @@ mod tests {
             logins: Vec::new(),
             default_login: String::new(),
             ask_login: false,
+            databases: Vec::new(),
         };
         let json = serde_json::to_string(&p).unwrap();
         // Field names must be camelCase for the TS frontend.

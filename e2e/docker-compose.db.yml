@@ -1,0 +1,64 @@
+# Disposable databases behind a disposable sshd (see e2e/db/Dockerfile): the
+# live tests reach PostgreSQL, MySQL and MariaDB through SSH channels — TCP to
+# their compose names, PostgreSQL also through its socket — and PostgreSQL
+# directly at 127.0.0.1:15432, as a database of this computer.
+#
+# The logins are in this file, so both ports are published on the loopback
+# address alone and the sshd forwards to these databases alone (db.conf).
+# Take the stand down after the run.
+#
+#   docker compose -f e2e/docker-compose.db.yml up -d --build --wait
+#   cargo test --manifest-path src-tauri/Cargo.toml --lib live_db -- --ignored --test-threads=1
+#   docker compose -f e2e/docker-compose.db.yml down -v
+
+name: vterm-db-test
+
+services:
+  sshd:
+    build: ./db
+    ports:
+      - "127.0.0.1:2225:2222"
+    volumes:
+      - pgsock:/var/run/postgresql
+  postgres:
+    image: postgres:16.6-alpine
+    environment:
+      - POSTGRES_USER=vterm
+      - POSTGRES_PASSWORD=vtermpass
+      - POSTGRES_DB=vterm
+    ports:
+      - "127.0.0.1:15432:5432"
+    volumes:
+      - pgsock:/var/run/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U vterm -d vterm"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+  mysql:
+    image: mysql:8.4
+    environment:
+      - MYSQL_ROOT_PASSWORD=rootpass
+      - MYSQL_DATABASE=vterm
+      - MYSQL_USER=vterm
+      - MYSQL_PASSWORD=vtermpass
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -uvterm -pvtermpass --silent"]
+      interval: 3s
+      timeout: 3s
+      retries: 40
+  mariadb:
+    image: mariadb:11.4
+    environment:
+      - MARIADB_ROOT_PASSWORD=rootpass
+      - MARIADB_DATABASE=vterm
+      - MARIADB_USER=vterm
+      - MARIADB_PASSWORD=vtermpass
+    healthcheck:
+      test: ["CMD", "healthcheck.sh", "--connect", "--innodb_initialized"]
+      interval: 3s
+      timeout: 3s
+      retries: 40
+
+volumes:
+  pgsock:

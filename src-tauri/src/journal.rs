@@ -809,7 +809,8 @@ mod tests {
     /// of its own in `journal.rs`, a store function that is not atomic or not
     /// quarantined, a backup that carries it.
     fn store_violations(journal: &str, store: &str, backups: &[&str]) -> Vec<String> {
-        let code = journal.split("#[cfg(test)]").next().unwrap_or(journal);
+        let code = crate::srcscan::shipped_code(journal);
+        let store = &crate::srcscan::shipped_code(store);
         let mut out: Vec<String> = ["fs::", "File::create", "OpenOptions"]
             .iter()
             .filter(|banned| code.contains(*banned))
@@ -867,6 +868,16 @@ mod tests {
         );
         assert_eq!(
             store_violations(journal, &plain, &backups),
+            ["save_journal writes atomically"]
+        );
+        let commented = store.replacen(
+            "write_atomic(&path, &json)?;\n    Ok(())\n}\n\n/// Take",
+            "std::fs::write(&path, &json)?;\n    // write_atomic(&path, &json)?;\n    Ok(())\n}\n\n/// Take",
+            1,
+        );
+        assert_ne!(commented, store);
+        assert_eq!(
+            store_violations(journal, &commented, &backups),
             ["save_journal writes atomically"]
         );
         let unquarantined = store.replacen(

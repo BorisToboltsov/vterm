@@ -624,6 +624,7 @@ fn begin(_app: &AppHandle, _window: &WebviewWindow, _spec: OutSpec, answer: Bega
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::srcscan::shipped;
 
     fn item(name: &str, is_dir: bool) -> OutItem {
         OutItem {
@@ -950,22 +951,8 @@ mod tests {
     }
 
     // ── Gate: a file leaves the app by one door ─────────────────────────────
-    // Each check is a function over source text with comments stripped, and
-    // the test shows each to catch the violation it is there for.
-
-    /// What ships: no line comments, nothing from the tests on. Line ends as
-    /// on the machine the test was written on — a Windows checkout has `\r\n`.
-    fn shipped(src: &str) -> String {
-        let code: Vec<&str> = src
-            .lines()
-            .map(|line| line.split("//").next().unwrap_or(""))
-            .collect();
-        let code = code.join("\n");
-        match code.find("#[cfg(test)]") {
-            Some(tests) => code[..tests].to_string(),
-            None => code,
-        }
-    }
+    // Each check is a function over the source as it ships, and the test shows
+    // each to catch the violation it is there for.
 
     /// `first` comes before `then` in `text`, and both are there.
     fn in_order(text: &str, first: &str, then: &str) -> bool {

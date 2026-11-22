@@ -143,6 +143,7 @@ const server = (id: string, prod = false): ServerProfile => ({
   logins: [],
   defaultLogin: "",
   askLogin: false,
+  databases: [],
   group: null,
   tags: [],
   prod,

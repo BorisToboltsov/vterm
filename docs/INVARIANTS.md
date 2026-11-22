@@ -13,6 +13,7 @@
 [Окна](#окна) ·
 [Панели-драйверы](#панели-драйверы) ·
 [Сценарии](#сценарии) ·
+[Базы данных](#базы-данных) ·
 [Логи, поиск, запись](#логи-поиск-запись-сессий) ·
 [Файлы, пути, текст](#файлы-пути-текст) ·
 [Хранение и секреты](#хранение-и-секреты) ·
@@ -56,12 +57,12 @@
    доступа» с локальной вкладки — рукопожатие или **его** `bash`/`nc`/`telnet`/`curl` (ADR 0012,
    0033, 0056); **его** `curl`/`openssl` в TLS-инспекторе и HTTP-клиенте (ADR 0014); проверка и
    скачивание релиза GitHub по явному действию (ADR 0031); **его** `gh`/`glab` к **его** GitHub/GitLab
-   в панели CI (ADR 0069); **его** `ansible`/`terraform` на хосте проекта (ADR 0071); **его** форматтеры и языковые серверы на хосте файла (ADR 0076, 0079). Такой трафик идёт только из Rust:
+   в панели CI (ADR 0069); **его** `ansible`/`terraform` на хосте проекта (ADR 0071); **его** форматтеры и языковые серверы на хосте файла (ADR 0076, 0079); база этого компьютера — loopback и сокет, база сервера — через его SSH (ADR 0080). Такой трафик идёт только из Rust:
    фронт сетевых вызовов не делает (`vterm/no-network`), CSP строгий; проксировать загрузку
    картинок или данных через Rust — то же обращение в сеть. Шрифты встроены, внешние ссылки —
    только по клику через `tauri-plugin-opener`; диагностика хоста исполняется на хосте сессии.
-   Сокеты приложения — только в `ssh.rs` и `netcheck.rs` (гейт
-   `app_originated_sockets_live_only_in_ssh_and_netcheck`).
+   Сокеты приложения — только в `ssh.rs`, `netcheck.rs` и драйверах БД (гейт
+   `app_originated_sockets_live_only_in_ssh_netcheck_and_db`).
 7. **Границы и предохранители — не одно и то же.** Границы: прод-/`noAi`-гейт в бэкенде, окно
    согласия ИИ, keychain, CSP, capabilities, политики argv (ADR 0036). Предохранители (bias:
    over-flag/over-mask): deny-list опасных команд, `needsConfirm`/`ConfirmDialog`, маскирование
@@ -147,7 +148,7 @@
   раскладка зон в сторе рабочих пространств — тем же деревом, что центр
   ([sessionviews.ts](../src/lib/layout/sessionviews.ts)).
   - Раскладку зон меняет только чистая модель; документ и его вид появляются и исчезают одним
-    шагом (`addEditor`, `addPipelinesView`/`closeEditor`), больше никто документы не добавляет и не убирает.
+    шагом (`addEditor`, `addPipelinesView`, `addDbView`/`closeEditor`), больше никто документы не добавляет и не убирает.
   - Новый файл встаёт к файлам (`fileZone`), а не поверх терминала, в котором печатают.
   - Редакторы — один плоский список на соединение: пересозданный теряет отмену, курсор и
     прокрутку; монтирование не зависит от зон и `tab.gen`.
@@ -397,6 +398,8 @@ Git, Docker, k8s, сетевые пробы и метрики — **один к�
   [dockstate](../src/lib/stores/dockstate.svelte.ts)** по `sessionId` (подключение и каталог
   файловой панели, scope k8s, подвкладка, что открыто рядом со списком, вид лога, поиск) и чистится
   в `closeTabFully`; выделение и модалки — не туда. Забытый context k8s не вшивается в argv.
+  В `$derived` и разметке — только `peekDockState`: `dockState` и его читатели создают запись, а
+  запись там Svelte запрещает — окно открывалось «500» (`vterm/derived-no-create`).
 - **Полоса проекта печатает команду в терминал, а не исполняет** (ADR 0077): тип и роли — по именам листинга (`projectmap.ts`), команда — argv под оболочку вкладки или строки по оболочкам, с `cd` в корень. Останавливающее и заменяющее спрашивает всегда, запускающее и задачи Makefile — на проде; контекст kubectl — из панели k8s, явно в argv. Полоса не рисует меню и диалогов, `files/` не пишет в терминал. Git-буквы — один `status` на листинг, пока видно. Гейт `editorwork.guard`.
 - **Подтверждения:** `isDestructive`/`needsConfirm` → `ConfirmDialog` на **любом** сервере, на
   проде — красное предупреждение (предохранитель, принцип 7).
@@ -613,6 +616,52 @@ Git, Docker, k8s, сетевые пробы и метрики — **один к�
   только `playbookLine` после `watchAnsibleRun`, серверы — только из каталога. Здесь — в своей папке,
   на сервере — копией в папке прогона (`carriedName`), удаляемой с ней. YAML с ошибкой показан с
   причиной, YAML папки-проекта — у проекта. Гейт `scenarios.guard`.
+
+## Базы данных
+
+PostgreSQL и MySQL/MariaDB — [ADR 0080](adr/0080-databases.md). Панель «Базы» глобальная
+(`isSessionPanel`); консоль и активность — документы соединения, у каждого своё подключение.
+
+- **Путь к базе выбирает бэкенд.** Окно называет вкладку и id базы: адрес, пароль и право писать — из
+  профиля. На SSH — канал через `answered`; с локальной вкладки — только loopback и сокет
+  (`on_this_computer`, имя не резолвится): исключение из офлайна не шире этого компьютера. Гейт
+  `a_database_of_this_computer_is_reached_on_this_computer_alone`.
+- **«Только чтение» держит бэкенд, окно лишь спрашивает.** Прод — всегда. Без `writable` проходит
+  только известное `db/sql.rs`: чтение, оператор транзакции, безобидная настройка; остальное —
+  `db-read-only` и вопрос. Замок снимается на один оператор, вне транзакции, и ставится заново;
+  продлевающее его — отказ и после согласия. Свои запросы приложения — в `appsql.cases.json`, иначе
+  панель ломается на проде. Гейты `read_only_is_held_by_the_backend_whatever_the_window_asked`,
+  `the_apps_own_reads_pass_and_its_changes_ask`.
+- **Один оператор за раз:** MySQL принимает несколько, поэтому их считает бэкенд по кавычкам
+  сервера (`sql_mode`). На пределе строк отменяется только чтение вне транзакции — отмена изменения
+  откатила бы его, — и отмену ждут до следующего оператора. Гейты
+  `a_second_statement_is_seen_behind_quotes_and_comments`,
+  `only_a_read_outside_a_transaction_is_stopped_at_the_row_cap`.
+- **Правится только чтение одной таблицы с её ключом** (`editTarget`), вне транзакции пользователя:
+  иначе ключ назвал бы другую строку, а COMMIT закрыл бы его транзакцию. Применение — одна
+  транзакция, каждый оператор — ровно одна строка; повторяется после него только чтение: повтор
+  `RETURNING` записал бы дважды. Гейт `edits_are_updates_and_deletes_outside_the_users_transaction`,
+  тест `dbflow.test.ts`.
+- **Пароль — keychain `vterm:db` у профиля:** не в файлах и argv; смена СУБД, адреса, порта или
+  пользователя его забывает, флаг из архива не берётся. Поля профиля не начинаются с `-` — они
+  уходят в argv клиента пользователя. Гейты
+  `a_saved_password_never_follows_a_changed_place_or_user`,
+  `nothing_of_a_profile_can_be_an_option_of_the_users_client`, `backupimport.guard`.
+- **Слова базы — только на экран:** они цитируют значения, а отказ команды пишет `call()`. Отказ
+  базы в подключении и в правке — ответ команды, отказ отмены — код, тост несёт код, SQLSTATE
+  проверяется. Событие — только из списка полей (`FIELDS`, `TOLD`): список запрещённых имён пропускал
+  переименованное. Гейты `sql_and_results_never_reach_the_diagnostics`,
+  `a_database_that_refuses_puts_none_of_its_words_into_a_refusal`, `db.guard`, тест `dbsilence.test.ts`.
+- **Строку записи `[sql]` строит бэкенд:** известный глагол и одна таблица — с её места сразу после
+  него. За любым другим `FROM` может стоять значение: кривая кавычка делает его слова словами
+  оператора. Гейт `the_recordings_line_is_built_here_and_holds_no_value`.
+- **Команды БД зовёт только стор `stores/db`** (`vterm/owned-imports`): операторы документа — по
+  одному. Подключение кончается с документом, вкладкой (`forgetDb`/`dropDb` в `closeTabFully`) и
+  сессией (`close_session`), идущее останавливают. Идущий оператор, открытая транзакция и
+  неприменённые правки без вопроса не закрываются (`dbWork`); активность читается, только пока
+  видна, по интервалу, а не на каждый ответ. Гейты `db.guard`, `tabteardown.guard`.
+
+---
 
 ## Логи, поиск, запись сессий
 
@@ -950,8 +999,10 @@ Git, Docker, k8s, сетевые пробы и метрики — **один к�
   (`rejectionLevel`). Своих команд диагностика не пишет. Правило `vterm/invoke-in-call`.
 - **Каждое сообщение — ещё и событие, тихих сообщений нет.** `journal_note` пишет событие
   (`diag::shown`); сказанное никому (переподключение, сбой опроса) — только событие. Неперехваченная
-  ошибка окна и паника бэкенда — `error` и одно сообщение «Внутренняя ошибка», не чаще раза в минуту;
-  о панике говорит главное окно. Диагностика — слой «Настройки → Журнал», читается страницами
+  ошибка окна и паника бэкенда — `error` и одно сообщение, не чаще раза в минуту: где сбой, у окна —
+  что упало (`internalErrorWhat`), и где подробности; о панике говорит главное окно. Перенос
+  уведомлений ResizeObserver на следующий кадр — не сбой: `debug`, без сообщения (`isBenignWindowError`).
+  Диагностика — слой «Настройки → Журнал», читается страницами
   (`diag_query`); окно под кнопкой журнала её не показывает. Гейты `diag.guard`, `journal.guard`.
 - **Текст события — технический английский: это данные, а не интерфейс.** Его ищут и пересылают;
   через `t()` идёт всё вокруг — уровни, источники, кнопки, подписи. Событие, которое читает
@@ -1043,6 +1094,9 @@ Git, Docker, k8s, сетевые пробы и метрики — **один к�
   advisory живёт, пока ему есть что исключать; npm ставится только `--frozen-lockfile`, у каждого
   пакета. Модель — [SECURITY.md](../SECURITY.md). Гейты `tauri-security.guard`,
   `releaseassets.guard`.
+- **Тестовый стенд слушает только `127.0.0.1`:** каждый опубликованный порт compose-файла в `e2e/`
+  называет этот адрес — пароли стендов в репозитории, и порт без адреса открыт всей сети машины.
+  Гейт `stands.guard`.
 - **Любой `EditorView` включает `cspNonceExtension()`** ([cspnonce.ts](../src/lib/editor/cspnonce.ts)):
   в `tauri build` nonce в `style-src` отменяет `'unsafe-inline'`, и стили CodeMirror без nonce не
   применяются — только в упакованной сборке. Дублировать стили в app.css и ослаблять CSP
@@ -1342,7 +1396,7 @@ Git, Docker, k8s, сетевые пробы и метрики — **один к�
 `overlay-z-index` · `type-scale` · `rem-sizes` · `micro-label` · `motion-duration` · `locale-binding` · `md-links`
 · `backdrop-no-close` · `each-as-t` · `path-sync-mode` · `owned-imports` (вызов, правило которого
 живёт в одном модуле, импортирует только он: `setServerPathSync`, `transferStart`,
-`importBackup`, `transferResume`, `startChat`, `netcheckRun`, `ciRun`, `lspStart`, `formatRun`, команды сценариев, `sftpOpenAs`, `fetchMetrics`, `fetchLiveExtras`, `fetchProcessDetail`, команды журнала, `noteJournal`, сырой `closeTab`) · `forbidden-imports` (стор вкладок
+`importBackup`, `transferResume`, `startChat`, `netcheckRun`, `ciRun`, `lspStart`, `formatRun`, команды сценариев, команды БД, `sftpOpenAs`, `fetchMetrics`, `fetchLiveExtras`, `fetchProcessDetail`, команды журнала, `noteJournal`, сырой `closeTab`) · `forbidden-imports` (стор вкладок
 не знает сторов рабочих пространств и чата, стор пришедшей вкладки знает стор вкладок только
 по типу) · `owned-writes` (`settings.terminalLinks`/`terminalFileLinks` пишут только раздел
 настроек и вопрос, который он отключает) · `theme-colors` · `virtual-scroll` · `paste-caret` ·
@@ -1350,7 +1404,9 @@ Git, Docker, k8s, сетевые пробы и метрики — **один к�
 на этом PR; правило действует и в тестах) · `invoke-in-call` (`invoke` — только в `api/call.ts`) ·
 `no-console` · `diag-no-secret` (поля события — литерал без секретных имён) · `lazy-import` (пакет,
 который грузится по требованию, — только `import()` своего загрузчика: `yaml` — в `pipeline/yamldoc.ts`, валидатор схем, миникарта, клиент LSP — в своих модулях `editor/`) · `no-silent-catch`
-(пустой `catch`, `.catch(() => {})` и подобные — ошибка обрабатывается или пишется).
+(пустой `catch`, `.catch(() => {})` и подобные — ошибка обрабатывается или пишется) ·
+`derived-no-create` (`dockState` и читатели, создающие запись, не зовутся в `$derived` и в
+выражении разметки).
 
 **Правило clippy** (`[lints.clippy]` в [Cargo.toml](../src-tauri/Cargo.toml), `-D warnings` на
 трёх ОС): `undocumented_unsafe_blocks` — `unsafe` только для FFI к ОС, и у каждого блока
@@ -1413,6 +1469,7 @@ Git, Docker, k8s, сетевые пробы и метрики — **один к�
 | `pipeline.guard` | Схема пайплайна читает файлы только через `connectionFiles` (его команды — редактора и панели файлов); в подсистеме нет `{@html}`; CodeMirror не размонтируется при смене вида |
 | `editorwork.guard` | HTML языкового сервера — через `sanitizeLspHtml`; схема с сервера — `untrustedSchema`; формат — одна правка на тексте, для которого сделан; полоса проекта без меню и диалогов, `files/` не пишет в терминал; каждая схема названа в NOTICE.md, источник её скрипта — у коммита и со сверкой хэша |
 | `liblayout.guard` | В корне `src/lib` — только папки и `types.ts`; папки — те, что в дереве ARCHITECTURE; слои линтера существуют |
+| `db.guard` | Строку записи БД окно не присылает; в диагностику и журнал — только названное списком, слова базы — не в разметку; документ, вкладка, массовое закрытие и выход спрашивают перед потерей работы с базой |
 | `i18nkeys.guard` | Каждый ключ словаря используется приложением |
 | `cspnonce.test.ts` · `editorlangs.test.ts` | Каждый `EditorView` отдаёт nonce; грамматики — по требованию |
 | `tauri-security.guard` · `deny.toml` | Строгий CSP, права поимённо, окна создаёт только Rust; исключение advisory без цели роняет прогон |
@@ -1420,6 +1477,7 @@ Git, Docker, k8s, сетевые пробы и метрики — **один к�
 | `releaseassets.guard` · `dependabot.guard` | Релиз — по тегу версии и после всех гейтов, экшены по SHA, `--frozen-lockfile`; группы Dependabot с выдержкой, `windows-core` — только вместе с `windows` |
 | `cidoc.guard` | Схемы CI — то, что выдаёт `scripts/ci-diagrams.mjs` из самих workflow, а `docs/CI.md` называет каждый workflow и каждую джобу |
 | `ci.guard` | Общие шаги CI — только экшены `.github/actions/`; Rust, Node и pnpm одни у CI и Linux-контейнера (`rust-toolchain.toml`); релиз без кэша; у каждой заботы один сканер, `unsafe` — у clippy; подавленное `nosemgrep` в Security не едет; рабочее дерево — LF на всех ОС (`.gitattributes`) |
+| `stands.guard` | Каждый опубликованный порт compose-файлов `e2e/` называет `127.0.0.1`; нечитаемое гейтом — переменная, порт из другого файла, сеть хоста — нарушение |
 | `untrusted.fuzz.test.ts` · `textenc::props` | Свойства недоверенного входа на произвольных данных: markdown не даёт исполняемого, декодер не паникует |
 | `version.guard` · `webview2runtime.test.ts` · `updater.guard` | Версия только в `package.json`; формат хвоста WebView2 один в Rust и CI; границы обновления |
 | `no_file_attributes_built_from_a_template` (Rust) | `FileAttributes` не строится из шаблона |
@@ -1437,9 +1495,14 @@ Git, Docker, k8s, сетевые пробы и метрики — **один к�
 | `the_cluster_is_changed_only_in_the_shapes_the_panel_offers` · `a_secrets_value_is_never_read_by_any_road` (Rust) | kubectl меняет кластер только откатом Deployment и запуском CronJob; Secret читается только шаблоном ключей, без `describe` и `--raw` |
 | `a_compose_command_reads_only_the_definition_its_stack_was_brought_up_from` · `a_compose_argv_is_held_to_its_stack_before_it_runs` (Rust) | Каталог, файлы и env-файл compose — из меток стека, и сверка идёт до исполнения |
 | `every_process_is_listed_with_its_cpu_now_not_its_lifetime_average` (Rust) | CPU% процесса — из прироста тиков между опросами, переиспользованный pid — без значения |
-| `a_poisoned_lock_never_cascades` · `the_bridge_source_lists_every_command_module` (Rust) | Вне тестов нет `.lock().unwrap()`; каждый файл `commands/` — в `BRIDGE` |
+| `a_poisoned_lock_never_cascades` · `the_bridge_source_lists_every_command_module` (Rust) | Вне тестов нет `.lock().unwrap()` и молчаливого `if let Ok(…) = ….lock()`; каждый файл `commands/` — в `BRIDGE` |
 | `network_utilities_never_record_raw_argv_or_output` · `a_netcheck_run_can_always_be_stopped` · `a_local_tool_runs_only_its_fixed_argv` (Rust) | Сетевые утилиты пишут итог; проверку доступа можно остановить; локальный инструмент — только со своим argv |
-| `app_originated_sockets_live_only_in_ssh_and_netcheck` (Rust) | Сокеты приложения — только в `ssh.rs` и `netcheck.rs` |
+| `app_originated_sockets_live_only_in_ssh_netcheck_and_db` (Rust) | Сокеты приложения — только в `ssh.rs`, `netcheck.rs` и драйверах БД |
+| `the_window_cannot_claim_a_saved_password_and_a_profile_that_left_is_named` · `a_saved_password_never_follows_a_changed_place_or_user` · `nothing_of_a_profile_can_be_an_option_of_the_users_client` (Rust) | «Пароль сохранён» — от прежнего профиля с тем же местом и пользователем, не от окна и архива; поле профиля не станет опцией клиента |
+| `a_prod_database_opens_read_only_whatever_its_profile_says` · `read_only_is_held_by_the_backend_whatever_the_window_asked` · `the_apps_own_reads_pass_and_its_changes_ask` (Rust) | Прод всегда read-only; без согласия — только известное политике, с ним — на один оператор; свои чтения приложения проходят |
+| `a_second_statement_is_seen_behind_quotes_and_comments` · `only_a_read_outside_a_transaction_is_stopped_at_the_row_cap` · `edits_are_updates_and_deletes_outside_the_users_transaction` (Rust) | Один оператор за раз; отмена на пределе не откатывает изменение; правки — только UPDATE/DELETE вне чужой транзакции |
+| `a_database_of_this_computer_is_reached_on_this_computer_alone` · `sql_and_results_never_reach_the_diagnostics` · `the_recordings_line_is_built_here_and_holds_no_value` (Rust) | Локальная база — только loopback и сокет; SQL и ответы не в диагностике; в записи — глагол и таблица с её места |
+| `a_database_that_refuses_puts_none_of_its_words_into_a_refusal` · `a_failed_stop_says_a_code_and_none_of_the_servers_words` · `a_sqlstate_cannot_carry_a_servers_text` (Rust) | Отказ базы — ответ с её словами для экрана; в событии, отказе команды и отмене — только код |
 | `quitting_always_goes_through_the_confirmation` (Rust) | Выход и закрытие окна — через вопрос |
 | `every_channel_open_is_answered_in_time` (Rust) | Каждое открытие канала SSH вне тестов — внутри `answered` с тайм-аутом |
 | `every_event_of_the_app_names_its_source_and_carries_no_secret` · `the_diagnostics_are_written_only_by_diag_never_per_chunk_nor_backed_up` · `an_event_below_the_threshold_is_written_nowhere` (Rust) | У каждого события `tracing` есть `source` и нет секретного поля; файлы диагностики называет только `diag/`, затворы вывода и ИИ событий не пишут, бэкап диагностику не трогает; событие ниже порога не доходит до файла |

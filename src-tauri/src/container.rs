@@ -629,21 +629,50 @@ mod tests {
         assert_eq!(a[6].matches("{{.Label").count(), 3);
     }
 
+    /// What lets `container_run` run a compose argv unchecked against its stack.
+    fn stack_faults(drivers: &str) -> Vec<&'static str> {
+        let code = crate::srcscan::shipped_code(drivers);
+        let body = &code[code
+            .find("pub async fn container_run(")
+            .expect("container_run")..];
+        let body = &body[..body.find("\n}\n").expect("end of fn")];
+        let checked = body.find("container::check_stack(");
+        let runs = body.find("run_driver(&state, &session_id, call)");
+        let mut faults = Vec::new();
+        if !matches!((checked, runs), (Some(checked), Some(runs)) if checked < runs) {
+            faults.push("the argv runs before its stack is checked");
+        }
+        if !body.contains("container::compose_names(&args)") {
+            faults.push("the stack's names are not read from the argv");
+        }
+        faults
+    }
+
     #[test]
     fn a_compose_argv_is_held_to_its_stack_before_it_runs() {
         // The order is the contract: the labels are asked and checked, then the argv runs.
-        // A Windows checkout ends lines with CRLF: the function's end is sought in LF.
-        let src = include_str!("commands/drivers.rs").replace("\r\n", "\n");
-        let body = &src[src.find("pub async fn container_run(").unwrap()..];
-        let body = &body[..body.find("\n}\n").unwrap()];
-        let checked = body
-            .find("container::check_stack(")
-            .expect("container_run checks the stack");
-        let runs = body
-            .rfind("run_driver(&state, &session_id, call)")
-            .expect("container_run runs the argv");
-        assert!(checked < runs, "the stack is checked before the argv runs");
-        assert!(body.contains("container::compose_names(&args)"));
+        let src = include_str!("commands/drivers.rs");
+        assert_eq!(stack_faults(src), Vec::<&str>::new());
+
+        // …and the check catches what it is for: naming the check is not making it,
+        // and a run ahead of it is not excused by a later one.
+        let check = "container::check_stack(&names, &labels).map_err(AppError::Message)?;";
+        let names = "container::compose_names(&args)";
+        let unchecked = "the argv runs before its stack is checked";
+        let unnamed = "the stack's names are not read from the argv";
+        let early = format!("run_driver(&state, &session_id, call).await?;\n{check}");
+        let in_test = format!("#[cfg(test)]\nmod t {{ fn f() {{ {check} }} }}");
+        for (from, to, fault) in [
+            (check, format!("// {check}"), unchecked),
+            (check, format!("/* {check} */"), unchecked),
+            (check, format!("let _said = \"{check}\";"), unchecked),
+            (check, in_test, unchecked),
+            (check, early, unchecked),
+            (names, format!("None /* {names} */"), unnamed),
+        ] {
+            assert!(src.contains(from), "the mutation no longer applies: {from}");
+            assert_eq!(stack_faults(&src.replacen(from, &to, 1)), [fault], "{to}");
+        }
     }
 
     #[test]

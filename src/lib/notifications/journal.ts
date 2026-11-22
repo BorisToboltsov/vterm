@@ -31,6 +31,7 @@ export const JOURNAL_SOURCES = [
   "netcheck",
   // Recipes, Ansible and Terraform (ADR 0071).
   "scenarios",
+  "db",
   "monitoring",
   "servers",
   "settings",

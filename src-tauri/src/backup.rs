@@ -369,6 +369,17 @@ pub fn check_catalog(servers: &[ServerProfile]) -> AppResult<()> {
                 )));
             }
         }
+        // So does each database's, and its fields reach a login and the argv of
+        // the user's client (ADR 0080).
+        let mut databases = std::collections::HashSet::new();
+        for d in &s.databases {
+            if crate::db::check_profile(d).is_err() || !databases.insert(d.id.as_str()) {
+                return Err(AppError::Message(format!(
+                    "backup import: server {} has a database that cannot be used: {}",
+                    s.id, d.id
+                )));
+            }
+        }
     }
     Ok(())
 }
@@ -404,6 +415,7 @@ mod tests {
             logins: Vec::new(),
             default_login: String::new(),
             ask_login: false,
+            databases: Vec::new(),
         }
     }
 
@@ -527,6 +539,20 @@ mod tests {
         assert!(check_catalog(&[a.clone(), a.clone()]).is_err());
         b.id = " ".into();
         assert!(check_catalog(&[a, b]).is_err());
+        let mut c = sample_server();
+        c.databases = vec![crate::model::DbProfile {
+            id: "d".into(),
+            name: String::new(),
+            kind: crate::model::DbKind::Mysql,
+            host: "--defaults-file=/tmp/x".into(),
+            port: 3306,
+            database: String::new(),
+            user: "root".into(),
+            has_saved_password: false,
+            read_only: false,
+            container: None,
+        }];
+        assert!(check_catalog(&[c]).is_err());
     }
 
     #[test]

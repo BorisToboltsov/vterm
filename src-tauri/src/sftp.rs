@@ -1339,12 +1339,14 @@ mod tests {
                 }
                 if path.extension().is_some_and(|e| e == "rs") {
                     let raw = std::fs::read_to_string(&path).expect("read source");
-                    // Drop opted-out lines, then trailing comments — joined back so
-                    // multi-line literals stay intact for the spread scan below.
-                    let src = raw
+                    // Drop comments and opted-out lines (their marker is a comment) —
+                    // joined back so multi-line literals stay intact for the spread
+                    // scan below.
+                    let src = crate::srcscan::without_comments(&raw)
                         .lines()
-                        .filter(|l| !l.contains("guard-allow"))
-                        .map(|l| l.split_once("//").map_or(l, |(code, _)| code))
+                        .zip(raw.lines())
+                        .filter(|(_, written)| !written.contains("guard-allow"))
+                        .map(|(code, _)| code)
                         .collect::<Vec<_>>()
                         .join("\n");
                     // Look inside each attribute literal only.

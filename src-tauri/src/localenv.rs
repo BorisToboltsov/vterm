@@ -206,6 +206,7 @@ pub fn no_console_window_std(cmd: &mut std::process::Command) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::srcscan::{code_only, without_test_modules};
 
     /// Build a PATH-style list with the separator of the platform running the test.
     ///
@@ -298,6 +299,18 @@ mod tests {
         no_console_window(&mut cmd);
     }
 
+    const SPAWN: &str = "tokio::process::Command::new";
+    const HIDE: &str = "no_console_window(&mut";
+
+    /// How many of the `spawn`s in `src` no call of `hide` keeps out of sight.
+    /// A spawn counts in the tests too; a call only in what ships — a comment,
+    /// a string or a test hides no window.
+    fn unhidden_spawns(src: &str, spawn: &str, hide: &str) -> usize {
+        let code = code_only(src);
+        let hidden = without_test_modules(&code).matches(hide).count();
+        code.matches(spawn).count().saturating_sub(hidden)
+    }
+
     #[test]
     fn every_local_cli_spawn_hides_the_console_window() {
         // Guard (bug fixed v1.0.10): each module that spawns a console CLI locally
@@ -306,37 +319,63 @@ mod tests {
         // `no_console_window`,
         // or a console window flashes on Windows each time the driver panel polls.
         // Counted by source so a newly-added spawn can't silently reintroduce the
-        // flash. localenv's own login-shell probe is excluded — it's `#[cfg(unix)]`
+        // flash — in every file, not a list: a module spawning on its own (the
+        // editor's formatters and language servers) is held to it too.
+        // localenv's own login-shell probe is excluded — it's `#[cfg(unix)]`
         // only, so it never runs (and never opens a window) on Windows.
-        for (name, src) in [
-            ("exec.rs", include_str!("exec.rs")),
-            ("git.rs", include_str!("git.rs")),
-            ("container.rs", include_str!("container.rs")),
-            ("kube.rs", include_str!("kube.rs")),
-            ("netcheck.rs", include_str!("netcheck.rs")),
-        ] {
-            let spawns = src.matches("tokio::process::Command::new").count();
-            let guarded = src.matches("no_console_window(&mut").count();
-            assert!(
-                guarded >= spawns,
-                "{name}: {spawns} local spawn(s) but only {guarded} no_console_window call(s) — \
-                 a console window will flash on Windows"
-            );
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+        let mut spawning = Vec::new();
+        let mut dirs = vec![root.clone()];
+        while let Some(dir) = dirs.pop() {
+            for entry in std::fs::read_dir(&dir).unwrap() {
+                let path = entry.unwrap().path();
+                let name = path
+                    .strip_prefix(&root)
+                    .unwrap()
+                    .to_string_lossy()
+                    .replace('\\', "/");
+                if path.is_dir() {
+                    dirs.push(path);
+                } else if name.ends_with(".rs") && name != "localenv.rs" {
+                    let src = std::fs::read_to_string(&path).unwrap();
+                    if code_only(&src).contains(SPAWN) {
+                        spawning.push(name.clone());
+                    }
+                    assert_eq!(
+                        unhidden_spawns(&src, SPAWN, HIDE),
+                        0,
+                        "{name}: a local spawn without a no_console_window call — \
+                         a console window will flash on Windows"
+                    );
+                }
+            }
         }
+        spawning.sort();
+        assert_eq!(spawning, ["commands/editor.rs", "exec.rs", "netcheck.rs"]);
         // The drivers spawn in one place (`exec::run_local`), and it is counted.
-        assert_eq!(
-            include_str!("exec.rs")
-                .matches("tokio::process::Command::new")
-                .count(),
-            1
-        );
+        assert_eq!(code_only(include_str!("exec.rs")).matches(SPAWN).count(), 1);
         // Синхронные спавны (встроенный WebView2 до старта tokio) — тем же правилом.
         let src = include_str!("webview2.rs");
-        let spawns = src.matches("Command::new(").count();
-        let guarded = src.matches("no_console_window_std(&mut").count();
+        let spawns = code_only(src).matches("Command::new(").count();
         assert!(
-            spawns > 0 && guarded >= spawns,
-            "webview2.rs: {spawns} spawn(s) but only {guarded} no_console_window_std call(s)"
+            spawns > 0 && unhidden_spawns(src, "Command::new(", "no_console_window_std(&mut") == 0,
+            "webview2.rs: a spawn without a no_console_window_std call"
         );
+        // …and the check catches what it is for: only a call that ships hides a window.
+        let bare = format!("let mut c = {SPAWN}(\"git\");");
+        let call = format!("{HIDE} c);");
+        assert_eq!(unhidden_spawns(&format!("{bare} {call}"), SPAWN, HIDE), 0);
+        for (what, said) in [
+            ("a line comment", format!("// {call}")),
+            ("a block comment", format!("/* {call} */")),
+            ("a string", format!("let _s = \"{call}\";")),
+            (
+                "a test",
+                format!("#[cfg(test)]\nmod t {{ fn f() {{ {call} }} }}"),
+            ),
+        ] {
+            let src = format!("{bare}\n{said}");
+            assert_eq!(unhidden_spawns(&src, SPAWN, HIDE), 1, "{what} hid a window");
+        }
     }
 }

@@ -180,10 +180,12 @@ pub async fn sudo_check(
 
 #[cfg(test)]
 mod tests {
+    use crate::srcscan::shipped_code;
+
     /// The commands of a bridge source with a text parameter named for a password
     /// — each `#[tauri::command]`'s signature, up to its body. A flag about
     /// passwords (`mask_passwords: bool`) is no password.
-    fn commands_taking_a_password(src: &str) -> Vec<String> {
+    fn commands_taking_a_sudo_password(src: &str) -> Vec<String> {
         src.split("#[tauri::command]")
             .skip(1)
             .filter_map(|chunk| {
@@ -211,7 +213,7 @@ mod tests {
                     dirs.push(path);
                 } else if path.extension().is_some_and(|e| e == "rs") {
                     let text = std::fs::read_to_string(&path).unwrap();
-                    let code = text.split("#[cfg(test)]").next().unwrap_or("");
+                    let code = shipped_code(&text);
                     if code.contains("get_sudo_password(") && !path.ends_with("secrets.rs") {
                         let rel = path
                             .strip_prefix(&root)
@@ -227,18 +229,21 @@ mod tests {
     }
 
     /// ADR 0073: the window never holds a sudo password. A typed one reaches the
-    /// backend through `sudo_check` alone — no other command of the bridge takes
-    /// a password (the login's goes as `secret`, the registry's from the
-    /// keychain) — and the saved one is read in this bridge file alone.
+    /// backend through `sudo_check` alone. A DB password belongs to `db_connect`;
+    /// the login secret uses its own flow. The saved sudo password is read here
+    /// alone.
     #[test]
     fn a_sudo_password_reaches_the_backend_only_through_the_check() {
         assert_eq!(
-            commands_taking_a_password(&crate::commands::bridge_source()),
-            ["sudo_check"]
+            commands_taking_a_sudo_password(&crate::commands::bridge_source()),
+            ["db_connect", "sudo_check"]
         );
         assert_eq!(readers_of_the_saved_sudo_password(), ["commands/sudo.rs"]);
         // The check sees what it is for.
         let leaking = "#[tauri::command]\npub async fn sftp_write_text(\n    sudo_password: Option<String>,\n) -> AppResult<()> {\n}\n#[tauri::command]\npub fn other(mask_passwords: bool) {}";
-        assert_eq!(commands_taking_a_password(leaking), ["sftp_write_text"]);
+        assert_eq!(
+            commands_taking_a_sudo_password(leaking),
+            ["sftp_write_text"]
+        );
     }
 }

@@ -240,15 +240,6 @@ mod tests {
 
     // ── Guard (v1.36, ADR 0060) ──────────────────────────────────────────────
 
-    /// Source with line comments stripped.
-    fn bare(src: &str) -> String {
-        src.replace("\r\n", "\n")
-            .lines()
-            .map(|l| l.split("//").next().unwrap_or(""))
-            .collect::<Vec<_>>()
-            .join("\n")
-    }
-
     /// The body of the item that starts with `head`: up to its closing line.
     fn body<'a>(code: &'a str, head: &str) -> &'a str {
         let at = code.find(head).unwrap_or_else(|| panic!("{head}"));
@@ -328,11 +319,11 @@ mod tests {
 
     #[test]
     fn a_partial_copy_goes_on_only_from_a_confirmed_point_and_never_outlives_its_tab() {
-        let sftp = bare(include_str!("sftp.rs"));
-        let localfile = bare(include_str!("localfile.rs"));
-        let session = bare(include_str!("commands/session.rs"));
-        let appwin = bare(include_str!("appwin.rs"));
-        let transfers = bare(include_str!("transfers.rs"));
+        let sftp = crate::srcscan::shipped(include_str!("sftp.rs"));
+        let localfile = crate::srcscan::shipped(include_str!("localfile.rs"));
+        let session = crate::srcscan::shipped(include_str!("commands/session.rs"));
+        let appwin = crate::srcscan::shipped(include_str!("appwin.rs"));
+        let transfers = crate::srcscan::shipped(include_str!("transfers.rs"));
         assert_eq!(partial_faults(&sftp, &localfile), Vec::<String>::new());
         assert_eq!(
             kept_faults(&session, &appwin, &transfers),

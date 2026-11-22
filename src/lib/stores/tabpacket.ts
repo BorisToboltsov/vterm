@@ -17,6 +17,7 @@ import {
   type TermSnapshot,
 } from "../windows/tabhandoff";
 import { adoptChat, liveStream, peekChat } from "./aichat.svelte";
+import { adoptDb, peekDb } from "./db.svelte";
 import { adoptDockState, peekDockState } from "./dockstate.svelte";
 import {
   isRecordingPaused,
@@ -62,6 +63,7 @@ export function packTab(
       syncRunOwner.sessionId === sessionId && peekSyncJob(sessionId)?.applying
         ? { map: { ...syncRunState.map }, done: syncRunState.done, weight: syncRunState.weight }
         : null,
+    db: peekDb(sessionId),
     page: {
       ...page,
       recording: recordingState[sessionId] ?? null,
@@ -84,6 +86,7 @@ export function packTab(
 export async function unpackTab(packet: TabPacket, drop: TabDrop | null = null): Promise<void> {
   const id = packet.tab.sessionId;
   if (packet.workspace) adoptWorkspace(id, packet.workspace);
+  adoptDb(packet.db ?? undefined);
   if (packet.chat) await adoptChat(id, packet.chat, packet.aiStream ?? null);
   if (packet.dock) adoptDockState(id, packet.dock);
   // The rows of a run going on come first: the job then asks how the run stands.

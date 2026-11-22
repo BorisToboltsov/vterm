@@ -124,6 +124,14 @@ log = { version = "0.4", features = ["std"] }
 # уже в дереве через tauri-utils.
 regex = "1"
 
+# Базы данных (db/, ADR 0080): драйверы PostgreSQL и MySQL. Оба говорят по потоку,
+# который даёт приложение: канал SSH-сессии (`direct-tcpip`/`direct-streamlocal`) или
+# сокет к адресу, который пользователь ввёл для своей БД на этом компьютере. TLS-фич
+# нет: к серверу трафик идёт внутри SSH, native-tls/OpenSSL не тянем. `mysql_async` —
+# `minimal-rust`: сжатие на чистом Rust, без derive и TLS.
+tokio-postgres = { version = "0.7.18", default-features = false }
+mysql_async = { version = "0.37.1", default-features = false, features = ["minimal-rust"] }
+
 # Windows drive enumeration for the local file panel (Фаза 39.1). `GetLogicalDrives`
 # returns the letter bitmask WITHOUT touching any volume — the only complete source
 # that cannot block on a stale network mount (see drives.rs for the alternatives

@@ -47,8 +47,9 @@
 
 ## Последствия
 
-- Сокеты приложения живут только в `ssh.rs` и `netcheck.rs`. Это держит Rust-гейт
-  `app_originated_sockets_live_only_in_ssh_and_netcheck`: любой новый `TcpStream::connect` /
+- Сокеты приложения живут только в `ssh.rs` и `netcheck.rs` (с [ADR 0080](0080-databases.md) ещё в
+  драйверах БД — отдельным исключением). Это держит Rust-гейт
+  `app_originated_sockets_live_only_in_ssh_netcheck_and_db`: любой новый `TcpStream::connect` /
   `UdpSocket` / `lookup_host` в другом модуле роняет тесты.
 - UDP не проверяется ни на одном транспорте: у него нет рукопожатия, тишина ничего не
   значит, а «открыт» был бы выдумкой ([ADR 0009](0009-honest-ui.md)).

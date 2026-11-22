@@ -45,6 +45,7 @@ function server(p: Partial<ServerProfile> & { id: string; alias: string }): Serv
     logins: [],
     defaultLogin: "",
     askLogin: false,
+    databases: [],
     group: "Prod",
     tags: ["web", "eu"],
     prod: null,

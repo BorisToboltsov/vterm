@@ -127,7 +127,7 @@ function modelImports(store: string): string[] {
 }
 
 /** The steps that add a document — each with its view. */
-const OPENERS = ["addEditor", "addScratchEditor", "addPipelinesView", "addProjectView"];
+const OPENERS = ["addEditor", "addScratchEditor", "addPipelinesView", "addProjectView", "addDbView"];
 
 export function storeViolations(store: string): string[] {
   const c = code(store);

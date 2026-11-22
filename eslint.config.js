@@ -102,6 +102,7 @@ export default defineConfig(
   own("md-links", MARKUP),
   own("backdrop-no-close", MARKUP),
   own("each-as-t", MARKUP),
+  own("derived-no-create", SOURCE),
   own("path-sync-mode", SOURCE),
   own("theme-colors", SOURCE),
   own("virtual-scroll", MARKUP),
@@ -116,6 +117,15 @@ export default defineConfig(
       "vterm/owned-imports": [
         "error",
         {
+          ...Object.fromEntries(
+            ["dbConnect", "dbQuery", "dbApply", "dbCancel", "dbClose", "dbLocalList", "dbSaveLocal", "setServerDatabases", "dbForgetPassword"].map((name) => [
+              name,
+              {
+                owners: ["src/lib/stores/db.svelte.ts"],
+                why: "a database document runs one statement at a time, asks before lifting read-only and closes its connection with the tab — a second caller does neither (ADR 0080)",
+              },
+            ]),
+          ),
           lspStart: {
             owners: ["src/lib/stores/lsp.svelte.ts"],
             why: "one language server per tab, folder and kind, stopped with the last editor and the tab — a second starter leaks servers (ADR 0079)",

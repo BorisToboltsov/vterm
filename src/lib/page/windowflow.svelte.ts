@@ -62,6 +62,8 @@ export interface WindowDeps {
   alias: (tab: Tab) => string;
   /** Whether a file of the session is being read or written now. */
   editorBusy: (sessionId: string) => boolean;
+  /** A database document of the tab is running a statement (ADR 0080). */
+  dbBusy: (sessionId: string) => boolean;
   /** The terminal's snapshot, once it has received the `sent` events of its output. */
   snapshot: (sessionId: string, sent: number) => Promise<TermSnapshot | null>;
   /** What the page keeps of a session outside the stores, for the tab to carry. */
@@ -140,6 +142,7 @@ export function createWindowFlow(deps: WindowDeps) {
       syncComparing: !!peekSyncJob(sid)?.comparing,
       chatStep: !!chat?.stepRunning,
       editorBusy: deps.editorBusy(sid),
+      dbBusy: deps.dbBusy(sid),
     };
   }
 

@@ -8,6 +8,7 @@
 pub mod ai;
 pub mod backup;
 pub mod chrome;
+pub mod db;
 pub mod drivers;
 pub mod editor;
 pub mod recording;
@@ -16,22 +17,15 @@ pub mod session;
 pub mod sftp;
 pub mod sudo;
 
-/// The bridge layer's production code — `lib.rs` and every module here, each
-/// cut before its test module — for the gates that read how a command is
-/// written. A module added here goes into [`BRIDGE`] too; a test holds the list
-/// complete, so a command cannot move out of the gates' sight.
+/// The bridge layer as it ships — `lib.rs` and every module here, without
+/// comments and test modules, literals as written — for the gates that read how
+/// a command is written. A module added here goes into [`BRIDGE`] too; a test
+/// holds the list complete, so a command cannot move out of the gates' sight.
 #[cfg(test)]
 pub(crate) fn bridge_source() -> String {
     BRIDGE
         .iter()
-        .map(|(_, src)| {
-            let src = src.replace("\r\n", "\n");
-            let end = src
-                .match_indices("#[cfg(test)]")
-                .find(|(i, m)| src[i + m.len()..].trim_start().starts_with("mod "))
-                .map_or(src.len(), |(i, _)| i);
-            src[..end].to_string()
-        })
+        .map(|(_, src)| crate::srcscan::shipped(src))
         .collect::<Vec<_>>()
         .join("\n")
 }
@@ -42,6 +36,7 @@ const BRIDGE: &[(&str, &str)] = &[
     ("ai.rs", include_str!("ai.rs")),
     ("backup.rs", include_str!("backup.rs")),
     ("chrome.rs", include_str!("chrome.rs")),
+    ("db.rs", include_str!("db.rs")),
     ("drivers.rs", include_str!("drivers.rs")),
     ("editor.rs", include_str!("editor.rs")),
     ("recording.rs", include_str!("recording.rs")),

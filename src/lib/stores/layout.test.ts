@@ -49,9 +49,9 @@ describe("layout store", () => {
   it("moves a panel between docks and persists the move", () => {
     movePanel("docker", "left");
     flushSync();
-    expect(layout.docks.left.panels).toEqual(["servers", "docker"]);
+    expect(layout.docks.left.panels).toEqual(["servers", "db", "docker"]);
     expect(layout.docks.bottom.panels).toEqual(["k8s", "ci", "scenarios"]);
-    expect(stored().docks.left.panels).toEqual(["servers", "docker"]);
+    expect(stored().docks.left.panels).toEqual(["servers", "db", "docker"]);
   });
 
   it("does not replace the value when a move changes nothing", () => {

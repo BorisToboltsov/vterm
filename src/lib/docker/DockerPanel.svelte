@@ -146,6 +146,7 @@
     prod = false,
     visible = true,
     onOpenShell,
+    onAddDatabase,
     onAsk,
   }: {
     sessionId: string;
@@ -161,6 +162,7 @@
     prod?: boolean;
     /** Open a real terminal tab running `command` (docker exec shell). */
     onOpenShell?: (argv: string[], target?: AttachTarget) => void;
+    onAddDatabase?: (container: DockerContainer, facts: DockerFacts | undefined) => void;
     /** Hand a container's state + logs to the AI assistant (Phase 41). */
     onAsk?: (context: string) => void;
   } = $props();
@@ -1091,6 +1093,7 @@
             {busy}
             {run}
             onShell={openShell}
+            {onAddDatabase}
             onLogs={openLogs}
             onInspect={openInspect}
             onComposeLogs={openComposeLogs}

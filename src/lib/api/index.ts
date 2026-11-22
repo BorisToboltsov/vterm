@@ -17,3 +17,4 @@ export * from "./editor";
 export * from "./lsp";
 export * from "./window";
 export * from "./tabcontent";
+export * from "./db";

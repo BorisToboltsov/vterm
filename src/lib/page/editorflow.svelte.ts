@@ -37,6 +37,7 @@ import { pipelineKindOf } from "../pipeline/pipefiles";
 import type { Repo } from "../ci/forge";
 import { repoRootArgs } from "../git/git";
 import { askOnSchema, askRunOnSchema } from "../stores/ci.svelte";
+import { closeDbDoc, dbWork, type DbWork } from "../stores/db.svelte";
 import { t } from "../i18n";
 import { settings } from "../settings/settings.svelte";
 import { isRecording } from "../stores/recordings.svelte";
@@ -103,6 +104,7 @@ export interface OpenOptions {
 export function createEditorFlow(deps: EditorDeps) {
   let savingId = $state<string | null>(null);
   let closeAsk = $state<{ sid: string; doc: EditorDoc } | null>(null);
+  let dbCloseAsk = $state<{ sid: string; doc: EditorDoc; work: DbWork } | null>(null);
   // Pre-save diff confirmation (settings-gated) and conflict resolution.
   // `closeAfter`: the save came from the close-with-changes dialog — close the
   // file once the write lands (and only then: a failed save keeps it open).
@@ -458,6 +460,11 @@ export function createEditorFlow(deps: EditorDeps) {
     }
   }
 
+  function closeDb(sid: string, doc: EditorDoc) {
+    closeDbDoc(doc.id);
+    closeEditor(sid, doc.id);
+  }
+
   return {
     /** The document being written now, if any. */
     get savingId() {
@@ -465,6 +472,9 @@ export function createEditorFlow(deps: EditorDeps) {
     },
     get closeAsk() {
       return closeAsk;
+    },
+    get dbCloseAsk() {
+      return dbCloseAsk;
     },
     get diffSave() {
       return diffSave;
@@ -647,10 +657,26 @@ export function createEditorFlow(deps: EditorDeps) {
       sudoPassword = "";
     },
 
-    /** Close a file, asking first when it has unsaved changes. */
+    /** Close a file, asking first when it has unsaved changes. A database's
+     *  console or activity (ADR 0080) closes its own connection with it. */
     requestClose(sid: string, doc: EditorDoc) {
-      if (isDirty(doc)) closeAsk = { sid, doc };
+      if (doc.db) {
+        const work = dbWork(doc.id);
+        if (work) dbCloseAsk = { sid, doc, work };
+        else closeDb(sid, doc);
+      } else if (isDirty(doc)) closeAsk = { sid, doc };
       else closeEditor(sid, doc.id);
+    },
+
+    /** The question before a database's work is lost was answered. */
+    confirmDbClose() {
+      const c = dbCloseAsk;
+      dbCloseAsk = null;
+      if (c) closeDb(c.sid, c.doc);
+    },
+
+    cancelDbClose() {
+      dbCloseAsk = null;
     },
 
     /** "Save" in the close-with-changes dialog: write, then close on success. */

@@ -22,6 +22,7 @@ vi.mock("../api/diag", () => ({
   diag: {
     error: (_s: string, text: string) => h.events.push({ level: "error", text }),
     warn: (_s: string, text: string) => h.events.push({ level: "warn", text }),
+    debug: (_s: string, text: string) => h.events.push({ level: "debug", text }),
   },
   diagState: async () => h.state,
   diagSetLevel: async (level: string) => ({ ...h.state, level }),
@@ -52,7 +53,16 @@ describe("the diagnostics store", () => {
     h.queries.length = 0;
     h.state = { level: "info", sizeMb: 25, panics: 0, bytes: 10, error: null, folder: "/d" };
   });
-  afterEach(() => stop());
+  afterEach(() => {
+    stop();
+    vi.useRealTimers();
+  });
+  /** A clock past the once-a-minute limit of whatever an earlier test told. */
+  const minutesOn = (n: number) => {
+    const now = Date.now();
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(now + n * 60_000);
+  };
 
   it("takes the threshold the backend says and gives it to the facade", async () => {
     h.state = { ...h.state, level: "warn" };
@@ -98,6 +108,41 @@ describe("the diagnostics store", () => {
     expect(h.events).toEqual([
       { level: "error", text: "uncaught error: x is undefined" },
       { level: "error", text: "unhandled rejection: nobody caught me" },
+    ]);
+  });
+
+  it("says what failed in the window and where its details are", async () => {
+    minutesOn(10);
+    stop = startDiag(false);
+    await settle();
+    window.dispatchEvent(
+      new ErrorEvent("error", { message: "x", error: new TypeError("Cannot read properties of undefined (reading 'cwd')") }),
+    );
+    expect(h.toasts).toHaveLength(1);
+    const said = h.toasts[0];
+    expect(said).toContain("TypeError: Cannot read properties of undefined (reading 'cwd')");
+    // The toast shows four lines: where to look comes first, the failure — cut there if need be — last.
+    expect(said.indexOf("Settings → Journal → Diagnostics")).toBeGreaterThan(-1);
+    expect(said.indexOf("Settings → Journal → Diagnostics")).toBeLessThan(said.indexOf("TypeError"));
+  });
+
+  it("says a panic is the backend's", async () => {
+    minutesOn(20);
+    stop = startDiag(true);
+    await settle();
+    h.listener?.({ payload: { level: "info", sizeMb: 25, panics: 1 } });
+    expect(h.toasts).toHaveLength(1);
+    expect(h.toasts[0]).toContain("backend");
+    expect(h.toasts[0]).toContain("Settings → Journal → Diagnostics");
+  });
+
+  it("takes ResizeObserver putting notifications off to the next frame for no failure: debug, no message", async () => {
+    stop = startDiag(true);
+    await settle();
+    window.dispatchEvent(new ErrorEvent("error", { message: "ResizeObserver loop completed with undelivered notifications." }));
+    expect(h.toasts).toEqual([]);
+    expect(h.events).toEqual([
+      { level: "debug", text: "resize notifications put off to the next frame: ResizeObserver loop completed with undelivered notifications." },
     ]);
   });
 

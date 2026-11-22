@@ -24,6 +24,9 @@ const AI_KEY_SERVICE: &str = "vterm:ai-key";
 /// Docker registry password, keyed by registry url (Phase 36). Never logged; fed
 /// to `docker login --password-stdin` and never placed on a command line.
 const REGISTRY_SERVICE: &str = "vterm:registry";
+/// A database's password (ADR 0080), keyed by `db_scope`. Never logged, never
+/// sent to a window: the driver reads it here.
+const DB_SERVICE: &str = "vterm:db";
 
 /// Read a secret, wrapped in `Zeroizing` so vterm's in-memory copy is wiped on
 /// drop (the keychain remains the authoritative store).
@@ -200,15 +203,36 @@ pub fn delete_login(id: &str) -> AppResult<()> {
     delete_passphrase(id)
 }
 
+// ── Databases (ADR 0080) ─────────────────────────────────────────────────────
+
+/// Where a database's password is kept: its place (a server's id, or `local`
+/// for this computer) and its own id — two databases of two servers never share one.
+pub fn db_scope(place: Option<&str>, db_id: &str) -> String {
+    format!("{}::db::{db_id}", place.unwrap_or("local"))
+}
+
+pub fn get_db_password(scope: &str) -> Option<Zeroizing<String>> {
+    read(DB_SERVICE, scope)
+}
+pub fn set_db_password(scope: &str, value: &str) -> AppResult<()> {
+    write(DB_SERVICE, scope, value)
+}
+pub fn delete_db_password(scope: &str) -> AppResult<()> {
+    delete(DB_SERVICE, scope)
+}
+
 /// Remove all secrets for a server — its own (sudo's too), each of its other
-/// logins' (`logins`, ADR 0074) and its proxy's (used when the profile is deleted
-/// or the user forgets its saved secrets).
-pub fn delete_all(id: &str, logins: &[String]) -> AppResult<()> {
+/// logins' (`logins`, ADR 0074), its databases' (`databases`, ADR 0080) and its
+/// proxy's (used when the profile is deleted or the user forgets its saved secrets).
+pub fn delete_all(id: &str, logins: &[String], databases: &[String]) -> AppResult<()> {
     delete_password(id)?;
     delete_passphrase(id)?;
     delete_sudo_password(id)?;
     for login in logins {
         delete_login_all(id, login)?;
+    }
+    for db in databases {
+        delete_db_password(&db_scope(Some(id), db))?;
     }
     delete_proxy(id)
 }
