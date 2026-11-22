@@ -27,7 +27,7 @@
   import type { AttachTarget } from "../tabs/tabattach";
   import type { SftpGroup } from "../files/groupupload";
   import type { ProjectCommand } from "../files/projectactions";
-  import { dockState } from "../stores/dockstate.svelte";
+  import { peekDockState } from "../stores/dockstate.svelte";
 
   let {
     id,
@@ -139,7 +139,10 @@
   } = $props();
 
   // The context the k8s panel works in, told to kubectl and helm from the strip.
-  const kubeContext = $derived(dockState(sessionId).k8sScope?.context ?? null);
+  // Peeked, not `dockState`: that one creates the session's entry, a state write
+  // Svelte refuses inside `$derived` — and the first panel of a restored tab
+  // reads this before anything has created it.
+  const kubeContext = $derived(peekDockState(sessionId)?.k8sScope?.context ?? null);
 
   const sessionReady = $derived(connection === "connected");
 </script>

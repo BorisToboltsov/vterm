@@ -102,6 +102,7 @@ export default defineConfig(
   own("md-links", MARKUP),
   own("backdrop-no-close", MARKUP),
   own("each-as-t", MARKUP),
+  own("derived-no-create", SOURCE),
   own("path-sync-mode", SOURCE),
   own("theme-colors", SOURCE),
   own("virtual-scroll", MARKUP),

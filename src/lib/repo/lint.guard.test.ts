@@ -377,6 +377,19 @@ const CASES: Record<string, { bad: [string, string][]; good: [string, string][] 
       ],
     ],
   },
+  "derived-no-create": {
+    bad: [
+      // DockPanel as it was: a restored tab's first file panel read this before the entry existed.
+      ["src/lib/files/ZzProbe.svelte", svelte(`import { dockState, peekDockState } from "../stores/dockstate.svelte";\nlet { sessionId }: { sessionId: string } = $props();\nconst ctx = $derived(dockState(sessionId).k8sScope?.context ?? null);\nvoid ctx; void peekDockState;`)],
+      ["src/lib/files/ZzProbe.svelte", svelte(`import { dockState, peekDockState } from "../stores/dockstate.svelte";\nlet { sessionId }: { sessionId: string } = $props();\nconst cwd = $derived.by(() => dockState(sessionId).cwd);\nvoid cwd; void peekDockState;`)],
+      ["src/lib/files/ZzProbe.svelte", svelte(`import { dockState, peekDockState } from "../stores/dockstate.svelte";\nlet { sessionId }: { sessionId: string } = $props();\nvoid peekDockState;`, `<span>{dockState(sessionId).cwd}</span>`)],
+    ],
+    good: [
+      ["src/lib/files/ZzProbe.svelte", svelte(`import { dockState, peekDockState } from "../stores/dockstate.svelte";\nlet { sessionId }: { sessionId: string } = $props();\nconst ctx = $derived(peekDockState(sessionId)?.k8sScope?.context ?? null);\nvoid ctx; void dockState;`)],
+      // At init and in a handler the write is the component's own, not a derived's.
+      ["src/lib/files/ZzProbe.svelte", svelte(`import { dockState, peekDockState } from "../stores/dockstate.svelte";\nlet { sessionId }: { sessionId: string } = $props();\nconst saved = dockState(sessionId).cwd;\nvoid saved; void peekDockState;`, `<button onclick={() => (dockState(sessionId).cwd = "/")}>x</button>`)],
+    ],
+  },
   "each-as-t": {
     bad: [["src/lib/ui/ZzProbe.svelte", svelte(`const tags = ["a"];`, `{#each tags as t}<span>{t}</span>{/each}`)]],
     good: [["src/lib/ui/ZzProbe.svelte", svelte(`const tags = ["a"];`, `{#each tags as tag}<span>{tag}</span>{/each}`)]],
