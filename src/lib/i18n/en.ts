@@ -3170,7 +3170,9 @@ export const en = {
   "diag.confirmTitle": "Clear diagnostics?",
   "diag.confirmText": "Every diagnostics event on this computer will be deleted. What is written from now on stays as chosen.",
   "diag.clearConfirm": "Clear",
-  "diag.internalError": "Internal error — the details are in the journal, under Diagnostics",
+  "diag.internalError.window": "Something failed in the app window; details in Settings → Journal → Diagnostics. Failed: {what}",
+  "diag.internalError.backend":
+    "Something failed in the app's backend: the operation under way stopped. Details in Settings → Journal → Diagnostics.",
   "diag.refresh": "Refresh",
   "diag.readFailed": "Couldn't read the diagnostics: {error}",
   "diag.emptyTitle": "No events",

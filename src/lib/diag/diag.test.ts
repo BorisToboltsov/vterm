@@ -6,6 +6,9 @@ import {
   DIAG_SOURCES,
   diagText,
   errorText,
+  internalErrorWhat,
+  INTERNAL_ERROR_WHAT_MAX,
+  isBenignWindowError,
   isDiagSource,
   mayTellInternalError,
   mbBytes,
@@ -81,6 +84,28 @@ describe("diagnostics, the pure part", () => {
     expect(mayTellInternalError(null, 1000)).toBe(true);
     expect(mayTellInternalError(1000, 60_999)).toBe(false);
     expect(mayTellInternalError(1000, 61_000)).toBe(true);
+  });
+
+  it("takes ResizeObserver putting notifications off to the next frame for no failure", () => {
+    // WebKit's words (the app's WebView on macOS and Linux) and Chromium's older ones (WebView2).
+    expect(isBenignWindowError(null, "ResizeObserver loop completed with undelivered notifications.")).toBe(true);
+    expect(isBenignWindowError(undefined, "ResizeObserver loop limit exceeded")).toBe(true);
+    // An error object, or other words, is a failure like any other.
+    expect(isBenignWindowError(new Error("ResizeObserver loop limit exceeded"), "ResizeObserver loop limit exceeded")).toBe(false);
+    expect(isBenignWindowError(null, "Script error.")).toBe(false);
+    expect(isBenignWindowError(null, "x ResizeObserver loop limit exceeded")).toBe(false);
+  });
+
+  it("names a failure by its kind and first line, cut short", () => {
+    expect(internalErrorWhat(new TypeError("Cannot read properties of undefined (reading 'cwd')"))).toBe(
+      "TypeError: Cannot read properties of undefined (reading 'cwd')",
+    );
+    expect(internalErrorWhat(new Error("plain"))).toBe("plain");
+    expect(internalErrorWhat("first line\nsecond line")).toBe("first line");
+    expect(internalErrorWhat("")).toBe("?");
+    const long = internalErrorWhat("x".repeat(500));
+    expect(long).toHaveLength(INTERNAL_ERROR_WHAT_MAX);
+    expect(long.endsWith("…")).toBe(true);
   });
 
   it("fills a coded event's title from its fields, a threshold's levels by name", () => {

@@ -301,3 +301,30 @@ export const INTERNAL_ERROR_EVERY_MS = 60_000;
 export function mayTellInternalError(last: number | null, now: number): boolean {
   return last === null || now - last >= INTERNAL_ERROR_EVERY_MS;
 }
+
+/**
+ * What a browser hands to the window's `error` event though nothing failed:
+ * ResizeObserver saying some size notifications wait for the next frame —
+ * WebKit's words (macOS, Linux) and Chromium's older ones (WebView2). The spec
+ * calls it a report; told as «internal error», it said something broke when
+ * nothing had.
+ */
+const BENIGN_WINDOW_ERRORS = [
+  "ResizeObserver loop completed with undelivered notifications",
+  "ResizeObserver loop limit exceeded",
+];
+
+/** Whether a window `error` event is such a report: no error object, and its words. */
+export function isBenignWindowError(error: unknown, message: string): boolean {
+  return error == null && BENIGN_WINDOW_ERRORS.some((m) => message.startsWith(m));
+}
+
+/** How long the message names the failure: its first line, cut here. */
+export const INTERNAL_ERROR_WHAT_MAX = 160;
+
+/** The failure as the message names it: kind and first line (`TypeError: …`), cut to the cap. */
+export function internalErrorWhat(err: unknown): string {
+  const kind = err instanceof Error && err.name && err.name !== "Error" ? `${err.name}: ` : "";
+  const line = `${kind}${errorText(err).split("\n", 1)[0]}`.trim() || "?";
+  return line.length > INTERNAL_ERROR_WHAT_MAX ? `${line.slice(0, INTERNAL_ERROR_WHAT_MAX - 1)}…` : line;
+}

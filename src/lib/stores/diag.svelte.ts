@@ -23,6 +23,8 @@ import {
 import {
   DEFAULT_DIAG_SIZE_MB,
   errorText,
+  internalErrorWhat,
+  isBenignWindowError,
   mayTellInternalError,
   queryOf,
   sanitizeDiagSize,
@@ -84,19 +86,24 @@ function heardLevel(level: unknown): void {
   setDiagThreshold(next);
 }
 
-/** Say «internal error» — once a minute at most. */
-function tellInternalError(): void {
+/**
+ * Say that something failed — where, and in the window what — once a minute at
+ * most. «Internal error» alone told the user nothing to act on.
+ */
+function tellInternalError(failed: { in: "backend" } | { in: "window"; what: string }): void {
   const now = Date.now();
   if (!mayTellInternalError(toldAt, now)) return;
   toldAt = now;
-  notifyError(t("diag.internalError"), { source: "app" });
+  const text =
+    failed.in === "backend" ? t("diag.internalError.backend") : t("diag.internalError.window", { what: failed.what });
+  notifyError(text, { source: "app" });
 }
 
 function heardNews(news: DiagNews, main: boolean): void {
   heardLevel(news.level);
   diagState.sizeMb = sanitizeDiagSize(news.sizeMb);
   // The first answer is where the count stands: what came before was not this window's to tell.
-  if (panicsSeen !== null && news.panics > panicsSeen && main) tellInternalError();
+  if (panicsSeen !== null && news.panics > panicsSeen && main) tellInternalError({ in: "backend" });
   panicsSeen = news.panics;
 }
 
@@ -120,12 +127,17 @@ export function startDiag(main: boolean): () => void {
 
   const onError = (e: ErrorEvent) => {
     const at = e.filename ? `${e.filename}:${e.lineno}:${e.colno}` : undefined;
+    if (isBenignWindowError(e.error, e.message)) {
+      // Written, not told: a loop that never settles still shows here, counted.
+      diag.debug("app", `resize notifications put off to the next frame: ${e.message}`, { at });
+      return;
+    }
     diag.error("app", `uncaught error: ${errorText(e.error ?? e.message)}`, { at, stack: stackOf(e.error) }, { code: "uncaught-error" });
-    tellInternalError();
+    tellInternalError({ in: "window", what: internalErrorWhat(e.error ?? e.message) });
   };
   const onRejection = (e: PromiseRejectionEvent) => {
     diag.error("app", `unhandled rejection: ${errorText(e.reason)}`, { stack: stackOf(e.reason) }, { code: "unhandled-rejection" });
-    tellInternalError();
+    tellInternalError({ in: "window", what: internalErrorWhat(e.reason) });
   };
   const onHide = () => flushDiag();
   window.addEventListener("error", onError);
