@@ -106,6 +106,11 @@ pub enum AppError {
     #[error("db-bad-profile: the database profile has a field that cannot be used")]
     DbBadProfile,
 
+    /// A statement was not stopped (`db-cancel-failed: <code>`): a code alone,
+    /// never the server's words — a refusal is written to the diagnostics.
+    #[error("db-cancel-failed: {0}")]
+    DbCancelFailed(String),
+
     /// The login a tab connects with was removed from its server's profile
     /// (`login-gone`, ADR 0074): the tab waits and says so, it does not guess
     /// another login.

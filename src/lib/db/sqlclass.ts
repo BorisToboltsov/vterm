@@ -138,7 +138,7 @@ export function classify(sql: string, dialect: Dialect): Classified {
 /** Whether a statement writes in any way — on a read-only connection it needs the lock lifted. */
 export const writes = (c: Classified): boolean => c.cls === "write" || c.cls === "ddl" || c.cls === "admin" || c.cls === "other";
 
-/** What the recording says a statement was: its verb and its tables — never its values. */
+/** What a question calls a statement: its verb and its tables. The recording's line is the backend's. */
 export function auditLine(c: Classified): string {
   return c.tables.length ? `${c.verb} ${c.tables.join(", ")}` : c.verb;
 }

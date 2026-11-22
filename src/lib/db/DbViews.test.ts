@@ -25,7 +25,7 @@ vi.mock("../api/db", () => {
       return {};
     }),
     dbForgetPassword: vi.fn(async () => {}),
-    dbConnect: vi.fn(async () => ({ connId: "c", version: "16.6", readOnly: true, prod: true, kind: "postgres", rememberFailed: false })),
+    dbConnect: vi.fn(async () => ({ opened: { connId: "c", version: "16.6", readOnly: true, prod: true, kind: "postgres", rememberFailed: false }, refused: null })),
     dbQuery: vi.fn(async (_id: string, sql: string, _rows: number, writable: boolean) => {
       env.ran.push({ sql, writable });
       if (sql === env.refuse && !writable) throw "db-read-only: the statement needs read-only lifted";

@@ -8,7 +8,7 @@
 //! stands over the server's read-only transaction, not instead of it.
 //!
 //! The recording's line comes from here too: a verb from this file's lists and
-//! table names, never a literal, never a word this file does not know.
+//! the table in its own place after it, never a word from anywhere else.
 
 use crate::model::DbKind;
 
@@ -634,7 +634,7 @@ const OBJECTS: &[&str] = &[
     "MATERIALIZED",
 ];
 
-/// The recording's line: a known verb and the tables named after it.
+/// The recording's line: a known verb and the one table in its place after it.
 fn audit_of(t: &[Tok]) -> String {
     // The activity view's two actions say whom they were about.
     if let [head, Tok::Word(f), Tok::Punct('('), Tok::Word(id), Tok::Punct(')')] = t {
@@ -673,62 +673,56 @@ fn audit_of(t: &[Tok]) -> String {
             }
         }
     }
+    if let Some(table) = target(t, verb) {
+        out = format!("{out} {table}");
+    }
+    out
+}
+
+/// The table a statement is about, from its one place: right after the verb
+/// and the words that go with it, so ahead of every value. Behind any other
+/// `FROM` may stand a value — a wrong quote makes its words the statement's.
+fn target(t: &[Tok], verb: &str) -> Option<String> {
+    let is = |i: usize, w: &str| t.get(i).is_some_and(|x| x.word(w));
+    let mut at = match verb {
+        "UPDATE" => 1,
+        "DELETE" if is(1, "FROM") => 2,
+        "INSERT" | "REPLACE" | "MERGE" if is(1, "INTO") => 2,
+        "INSERT" if is(1, "IGNORE") && is(2, "INTO") => 3,
+        "TRUNCATE" | "LOCK" | "COPY" => 1 + usize::from(is(1, "TABLE")),
+        "CREATE" | "ALTER" | "DROP" if is(1, "TABLE") => 2,
+        _ => return None,
+    };
     let skipped = [
         "ONLY",
         "IF",
         "EXISTS",
         "NOT",
-        "LATERAL",
-        "TABLE",
         "IGNORE",
         "LOW_PRIORITY",
         "QUICK",
-        "DELAYED",
         "HIGH_PRIORITY",
-        "CONCURRENTLY",
-        "OUTFILE",
-        "DUMPFILE",
     ];
-    let mut tables: Vec<String> = Vec::new();
-    for i in 0..t.len() {
-        if !t[i].any_word(&["FROM", "JOIN", "UPDATE", "INTO", "TABLE", "TRUNCATE"]) {
-            continue;
-        }
-        let mut j = i + 1;
-        while t.get(j).is_some_and(|x| x.any_word(&skipped)) {
-            j += 1;
-        }
-        let mut parts: Vec<String> = Vec::new();
-        while let Some(Tok::Word(n) | Tok::Name(n)) = t.get(j) {
-            // A number is a value, whatever stands before it.
-            if n.starts_with(|c: char| c.is_ascii_digit() || c == '$') {
-                break;
-            }
-            parts.push(n.chars().take(64).collect());
-            j += 1;
-            if t.get(j) != Some(&Tok::Punct('.')) {
-                break;
-            }
-            j += 1;
-        }
-        if parts.is_empty()
-            || t[i + 1].any_word(&["SELECT", "SET"])
-            || (t[i].word("FROM") && t.get(j) == Some(&Tok::Punct('(')))
-        {
-            continue;
-        }
-        let name = parts.join(".");
-        if !tables.contains(&name) {
-            tables.push(name);
-        }
-        if tables.len() == 5 {
+    while t.get(at).is_some_and(|x| x.any_word(&skipped)) {
+        at += 1;
+    }
+    if t.get(at)?.any_word(&["SELECT", "SET", "VALUES", "VALUE"]) {
+        return None;
+    }
+    let mut parts: Vec<String> = Vec::new();
+    while let Some(Tok::Word(n) | Tok::Name(n)) = t.get(at) {
+        // A number is a value, whatever stands before it.
+        if n.starts_with(|c: char| c.is_ascii_digit() || c == '$') {
             break;
         }
+        parts.push(n.chars().take(64).collect());
+        // Database, schema, table: no name is longer.
+        if parts.len() == 3 || t.get(at + 1) != Some(&Tok::Punct('.')) {
+            break;
+        }
+        at += 2;
     }
-    if !tables.is_empty() {
-        out = format!("{out} {}", tables.join(", "));
-    }
-    out
+    (!parts.is_empty()).then(|| parts.join("."))
 }
 
 /// Judge a text about to run.
@@ -771,7 +765,12 @@ pub fn check(kind: DbKind, mode: Mode, text: &str) -> Checked {
             || t.iter().any(|x| x.named().as_deref() == Some("set_config")),
         effect,
         edit: plain && t.first().is_some_and(|x| x.any_word(&["UPDATE", "DELETE"])),
-        audit: audit_of(t),
+        // With a quote left open a name may be the rest of the text: the verb alone.
+        audit: if lexed.open || lexed.opaque {
+            audit_of(&t[..t.len().min(1)])
+        } else {
+            audit_of(t)
+        },
     }
 }
 
@@ -994,6 +993,33 @@ mod tests {
 
     #[test]
     fn the_recordings_line_is_built_here_and_holds_no_value() {
+        // A value is whatever the person meant as one: quoted wrong, its words
+        // are words of the statement, and behind any FROM.
+        for (kind, text) in [
+            (PG, "UPDATE mail SET body = 'it's from Alice Smith'"),
+            (PG, "INSERT INTO notes VALUES ('it's from Alice's car')"),
+            (
+                PG,
+                "UPDATE users SET seen = true WHERE code IS DISTINCT FROM \"Alice\"",
+            ),
+            (
+                PG,
+                "SELECT set_config('app.who', 'it's from Alice's car', false)",
+            ),
+            (PG, "DELETE FROM \"mail WHERE body = 'Alice'"),
+            (
+                MY,
+                "INSERT INTO notes (body) VALUES ('it's into Alice's hands')",
+            ),
+            (MY, "REPLACE INTO notes VALUES ('it's from Alice's car')"),
+            (
+                MY,
+                "INSERT INTO t VALUES (1) ON DUPLICATE KEY UPDATE Alice = 2",
+            ),
+        ] {
+            let line = of(kind, text).audit;
+            assert!(!line.contains("Alice"), "{text} -> {line}");
+        }
         for (kind, text, line) in [
             (
                 PG,
@@ -1003,18 +1029,14 @@ mod tests {
             (
                 PG,
                 "DELETE FROM ONLY \"Order\" WHERE id IN (SELECT y FROM u)",
-                "DELETE Order, u",
+                "DELETE Order",
             ),
             (PG, "INSERT INTO t (a) VALUES ('hunter2')", "INSERT t"),
             (PG, "ALTER ROLE app PASSWORD 'hunter2'", "ALTER ROLE"),
             (PG, "create unique index i on t (a)", "CREATE UNIQUE INDEX"),
             (PG, "hunter2 is my password", "SQL"),
             (MY, "SET PASSWORD = \"hunter2\"", "SET"),
-            (
-                MY,
-                "SELECT * FROM t INTO OUTFILE '/srv/hunter2'",
-                "SELECT t",
-            ),
+            (MY, "SELECT * FROM t INTO OUTFILE '/srv/hunter2'", "SELECT"),
             (
                 PG,
                 "SELECT pg_terminate_backend(42)",

@@ -40,7 +40,7 @@ pub async fn open(upstream: Io) -> AppResult<Door> {
             match accepted {
                 Ok(Ok((sock, _))) => carry(sock, upstream).await,
                 Ok(Err(why)) => {
-                    tracing::debug!(source = "db", "the relay took no connection: {why}")
+                    tracing::debug!(source = "db", reason = %why.kind(), "the relay took no connection")
                 }
                 Err(_) => tracing::debug!(source = "db", "the relay's connection never came"),
             }
@@ -62,7 +62,7 @@ pub async fn open(upstream: Io) -> AppResult<Door> {
                     carry(sock, upstream).await
                 }
                 Ok(Err(why)) => {
-                    tracing::debug!(source = "db", "the relay took no connection: {why}")
+                    tracing::debug!(source = "db", reason = %why.kind(), "the relay took no connection")
                 }
                 Err(_) => tracing::debug!(source = "db", "the relay's connection never came"),
             }

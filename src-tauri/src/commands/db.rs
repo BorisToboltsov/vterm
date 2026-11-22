@@ -8,7 +8,7 @@
 //! diagnostics; its recording line is built by the backend (`db::sql`).
 
 use crate::db::net::{Addr, Target, Via};
-use crate::db::{self, Applied, Canceller, Conn, Dbs, Driver, Outcome};
+use crate::db::{self, Applied, Canceller, Conn, Dbs, Driver, NotOpened, Outcome, SqlError};
 use crate::diag::Logged;
 use crate::error::{AppError, AppResult};
 use crate::locks::Locked;
@@ -32,6 +32,16 @@ pub struct DbOpened {
     /// "Remember the password" was asked and the keychain did not take it: the
     /// connection stands, the next one asks again.
     pub remember_failed: bool,
+}
+
+/// What connecting came to: a connection, or the database's refusal in its
+/// own words — an answer, for the screen. A refused command is written to the
+/// diagnostics; this is not one.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DbConnect {
+    pub opened: Option<DbOpened>,
+    pub refused: Option<SqlError>,
 }
 
 fn kind_name(k: DbKind) -> &'static str {
@@ -160,7 +170,7 @@ pub async fn db_connect(
     db_id: String,
     password: Option<String>,
     remember: bool,
-) -> AppResult<DbOpened> {
+) -> AppResult<DbConnect> {
     let password = password.filter(|p| !p.is_empty()).map(Zeroizing::new);
     let (profile, place, prod, via) = if let Ok(session) = session_arc(&state, &session_id).await {
         let server = state
@@ -207,8 +217,9 @@ pub async fn db_connect(
     let opened = open(&target, &profile, secret.clone(), read_only).await;
     let (driver, canceller, version) = match opened {
         Ok(parts) => parts,
-        Err(why) => {
-            if matches!(why, AppError::DbAuthRejected) && !typed && secret.is_some() {
+        Err(not) => {
+            let auth = matches!(not, NotOpened::App(AppError::DbAuthRejected));
+            if auth && !typed && secret.is_some() {
                 // The saved password was turned down: forget it, ask next time.
                 secrets::delete_db_password(&scope).log_warn(
                     "db",
@@ -219,27 +230,7 @@ pub async fn db_connect(
                     "\"password saved\" stayed on a database whose password was rejected",
                 );
             }
-            if matches!(why, AppError::DbAuthRejected) {
-                // The question, not a failure: the first connection has none yet.
-                tracing::info!(
-                    source = "db",
-                    sid = %session_id,
-                    kind = kind_name(profile.kind),
-                    addr = %target.addr.label(),
-                    "the database asked for a password"
-                );
-            } else {
-                tracing::warn!(
-                    source = "db",
-                    code = "db-connect-failed",
-                    sid = %session_id,
-                    kind = kind_name(profile.kind),
-                    addr = %target.addr.label(),
-                    database = %profile.database,
-                    "database connection failed: {why}"
-                );
-            }
-            return Err(why);
+            return not_opened(&session_id, &profile, &target, not);
         }
     };
     let mut remember_failed = false;
@@ -251,10 +242,8 @@ pub async fn db_connect(
         if let (true, Some(pw)) = (still, secret.as_ref()) {
             let saved = secrets::set_db_password(&scope, pw)
                 .and_then(|_| mark_saved(&state, place.as_deref(), &db_id, true));
-            if let Err(why) = saved {
-                remember_failed = true;
-                tracing::warn!(source = "db", "a database's password was not saved: {why}");
-            }
+            let kept = saved.log_warn("db", "a database's password was not saved");
+            remember_failed = kept.is_none();
         }
     }
     let conn = Conn::open(session_id.clone(), read_only, prod, driver, canceller).await;
@@ -277,14 +266,63 @@ pub async fn db_connect(
         ms = started.elapsed().as_millis() as u64,
         "database connected"
     );
-    Ok(DbOpened {
-        conn_id,
-        version,
-        read_only,
-        prod,
-        kind: profile.kind,
-        remember_failed,
+    Ok(DbConnect {
+        opened: Some(DbOpened {
+            conn_id,
+            version,
+            read_only,
+            prod,
+            kind: profile.kind,
+            remember_failed,
+        }),
+        refused: None,
     })
+}
+
+/// A connection that was not made: the event, and the window's answer.
+fn not_opened(
+    session_id: &str,
+    profile: &DbProfile,
+    target: &Target,
+    not: NotOpened,
+) -> AppResult<DbConnect> {
+    match &not {
+        // The question, not a failure: the first connection has none yet.
+        NotOpened::App(AppError::DbAuthRejected) => tracing::info!(
+            source = "db",
+            sid = %session_id,
+            kind = kind_name(profile.kind),
+            addr = %target.addr.label(),
+            "the database asked for a password"
+        ),
+        NotOpened::App(refused) => tracing::warn!(
+            source = "db",
+            code = "db-connect-failed",
+            sid = %session_id,
+            kind = kind_name(profile.kind),
+            addr = %target.addr.label(),
+            database = %profile.database,
+            refused = %marker(refused),
+            "database connection failed"
+        ),
+        NotOpened::Refused(refused) => tracing::warn!(
+            source = "db",
+            code = "db-connect-failed",
+            sid = %session_id,
+            kind = kind_name(profile.kind),
+            addr = %target.addr.label(),
+            database = %profile.database,
+            server_code = %refused.code,
+            "the database refused the connection"
+        ),
+    }
+    match not {
+        NotOpened::App(refused) => Err(refused),
+        NotOpened::Refused(refused) => Ok(DbConnect {
+            opened: None,
+            refused: Some(refused),
+        }),
+    }
 }
 
 fn profile_now(state: &State<AppState>, place: Option<&str>, db_id: &str) -> Option<DbProfile> {
@@ -305,7 +343,7 @@ async fn open(
     profile: &DbProfile,
     secret: Option<Zeroizing<String>>,
     read_only: bool,
-) -> AppResult<(Driver, Canceller, String)> {
+) -> Result<(Driver, Canceller, String), NotOpened> {
     match profile.kind {
         DbKind::Postgres => {
             let stream = target.open().await?;
@@ -357,9 +395,37 @@ fn audit_block(said: &str, result: &Result<String, String>) -> String {
 }
 
 /// A refusal's marker: all of it that the diagnostics and the recording keep.
+/// One without a marker keeps nothing.
 fn marker(refused: &AppError) -> String {
     let full = refused.to_string();
-    full.split(':').next().unwrap_or_default().to_string()
+    let head = full.split(':').next().unwrap_or_default();
+    if head.starts_with("db-") && head.chars().all(|c| c.is_ascii_lowercase() || c == '-') {
+        head.to_string()
+    } else {
+        "refused".to_string()
+    }
+}
+
+/// The code a statement failed with; empty — it did not.
+fn failed_code(o: &Outcome) -> &str {
+    o.error
+        .as_ref()
+        .map(|f| f.code.as_str())
+        .unwrap_or_default()
+}
+
+/// Why edits were not applied, as the diagnostics and the recording keep it.
+fn apply_outcome(out: &AppResult<Applied>) -> String {
+    match out {
+        Ok(Applied { failure: None, .. }) => "applied".to_string(),
+        Ok(Applied {
+            failure: Some(f), ..
+        }) => match &f.error {
+            Some(failed) => format!("nothing applied: error {}", failed.code),
+            None => "nothing applied: not one row".to_string(),
+        },
+        Err(refused) => marker(refused),
+    }
 }
 
 /// The connection of an id; a closed one leaves the registry.
@@ -376,7 +442,7 @@ fn forget_if_closed<T>(app: &tauri::AppHandle, conn_id: &str, r: &AppResult<T>) 
 
 /// Run one statement. `rows` — the most to bring back; `writable` — read-only
 /// lifted for this statement (the user agreed). A changing statement goes into
-/// the recording by its verb and tables.
+/// the recording by its verb and the table after it.
 #[tauri::command]
 pub async fn db_query(
     app: tauri::AppHandle,
@@ -405,7 +471,7 @@ pub async fn db_query(
             rows = o.rows.len(),
             affected = o.affected.unwrap_or(0),
             truncated = o.truncated,
-            failed = %o.error.as_ref().map(|f| f.code.as_str()).unwrap_or(""),
+            failed = %failed_code(o),
             "statement finished"
         ),
         Err(AppError::DbReadOnly) => tracing::info!(
@@ -456,13 +522,7 @@ pub async fn db_apply(
             failure: None,
             changed,
         }) => Ok(format!("{} rows changed", changed.len())),
-        Ok(Applied {
-            failure: Some(f), ..
-        }) => Err(match (&f.error, f.changed) {
-            (Some(failed), _) => format!("nothing applied: error {}", failed.code),
-            (None, _) => "nothing applied: not one row".to_string(),
-        }),
-        Err(refused) => Err(marker(refused)),
+        _ => Err(apply_outcome(&out)),
     };
     match &summary {
         Ok(_) => tracing::info!(
@@ -473,11 +533,11 @@ pub async fn db_apply(
             ms = started.elapsed().as_millis() as u64,
             "edits applied"
         ),
-        Err(outcome) => tracing::warn!(
+        Err(_) => tracing::warn!(
             source = "db",
             conn = %conn_id,
             count = statements.len(),
-            outcome = %outcome,
+            outcome = %apply_outcome(&out),
             "edits were not applied"
         ),
     }
@@ -505,5 +565,57 @@ pub fn db_close(app: tauri::AppHandle, conn_id: String) {
     if let Some(conn) = app.state::<Dbs>().remove(&conn_id) {
         db::let_go(conn);
         tracing::info!(source = "db", conn = %conn_id, "database connection closed");
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A refused command is written by the window's `call()`, whatever it says:
+    /// the database's words come back as an answer, and the event has the code.
+    #[test]
+    fn a_database_that_refuses_puts_none_of_its_words_into_a_refusal() {
+        for (kind, sent, code) in [
+            (DbKind::Postgres, "3D000", "3D000"),
+            (DbKind::Postgres, "LEAKMARK", "?"),
+            (DbKind::Mysql, "", "1130"),
+        ] {
+            let (answer, events) = crate::diag::capture(|| {
+                db::fake::block_on(async {
+                    let (target, profile) = db::fake::refusing(kind, sent);
+                    match open(&target, &profile, None, false).await {
+                        Ok(_) => panic!("connected to a server that refuses"),
+                        Err(not) => not_opened("sid", &profile, &target, not),
+                    }
+                })
+            });
+            let answer = match answer {
+                Ok(answer) => answer,
+                Err(refusal) => panic!("a refused command, which call() writes: {refusal}"),
+            };
+            let refused = answer.refused.expect("the database's refusal");
+            assert!(
+                refused.message.contains("LEAKMARK"),
+                "the screen has the words"
+            );
+            assert_eq!(refused.code, code);
+            let written = format!("{events:?}");
+            assert!(!written.contains("LEAKMARK"), "{written}");
+            assert!(
+                written.contains("db-connect-failed") && written.contains(code),
+                "{written}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_refusal_without_a_marker_keeps_none_of_its_text() {
+        assert_eq!(marker(&AppError::DbClosed), "db-closed");
+        assert_eq!(
+            marker(&AppError::Message("db-x LEAKMARK".into())),
+            "refused"
+        );
+        assert_eq!(marker(&AppError::Message("LEAKMARK: no".into())), "refused");
     }
 }

@@ -3,7 +3,7 @@
 // tunnel the server did not open, a connection that is gone.
 
 import { t } from "../i18n";
-import type { DbApplyFailure } from "../types";
+import type { DbApplyFailure, DbSqlError } from "../types";
 
 export type DbFailure =
   | { kind: "auth" }
@@ -83,3 +83,11 @@ export function applyFailureText(f: DbApplyFailure): string {
   const detail = f.statement === null ? why : t("db.err.atStatement", { i: f.statement, why });
   return t("db.err.mismatch", { detail });
 }
+
+/** The database refused the connection: its words and its code — for the screen alone. */
+export function refusedFailure(e: DbSqlError): DbFailure {
+  return { kind: "other", detail: e.code ? `${e.message} (${e.code})` : e.message };
+}
+
+/** A database's error where it will be written down (a toast is the journal): its code, not its words. */
+export const errorCodeText = (e: DbSqlError): string => t("db.err.code", { code: e.code || "?" });

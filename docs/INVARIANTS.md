@@ -645,10 +645,14 @@ PostgreSQL и MySQL/MariaDB — [ADR 0080](adr/0080-databases.md). Панель 
   уходят в argv клиента пользователя. Гейты
   `a_saved_password_never_follows_a_changed_place_or_user`,
   `nothing_of_a_profile_can_be_an_option_of_the_users_client`, `backupimport.guard`.
-- **SQL, строки и слова сервера не пишутся в диагностику и журнал:** ошибка цитирует значения,
-  поэтому отказ правки — ответ команды. Строку записи `[sql]` строит бэкенд: известный глагол и
-  таблицы, без значений. Гейты `sql_and_results_never_reach_the_diagnostics`,
-  `the_recordings_line_is_built_here_and_holds_no_value`, `db.guard`.
+- **Слова базы — только на экран:** они цитируют значения, а отказ команды пишет `call()`. Отказ
+  базы в подключении и в правке — ответ команды, отказ отмены — код, тост несёт код, SQLSTATE
+  проверяется. Событие — только из списка полей (`FIELDS`, `TOLD`): список запрещённых имён пропускал
+  переименованное. Гейты `sql_and_results_never_reach_the_diagnostics`,
+  `a_database_that_refuses_puts_none_of_its_words_into_a_refusal`, `db.guard`, тест `dbsilence.test.ts`.
+- **Строку записи `[sql]` строит бэкенд:** известный глагол и одна таблица — с её места сразу после
+  него. За любым другим `FROM` может стоять значение: кривая кавычка делает его слова словами
+  оператора. Гейт `the_recordings_line_is_built_here_and_holds_no_value`.
 - **Команды БД зовёт только стор `stores/db`** (`vterm/owned-imports`): операторы документа — по
   одному. Подключение кончается с документом, вкладкой (`forgetDb`/`dropDb` в `closeTabFully`) и
   сессией (`close_session`), идущее останавливают. Идущий оператор, открытая транзакция и
@@ -1456,7 +1460,7 @@ PostgreSQL и MySQL/MariaDB — [ADR 0080](adr/0080-databases.md). Панель 
 | `pipeline.guard` | Схема пайплайна читает файлы только через `connectionFiles` (его команды — редактора и панели файлов); в подсистеме нет `{@html}`; CodeMirror не размонтируется при смене вида |
 | `editorwork.guard` | HTML языкового сервера — через `sanitizeLspHtml`; схема с сервера — `untrustedSchema`; формат — одна правка на тексте, для которого сделан; полоса проекта без меню и диалогов, `files/` не пишет в терминал; каждая схема названа в NOTICE.md, источник её скрипта — у коммита и со сверкой хэша |
 | `liblayout.guard` | В корне `src/lib` — только папки и `types.ts`; папки — те, что в дереве ARCHITECTURE; слои линтера существуют |
-| `db.guard` | Строку записи БД окно не присылает; слова базы не уходят в диагностику, журнал и разметку; документ, вкладка, массовое закрытие и выход спрашивают перед потерей работы с базой |
+| `db.guard` | Строку записи БД окно не присылает; в диагностику и журнал — только названное списком, слова базы — не в разметку; документ, вкладка, массовое закрытие и выход спрашивают перед потерей работы с базой |
 | `i18nkeys.guard` | Каждый ключ словаря используется приложением |
 | `cspnonce.test.ts` · `editorlangs.test.ts` | Каждый `EditorView` отдаёт nonce; грамматики — по требованию |
 | `tauri-security.guard` · `deny.toml` | Строгий CSP, права поимённо, окна создаёт только Rust; исключение advisory без цели роняет прогон |
@@ -1487,7 +1491,8 @@ PostgreSQL и MySQL/MariaDB — [ADR 0080](adr/0080-databases.md). Панель 
 | `the_window_cannot_claim_a_saved_password_and_a_profile_that_left_is_named` · `a_saved_password_never_follows_a_changed_place_or_user` · `nothing_of_a_profile_can_be_an_option_of_the_users_client` (Rust) | «Пароль сохранён» — от прежнего профиля с тем же местом и пользователем, не от окна и архива; поле профиля не станет опцией клиента |
 | `a_prod_database_opens_read_only_whatever_its_profile_says` · `read_only_is_held_by_the_backend_whatever_the_window_asked` · `the_apps_own_reads_pass_and_its_changes_ask` (Rust) | Прод всегда read-only; без согласия — только известное политике, с ним — на один оператор; свои чтения приложения проходят |
 | `a_second_statement_is_seen_behind_quotes_and_comments` · `only_a_read_outside_a_transaction_is_stopped_at_the_row_cap` · `edits_are_updates_and_deletes_outside_the_users_transaction` (Rust) | Один оператор за раз; отмена на пределе не откатывает изменение; правки — только UPDATE/DELETE вне чужой транзакции |
-| `a_database_of_this_computer_is_reached_on_this_computer_alone` · `sql_and_results_never_reach_the_diagnostics` · `the_recordings_line_is_built_here_and_holds_no_value` (Rust) | Локальная база — только loopback и сокет; SQL и ответы не в диагностике; в записи — глагол и таблицы |
+| `a_database_of_this_computer_is_reached_on_this_computer_alone` · `sql_and_results_never_reach_the_diagnostics` · `the_recordings_line_is_built_here_and_holds_no_value` (Rust) | Локальная база — только loopback и сокет; SQL и ответы не в диагностике; в записи — глагол и таблица с её места |
+| `a_database_that_refuses_puts_none_of_its_words_into_a_refusal` · `a_failed_stop_says_a_code_and_none_of_the_servers_words` · `a_sqlstate_cannot_carry_a_servers_text` (Rust) | Отказ базы — ответ с её словами для экрана; в событии, отказе команды и отмене — только код |
 | `quitting_always_goes_through_the_confirmation` (Rust) | Выход и закрытие окна — через вопрос |
 | `every_channel_open_is_answered_in_time` (Rust) | Каждое открытие канала SSH вне тестов — внутри `answered` с тайм-аутом |
 | `every_event_of_the_app_names_its_source_and_carries_no_secret` · `the_diagnostics_are_written_only_by_diag_never_per_chunk_nor_backed_up` · `an_event_below_the_threshold_is_written_nowhere` (Rust) | У каждого события `tracing` есть `source` и нет секретного поля; файлы диагностики называет только `diag/`, затворы вывода и ИИ событий не пишут, бэкап диагностику не трогает; событие ниже порога не доходит до файла |

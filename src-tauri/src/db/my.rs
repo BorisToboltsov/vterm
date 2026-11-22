@@ -7,9 +7,9 @@
 
 use super::net::{Addr, Target, Via, OPEN_TIMEOUT};
 use super::{
-    relay, text_of, Applied, Canceller, CapStop, Column, Outcome, Rows, Run, SqlError, Tx,
+    no_answer, relay, text_of, Applied, Canceller, CapStop, Column, NotOpened, Outcome, Rows, Run,
+    SqlError, Tx,
 };
-use crate::diag::Logged;
 use crate::error::{AppError, AppResult};
 use crate::model::DbProfile;
 use mysql_async::consts::{ColumnFlags, ColumnType, StatusFlags};
@@ -53,7 +53,7 @@ impl Login {
 }
 
 /// A connection to the place, through whatever reaches it.
-async fn reach(target: &Target, login: &Login) -> AppResult<Conn> {
+async fn reach(target: &Target, login: &Login) -> Result<Conn, NotOpened> {
     let opts = match (&target.via, &target.addr) {
         (Via::Here, Addr::Tcp { host, port }) => {
             login.opts().ip_or_hostname(host.clone()).tcp_port(*port)
@@ -70,23 +70,28 @@ async fn reach(target: &Target, login: &Login) -> AppResult<Conn> {
         }
     };
     match tokio::time::timeout(OPEN_TIMEOUT, mysql_async::Conn::new(opts)).await {
-        Err(_) => Err(format!(
-            "the database did not answer in {} s",
-            OPEN_TIMEOUT.as_secs()
-        )
-        .into()),
+        Err(_) => Err(no_answer().into()),
         Ok(Err(e)) => Err(connect_error(&e)),
         Ok(Ok(conn)) => Ok(conn),
     }
 }
 
-fn connect_error(e: &mysql_async::Error) -> AppError {
+fn connect_error(e: &mysql_async::Error) -> NotOpened {
     match e {
         mysql_async::Error::Server(s) if ACCESS_DENIED.contains(&s.code) => {
-            AppError::DbAuthRejected
+            NotOpened::App(AppError::DbAuthRejected)
         }
-        mysql_async::Error::Server(s) => AppError::Message(format!("{} ({})", s.message, s.code)),
-        other => AppError::Message(other.to_string()),
+        _ => NotOpened::Refused(sql_error(e)),
+    }
+}
+
+/// What may be written of an error: the server's number, or whose it is. The
+/// driver's own texts quote the server (a plugin's name, a packet).
+fn code(e: &mysql_async::Error) -> String {
+    match e {
+        mysql_async::Error::Server(s) => s.code.to_string(),
+        mysql_async::Error::Io(_) => "io".to_string(),
+        _ => "driver".to_string(),
     }
 }
 
@@ -203,20 +208,20 @@ pub struct Killer {
 
 impl Killer {
     pub async fn kill(&self) -> AppResult<()> {
-        let mut conn = reach(&self.target, &self.login).await?;
+        let mut conn = reach(&self.target, &self.login)
+            .await
+            .map_err(|e| AppError::DbCancelFailed(e.code()))?;
         let done = conn
             .query_drop(format!("KILL QUERY {}", self.id))
             .await
-            .map_err(|e| {
-                AppError::Message(format!(
-                    "the statement was not stopped: {}",
-                    sql_error(&e).message
-                ))
-            });
-        conn.disconnect().await.log_debug(
-            "db",
-            "the connection that stopped a statement did not close cleanly",
-        );
+            .map_err(|e| AppError::DbCancelFailed(code(&e)));
+        if let Err(e) = conn.disconnect().await {
+            tracing::debug!(
+                source = "db",
+                code = %code(&e),
+                "the connection that stopped a statement did not close cleanly"
+            );
+        }
         done
     }
 }
@@ -233,7 +238,7 @@ pub async fn connect(
     profile: &DbProfile,
     password: Option<Zeroizing<String>>,
     read_only: bool,
-) -> AppResult<Opened> {
+) -> Result<Opened, NotOpened> {
     let login = Login {
         user: profile.user.clone(),
         password,
@@ -246,7 +251,7 @@ pub async fn connect(
         Err(e) => {
             tracing::debug!(
                 source = "db",
-                code = %sql_error(&e).code,
+                code = %code(&e),
                 "the server's version was not read"
             );
             String::new()
@@ -310,7 +315,7 @@ impl My {
             Err(e) => {
                 tracing::debug!(
                     source = "db",
-                    code = %sql_error(&e).code,
+                    code = %code(&e),
                     "how the server reads quotes was not read: the last known way stays"
                 );
                 None
@@ -345,7 +350,7 @@ impl My {
                 self.broken = true;
                 tracing::warn!(
                     source = "db",
-                    code = %sql_error(&e).code,
+                    code = %code(&e),
                     "read-only was not put back after a lifted statement: the connection is closed"
                 );
                 return Err(AppError::DbClosed);
@@ -480,7 +485,7 @@ impl My {
             self.broken = true;
             tracing::warn!(
                 source = "db",
-                code = %sql_error(&e).code,
+                code = %code(&e),
                 "the edits' transaction was not rolled back: the connection is closed and the server ends it"
             );
         }
@@ -504,5 +509,34 @@ mod tests {
         assert_eq!(text_or_bytes("BLOB", true), "BLOB");
         assert_eq!(text_or_bytes("VARCHAR", true), "VARBINARY");
         assert_eq!(text_or_bytes("JSON", true), "JSON");
+    }
+
+    /// A stop that failed is written with `log_warn`: whatever its error prints
+    /// is in the diagnostics.
+    #[test]
+    fn a_failed_stop_says_a_code_and_none_of_the_servers_words() {
+        use crate::db::{fake, Canceller, CapStop};
+        let ((), events) = crate::diag::capture(|| {
+            fake::block_on(async {
+                let (target, profile) = fake::refusing(crate::model::DbKind::Mysql, "");
+                let killer = super::Killer {
+                    target,
+                    login: super::Login {
+                        user: profile.user,
+                        password: None,
+                        database: None,
+                        read_only: false,
+                    },
+                    id: 7,
+                };
+                CapStop::send(&Canceller::My(killer)).settle().await;
+            })
+        });
+        let written = format!("{events:?}");
+        assert!(
+            written.contains("1130"),
+            "the code is what is left to look by: {written}"
+        );
+        assert!(!written.contains("LEAKMARK"), "{written}");
     }
 }

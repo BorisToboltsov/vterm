@@ -38,7 +38,7 @@ vi.mock("../api/db", () => ({
   dbConnect: vi.fn(async () => {
     env.connects++;
     await new Promise((r) => setTimeout(r, 1));
-    return { connId: `c${env.connects}`, version: "16.6", readOnly: env.readOnly, prod: false, kind: "postgres", rememberFailed: false };
+    return { opened: { connId: `c${env.connects}`, version: "16.6", readOnly: env.readOnly, prod: false, kind: "postgres", rememberFailed: false }, refused: null };
   }),
   dbQuery: vi.fn(async (_id: string, sql: string, _rows: number, writable: boolean) => {
     env.ran.push({ sql, writable });

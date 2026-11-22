@@ -1,7 +1,7 @@
 // Databases (ADR 0080): the window names a tab and a database id; the address,
 // the password and whether it may write are the backend's. Only the store
 // `stores/db` calls these (`vterm/owned-imports`).
-import type { DbApplied, DbOpened, DbOutcome, DbProfile, ServerProfile } from "../types";
+import type { DbApplied, DbConnect, DbOutcome, DbProfile, ServerProfile } from "../types";
 import { call } from "./call";
 
 /** The databases of this computer. */
@@ -25,8 +25,8 @@ export function dbForgetPassword(place: string | null, dbId: string): Promise<vo
 }
 
 /** Connect to a database of the tab's server (or of this computer, for a local tab). */
-export function dbConnect(sessionId: string, dbId: string, password: string | null, remember: boolean): Promise<DbOpened> {
-  return call<DbOpened>("db_connect", { sessionId, dbId, password, remember });
+export function dbConnect(sessionId: string, dbId: string, password: string | null, remember: boolean): Promise<DbConnect> {
+  return call<DbConnect>("db_connect", { sessionId, dbId, password, remember });
 }
 
 /**

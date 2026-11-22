@@ -233,6 +233,40 @@ pub(crate) enum Driver {
     My(my::My),
 }
 
+/// Why no connection was made. A refusal of the app's own is a command's
+/// refusal; the database's is an answer — its words are for the screen, and a
+/// refused command is written to the diagnostics. No `Display` and no `Debug`:
+/// there is no printing one by accident.
+pub(crate) enum NotOpened {
+    App(AppError),
+    Refused(SqlError),
+}
+
+impl From<AppError> for NotOpened {
+    fn from(refusal: AppError) -> NotOpened {
+        NotOpened::App(refusal)
+    }
+}
+
+impl NotOpened {
+    /// All of it a stop that failed may say.
+    pub(crate) fn code(&self) -> String {
+        match self {
+            NotOpened::App(AppError::DbAuthRejected) => "auth".into(),
+            NotOpened::App(_) => "unreachable".into(),
+            NotOpened::Refused(refused) if refused.code.is_empty() => "driver".into(),
+            NotOpened::Refused(refused) => refused.code.clone(),
+        }
+    }
+}
+
+pub(crate) fn no_answer() -> AppError {
+    AppError::Message(format!(
+        "the database did not answer in {} s",
+        net::OPEN_TIMEOUT.as_secs()
+    ))
+}
+
 /// How a running statement is stopped: a connection of its own to the same place.
 #[derive(Clone)]
 pub(crate) enum Canceller {
@@ -243,13 +277,7 @@ pub(crate) enum Canceller {
 impl Canceller {
     pub async fn cancel(&self) -> AppResult<()> {
         match self {
-            Canceller::Pg(token, target) => {
-                let stream = target.open().await?;
-                token
-                    .cancel_query_raw(stream, tokio_postgres::NoTls)
-                    .await
-                    .map_err(|e| AppError::Message(format!("the statement was not stopped: {e}")))
-            }
+            Canceller::Pg(token, target) => pg::cancel(token, target).await,
             Canceller::My(killer) => killer.kill().await,
         }
     }
@@ -968,65 +996,298 @@ mod tests {
         assert_eq!(after(Tx::None, "SELECT broken", false), Tx::None);
     }
 
-    /// INVARIANTS: what a statement says and what it returns never reach the
-    /// diagnostics. A server's error message quotes both.
-    #[test]
-    fn sql_and_results_never_reach_the_diagnostics() {
-        fn offences(src: &str) -> Vec<String> {
-            let code = src.split("\n#[cfg(test)]\nmod").next().unwrap_or(src);
-            let mut found = Vec::new();
-            for (at, _) in code.match_indices("tracing::") {
-                let rest = &code[at..];
-                let Some(end) = rest.find(");") else { continue };
-                let call: String = rest[..end].split_whitespace().collect::<Vec<_>>().join(" ");
-                for bad in [
-                    "%sql",
-                    "?sql",
-                    "{sql",
-                    "%text",
-                    "{text",
-                    "%said",
-                    "{said",
-                    ".message",
-                    "{e}",
-                    "{e:",
-                    "%e,",
-                    "?e,",
-                    ".detail",
-                    ".hint",
-                    "?o.rows",
-                    "{rows:",
-                    "%statement",
-                    "{statement",
-                ] {
-                    // `%sql` is the text; `%sql_error(&e).code` is its code.
-                    let whole = call.match_indices(bad).any(|(at, _)| {
-                        let next = call[at + bad.len()..].chars().next().unwrap_or(' ');
-                        let word = |c: char| c.is_ascii_alphanumeric() || c == '_';
-                        !(bad.ends_with(word) && word(next))
-                    });
-                    if whole {
-                        found.push(format!("{bad}: {call}"));
+    /// The code of a source: comments out, strings whole, test modules out.
+    fn production(src: &str) -> String {
+        let s: Vec<char> = src.chars().collect();
+        let mut out = String::new();
+        let mut i = 0;
+        while i < s.len() {
+            match (s[i], s.get(i + 1).copied()) {
+                ('/', Some('/')) => {
+                    while i < s.len() && s[i] != '\n' {
+                        i += 1;
+                    }
+                }
+                ('"', _) => {
+                    let from = i;
+                    i += 1;
+                    while i < s.len() && s[i] != '"' {
+                        i += if s[i] == '\\' { 2 } else { 1 };
+                    }
+                    i = (i + 1).min(s.len());
+                    out.extend(&s[from..i]);
+                }
+                // A char that is a quote opens no string; a lifetime is left as it is.
+                ('\'', Some(c)) if c != '\\' && s.get(i + 2) == Some(&'\'') => {
+                    out.extend(&s[i..i + 3]);
+                    i += 3;
+                }
+                ('\'', Some('\\')) if s.get(i + 3) == Some(&'\'') => {
+                    out.extend(&s[i..i + 4]);
+                    i += 4;
+                }
+                (c, _) => {
+                    out.push(c);
+                    i += 1;
+                }
+            }
+        }
+        // Each module, not all that follows the first: production may stand below one.
+        while let Some(at) = out
+            .find("\n#[cfg(test)]\nmod ")
+            .or_else(|| out.find("\n#[cfg(test)]\npub(crate) mod "))
+        {
+            let Some(end) = out[at..].find("\n}") else {
+                break;
+            };
+            out.replace_range(at..at + end + 2, "");
+        }
+        out
+    }
+
+    /// From the bracket at `open` to its pair: what is between, cut at top-level commas.
+    fn args_at(code: &str, open: usize) -> Vec<String> {
+        let mut depth = 0;
+        let mut quoted = false;
+        let mut escaped = false;
+        let mut out = Vec::new();
+        let mut arg = String::new();
+        for c in code[open..].chars() {
+            if quoted {
+                arg.push(c);
+                quoted = escaped || c != '"';
+                escaped = !escaped && c == '\\';
+                continue;
+            }
+            match c {
+                '"' => quoted = true,
+                '(' | '[' | '{' => {
+                    depth += 1;
+                    if depth == 1 {
+                        continue;
+                    }
+                }
+                ')' | ']' | '}' => {
+                    depth -= 1;
+                    if depth == 0 {
+                        break;
+                    }
+                }
+                ',' if depth == 1 => {
+                    out.push(std::mem::take(&mut arg));
+                    continue;
+                }
+                _ => {}
+            }
+            arg.push(c);
+        }
+        out.push(arg);
+        out.iter()
+            .map(|a| a.split_whitespace().collect::<Vec<_>>().join(" "))
+            .filter(|a| !a.is_empty())
+            .collect()
+    }
+
+    /// All an event of this module may carry: ids, counts, the user's own
+    /// address, a code through its one sanitiser. A list of what may be, not of
+    /// what may not: a list of bad names let `{e}` through as `{why}`.
+    const FIELDS: &[&str] = &[
+        "source = \"db\"",
+        "code = \"db-connect-failed\"",
+        "code = %code(&e)",
+        "code = %sql_error(&e).code",
+        "server_code = %refused.code",
+        "refused = %marker(refused)",
+        "failed = %failed_code(o)",
+        "outcome = %apply_outcome(&out)",
+        "reason = %why.kind()",
+        "sid = %session_id",
+        "conn = %conn_id",
+        "kind = kind_name(profile.kind)",
+        "addr = %target.addr.label()",
+        "database = %profile.database",
+        "read_only",
+        "ms = started.elapsed().as_millis() as u64",
+        "ms = o.elapsed_ms",
+        "prod = conn.prod",
+        "lifted = conn.read_only",
+        "rows = o.rows.len()",
+        "affected = o.affected.unwrap_or(0)",
+        "truncated = o.truncated",
+        "count = statements.len()",
+    ];
+
+    /// The only results whose error may be written as it prints, each by the
+    /// expression that makes it: this computer's keychain, files and sockets,
+    /// and a cancel, whose error is a code.
+    const SWALLOWED: &[(&str, &str)] = &[
+        ("db/mod.rs", "canceller.cancel().await"),
+        ("db/mod.rs", "conn.cancel().await"),
+        ("db/mod.rs", "done"),
+        ("db/net.rs", "s.set_nodelay(true)"),
+        ("db/relay.rs", "sock.set_nodelay(true)"),
+        ("db/relay.rs", "std::fs::remove_file(&path)"),
+        (
+            "db/relay.rs",
+            "tokio::io::copy_bidirectional(&mut sock, &mut upstream).await",
+        ),
+        (
+            "commands/db.rs",
+            "secrets::delete_db_password(&secrets::db_scope(None, &id))",
+        ),
+        (
+            "commands/db.rs",
+            "secrets::delete_db_password(&secrets::db_scope(Some(&id), &db_id))",
+        ),
+        ("commands/db.rs", "secrets::delete_db_password(&scope)"),
+        (
+            "commands/db.rs",
+            "mark_saved(&state, place.as_deref(), &db_id, false)",
+        ),
+        ("commands/db.rs", "saved"),
+    ];
+
+    /// The drivers' refusals: none carries text — the database's words reach
+    /// the window as an answer (`SqlError`), never as a command's refusal,
+    /// which `call()` writes to the diagnostics.
+    const REFUSALS: &[&str] = &["DbAuthRejected", "DbClosed", "DbCancelFailed"];
+
+    fn offences(file: &str, src: &str) -> Vec<String> {
+        let code = production(src);
+        let mut found = Vec::new();
+        let boundary =
+            |at: usize| !code[..at].ends_with(|c: char| c.is_ascii_alphanumeric() || c == '_');
+        for name in ["trace", "debug", "info", "warn", "error", "event"] {
+            let call = format!("{name}!(");
+            for (at, _) in code.match_indices(&call).filter(|(at, _)| boundary(*at)) {
+                for arg in args_at(&code, at + call.len() - 1) {
+                    let literal = arg.starts_with('"') && arg.ends_with('"');
+                    if literal && !arg.contains('{') {
+                        continue;
+                    }
+                    if !FIELDS.contains(&arg.as_str()) {
+                        found.push(format!("{file}: an event carries `{arg}`"));
                     }
                 }
             }
-            found
         }
-        assert!(!offences("tracing::debug!(source = \"db\", \"failed: {e}\");").is_empty());
-        assert!(!offences("tracing::debug!(source = \"db\", query = %sql, \"ran\");").is_empty());
-        assert!(!offences(
-            "tracing::warn!(source = \"db\", said = %sql_error(&e).message, \"no\");"
-        )
-        .is_empty());
-        for (name, src) in [
-            ("db/mod.rs", include_str!("mod.rs")),
-            ("db/pg.rs", include_str!("pg.rs")),
-            ("db/my.rs", include_str!("my.rs")),
-            ("db/relay.rs", include_str!("relay.rs")),
-            ("commands/db.rs", include_str!("../commands/db.rs")),
+        for call in [".log_warn(", ".log_debug(", ".log_unheard("] {
+            for (at, _) in code.match_indices(call) {
+                // The statement the method hangs on, back to where it begins.
+                let mut depth = 0;
+                let mut from = 0;
+                for (i, c) in code[..at].char_indices().rev() {
+                    match c {
+                        ')' | ']' => depth += 1,
+                        '(' | '[' if depth > 0 => depth -= 1,
+                        '(' | '[' | ';' | '{' | '}' | '=' | ',' | '>' if depth == 0 => {
+                            from = i + 1;
+                            break;
+                        }
+                        _ => {}
+                    }
+                }
+                let on = code[from..at]
+                    .split_whitespace()
+                    .collect::<Vec<_>>()
+                    .join(" ");
+                let on = on.replace(" .", ".");
+                if !SWALLOWED.contains(&(file, on.as_str())) {
+                    found.push(format!("{file}: writes the error of `{on}` as it prints"));
+                }
+            }
+        }
+        for other in ["Logged::", "diag::shown", "diag::submit"] {
+            if code.contains(other) {
+                found.push(format!("{file}: writes through `{other}`"));
+            }
+        }
+        let driver = file.ends_with("/pg.rs") || file.ends_with("/my.rs");
+        if !driver {
+            // A driver's error is turned into a code or an answer where it is
+            // made; outside, only the canceller's token is known of a driver.
+            let known = code.replace("tokio_postgres::CancelToken", "");
+            for crate_name in ["tokio_postgres::", "mysql_async::"] {
+                if known.contains(crate_name) {
+                    found.push(format!("{file}: handles `{crate_name}` itself"));
+                }
+            }
+            for field in [".message", ".detail", ".hint"] {
+                for (at, _) in code.match_indices(field) {
+                    let next = code[at + field.len()..].chars().next().unwrap_or(' ');
+                    if !next.is_ascii_alphanumeric() && next != '_' {
+                        found.push(format!("{file}: handles the database's `{field}`"));
+                    }
+                }
+            }
+        }
+        if driver {
+            for (at, m) in code.match_indices("AppError::") {
+                let rest = &code[at + m.len()..];
+                let name: String = rest.chars().take_while(|c| c.is_alphanumeric()).collect();
+                if !REFUSALS.contains(&name.as_str()) {
+                    found.push(format!("{file}: refuses with `AppError::{name}`"));
+                } else if name == "DbCancelFailed" {
+                    let what = args_at(&code, at + m.len() + name.len()).join(", ");
+                    if !["code(&e)", "sql_error(&e).code", "e.code()"].contains(&what.as_str()) {
+                        found.push(format!("{file}: a cancel fails with `{what}`"));
+                    }
+                }
+            }
+            for (at, m) in code.match_indices("format!(") {
+                let end = code[at + m.len()..]
+                    .find(';')
+                    .map_or(code.len(), |e| at + m.len() + e);
+                let tail = code[at..end].split_whitespace().collect::<String>();
+                if tail.contains(").into()") {
+                    found.push(format!("{file}: refuses with a formatted text"));
+                }
+            }
+        }
+        found
+    }
+
+    /// INVARIANTS: SQL, rows and the database's words never reach the
+    /// diagnostics. Every file of the module, every way of writing from it.
+    #[test]
+    fn sql_and_results_never_reach_the_diagnostics() {
+        for (file, planted) in [
+            ("db/mod.rs", "fn f() { tracing::warn!(source = \"db\", \"failed: {why}\"); }"),
+            ("db/mod.rs", "fn f() { tracing::warn!(source = \"db\", reason = %renamed, \"no\"); }"),
+            ("db/mod.rs", "fn f() { warn!(source = \"db\", query = %sql, \"ran\"); }"),
+            ("db/mod.rs", "fn f() { tracing::info!(source = \"db\", \"got {}\", row); }"),
+            ("db/my.rs", "fn f() { let x = 1; conn.disconnect().await.log_debug(\"db\", \"no\"); }"),
+            ("db/pg.rs", "fn f() -> AppError { AppError::Message(words) }"),
+            ("db/pg.rs", "fn f() -> AppError { AppError::DbCancelFailed(e.to_string()) }"),
+            ("db/pg.rs", "fn f() -> AppResult<()> { Err(format!(\"{e}\").into()) }"),
+            ("db/mod.rs", "fn f() { let words = tokio_postgres::Error::to_string(&e); }"),
+            ("commands/db.rs", "fn f() -> AppError { AppError::Message(refused.message) }"),
+            ("db/net.rs", "#[cfg(test)]\nmod tests {\n    fn t() {}\n}\nfn below() { tracing::debug!(source = \"db\", \"{text}\"); }"),
         ] {
-            assert_eq!(offences(src), Vec::<String>::new(), "{name}");
+            assert!(!offences(file, planted).is_empty(), "not caught: {planted}");
         }
+        let fine =
+            "fn f() { tracing::info!(source = \"db\", conn = %conn_id, \"closed, (fine)\"); }";
+        assert_eq!(offences("db/mod.rs", fine), Vec::<String>::new());
+
+        // The module's files as they are on disk: a new one is read too.
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+        let mut files = vec!["commands/db.rs".to_string()];
+        for entry in std::fs::read_dir(root.join("db")).expect("the module's folder") {
+            let name = entry
+                .expect("an entry")
+                .file_name()
+                .to_string_lossy()
+                .into_owned();
+            files.push(format!("db/{name}"));
+        }
+        assert!(files.len() >= 7);
+        let mut found = Vec::new();
+        for file in files {
+            let src = std::fs::read_to_string(root.join(&file)).expect("a source");
+            found.extend(offences(&file, &src));
+        }
+        assert_eq!(found, Vec::<String>::new(), "{found:#?}");
     }
 
     #[test]
@@ -1128,6 +1389,13 @@ mod live_db {
         }
     }
 
+    fn typed(not: NotOpened) -> AppError {
+        match not {
+            NotOpened::App(refusal) => refusal,
+            NotOpened::Refused(refused) => AppError::Message(refused.message),
+        }
+    }
+
     async fn open(via: Via, p: &DbProfile, password: &str, read_only: bool) -> AppResult<Conn> {
         let target = Target {
             via,
@@ -1136,13 +1404,17 @@ mod live_db {
         let (driver, canceller) = match p.kind {
             DbKind::Postgres => {
                 let given = (!password.is_empty()).then_some(password);
-                let o = pg::connect(target.open().await?, p, given, read_only).await?;
+                let o = pg::connect(target.open().await?, p, given, read_only)
+                    .await
+                    .map_err(typed)?;
                 assert!(!o.version.is_empty());
                 (Driver::Pg(o.pg), Canceller::Pg(o.cancel, target.clone()))
             }
             DbKind::Mysql => {
                 let given = (!password.is_empty()).then(|| Zeroizing::new(password.into()));
-                let o = my::connect(&target, p, given, read_only).await?;
+                let o = my::connect(&target, p, given, read_only)
+                    .await
+                    .map_err(typed)?;
                 assert!(!o.version.is_empty());
                 (Driver::My(o.my), Canceller::My(o.killer))
             }
@@ -1721,5 +1993,99 @@ mod live_db {
             tunnel.unix("/var/run/sshd.pid").await,
             Err(AppError::DbTunnelRefused(_))
         ));
+    }
+}
+
+/// A database that refuses in words of its own, for the tests of where those
+/// words may go.
+#[cfg(test)]
+pub(crate) mod fake {
+    use super::net::{Addr, Io, Target, Tunnel, Via};
+    use crate::error::AppResult;
+    use crate::model::{DbKind, DbProfile};
+    use futures_util::future::BoxFuture;
+    use std::sync::Arc;
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+    /// What must be read nowhere but on the screen.
+    pub const WORDS: &str = "LEAKMARK Key (email)=(bob@example.com)";
+
+    struct Refuser {
+        kind: DbKind,
+        code: &'static str,
+    }
+
+    impl Refuser {
+        fn io(&self) -> Io {
+            let (near, mut far) = tokio::io::duplex(4096);
+            let (kind, code) = (self.kind, self.code);
+            tokio::spawn(async move {
+                let mut asked = [0u8; 2048];
+                let packet = match kind {
+                    DbKind::Postgres => {
+                        if far.read(&mut asked).await.is_err() {
+                            return;
+                        }
+                        // ErrorResponse: severity, code, message.
+                        let body = format!("SFATAL\0C{code}\0M{WORDS}\0\0");
+                        let mut p = vec![b'E'];
+                        p.extend((body.len() as u32 + 4).to_be_bytes());
+                        p.extend(body.as_bytes());
+                        p
+                    }
+                    DbKind::Mysql => {
+                        // An ERR packet where the greeting would be: 1130.
+                        let mut body = vec![0xff];
+                        body.extend(1130u16.to_le_bytes());
+                        body.extend(WORDS.as_bytes());
+                        let mut p = (body.len() as u32).to_le_bytes()[..3].to_vec();
+                        p.push(0);
+                        p.extend(body);
+                        p
+                    }
+                };
+                if far.write_all(&packet).await.is_ok() {
+                    while matches!(far.read(&mut asked).await, Ok(n) if n > 0) {}
+                }
+            });
+            Box::new(near)
+        }
+    }
+
+    impl Tunnel for Refuser {
+        fn tcp<'a>(&'a self, _host: &'a str, _port: u16) -> BoxFuture<'a, AppResult<Io>> {
+            Box::pin(async move { Ok(self.io()) })
+        }
+        fn unix<'a>(&'a self, _path: &'a str) -> BoxFuture<'a, AppResult<Io>> {
+            Box::pin(async move { Ok(self.io()) })
+        }
+    }
+
+    pub fn refusing(kind: DbKind, code: &'static str) -> (Target, DbProfile) {
+        let profile = DbProfile {
+            id: "fake".into(),
+            name: String::new(),
+            kind,
+            host: "db".into(),
+            port: 5432,
+            database: "app".into(),
+            user: "app".into(),
+            has_saved_password: false,
+            read_only: false,
+            container: None,
+        };
+        let target = Target {
+            via: Via::Ssh(Arc::new(Refuser { kind, code })),
+            addr: Addr::of(kind, &profile.host, profile.port),
+        };
+        (target, profile)
+    }
+
+    pub fn block_on<F: std::future::Future>(f: F) -> F::Output {
+        tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("a runtime")
+            .block_on(f)
     }
 }

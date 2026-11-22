@@ -13,10 +13,10 @@ import { dbApply, dbCancel, dbClose, dbConnect, dbForgetPassword, dbLocalList, d
 import { nullWrittenByCall, writtenByCall } from "../api/call";
 import { swallowed } from "../api/diag";
 import { diag } from "../api/diag";
-import type { DbKind, DbOpened, DbOutcome, DbProfile, DbTx, ServerProfile } from "../types";
+import type { DbConnect, DbKind, DbOutcome, DbProfile, DbTx, ServerProfile } from "../types";
 import { settings } from "../settings/settings.svelte";
 import { classify, writes, type Classified } from "../db/sqlclass";
-import { applyFailureText, dbFailure, failureText, type DbFailure } from "../db/dberror";
+import { applyFailureText, dbFailure, errorCodeText, failureText, refusedFailure, type DbFailure } from "../db/dberror";
 import { CATALOG_MAX, catalogQueries, indexesSql, parseColumns, parseIndexes, parseRoutines, parseTableMeta, parseTables, tableMetaSql, type Catalog } from "../db/dbcatalog";
 import { explainSql, flatten, parsePlan, resolveAliases, type Plan } from "../db/dbplan";
 import { editCount, editStatements, editTarget, NO_EDITS, setCell, sourceTable, toggleDelete, type Edits, type EditTarget, type NotEditable } from "../db/dbedit";
@@ -251,15 +251,20 @@ export async function connectDb(docId: string, password: string | null = null, r
   if (!d || d.conn || opening.has(docId)) return;
   opening.add(docId);
   patch(docId, { status: "connecting", failure: null });
-  let opened: DbOpened;
+  let got: DbConnect;
   try {
-    opened = await dbConnect(d.sessionId, d.dbId, password || null, remember);
+    got = await dbConnect(d.sessionId, d.dbId, password || null, remember);
   } catch (e) {
     const f = dbFailure(e);
     patch(docId, { status: f.kind === "auth" ? "password" : "failed", failure: f });
     return;
   } finally {
     opening.delete(docId);
+  }
+  const { opened, refused } = got;
+  if (!opened) {
+    patch(docId, { status: "failed", failure: refused ? refusedFailure(refused) : { kind: "closed" } });
+    return;
   }
   if (!docs[docId]) {
     // Closed while it connected.
@@ -554,7 +559,8 @@ export function stopDbSession(docId: string, sessionId: string, terminate: boole
     try {
       // The question before it is the consent to lift read-only for it.
       const out = await dbQuery(d.conn.id, sql, 1, d.conn.readOnly);
-      if (out.error) return { done: false, missing: false, error: out.error.message };
+      // The reason is said as a toast, and a toast is the journal: the code alone.
+      if (out.error) return { done: false, missing: false, error: errorCodeText(out.error) };
       return stopReached(d.kind, out) ? { done: true } : { done: false, missing: true, error: null };
     } catch (e) {
       return { done: false, missing: false, error: failureText(lost(docId, e)) };

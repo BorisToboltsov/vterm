@@ -4354,6 +4354,7 @@ export const en = {
   "db.err.notLocal": "A database of this computer is reached at its loopback or a socket only.",
   "db.err.badProfile": "The profile has a field that cannot be used: an address, a user or a database does not start with a dash and takes one line.",
   "db.err.notOneRow": "it changed {n} rows instead of one",
+  "db.err.code": "database error {code}",
   "db.err.atStatement": "statement {i}: {why}",
   "db.act.noSuch": "no such session",
   "db.close.title": "Close the database's document?",

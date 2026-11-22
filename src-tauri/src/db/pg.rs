@@ -6,8 +6,10 @@
 //! running it), then run through the simple protocol, whose rows come as text:
 //! every type reads the way `psql` prints it, with no decoder per type.
 
-use super::net::{Io, OPEN_TIMEOUT};
-use super::{Applied, Canceller, CapStop, Column, Outcome, Rows, Run, SqlError};
+use super::net::{Io, Target, OPEN_TIMEOUT};
+use super::{
+    no_answer, Applied, Canceller, CapStop, Column, NotOpened, Outcome, Rows, Run, SqlError,
+};
 use crate::error::{AppError, AppResult};
 use crate::locks::Locked;
 use crate::model::DbProfile;
@@ -44,7 +46,7 @@ pub async fn connect(
     profile: &DbProfile,
     password: Option<&str>,
     read_only: bool,
-) -> AppResult<Opened> {
+) -> Result<Opened, NotOpened> {
     let mut cfg = Config::new();
     cfg.user(&profile.user);
     if !profile.database.trim().is_empty() {
@@ -60,13 +62,7 @@ pub async fn connect(
     }
     let (client, mut connection) =
         match tokio::time::timeout(OPEN_TIMEOUT, cfg.connect_raw(stream, NoTls)).await {
-            Err(_) => {
-                return Err(format!(
-                    "the database did not answer in {} s",
-                    OPEN_TIMEOUT.as_secs()
-                )
-                .into())
-            }
+            Err(_) => return Err(no_answer().into()),
             Ok(Err(e)) => return Err(connect_error(&e)),
             Ok(Ok(pair)) => pair,
         };
@@ -121,24 +117,43 @@ pub async fn connect(
     })
 }
 
-/// What a failed connection says: the password (asked again), or why.
-fn connect_error(e: &tokio_postgres::Error) -> AppError {
-    if let Some(db) = e.as_db_error() {
-        if *db.code() == SqlState::INVALID_PASSWORD {
-            return AppError::DbAuthRejected;
-        }
-        return AppError::Message(format!("{} ({})", db.message(), db.code().code()));
+/// What a failed connection is: the password (asked again), or the database's
+/// answer — its words go to the screen.
+fn connect_error(e: &tokio_postgres::Error) -> NotOpened {
+    let asks = match e.as_db_error() {
+        Some(db) => *db.code() == SqlState::INVALID_PASSWORD,
+        // The server asked for a password and none was given.
+        None => in_words(e).contains("password missing"),
+    };
+    if asks {
+        return NotOpened::App(AppError::DbAuthRejected);
     }
-    let text = in_words(e);
-    // The server asked for a password and none was given.
-    if text.contains("password missing") {
-        return AppError::DbAuthRejected;
-    }
-    AppError::Message(text)
+    NotOpened::Refused(sql_error(e))
 }
 
+/// A SQLSTATE is five letters and digits. It comes from the server as text,
+/// and it is written where the server's text is not.
+fn sql_state(sent: &str) -> String {
+    if sent.len() == 5 && sent.chars().all(|c| c.is_ascii_alphanumeric()) {
+        sent.to_string()
+    } else {
+        "?".to_string()
+    }
+}
+
+/// What may be written of an error: its SQLSTATE, or that it is the driver's.
 fn code(e: &tokio_postgres::Error) -> String {
-    e.code().map(|c| c.code().to_string()).unwrap_or_default()
+    e.code()
+        .map_or_else(|| "driver".to_string(), |c| sql_state(c.code()))
+}
+
+/// Stop the statement running on a connection, from one of its own.
+pub(crate) async fn cancel(token: &tokio_postgres::CancelToken, target: &Target) -> AppResult<()> {
+    let stream = target.open().await?;
+    token
+        .cancel_query_raw(stream, NoTls)
+        .await
+        .map_err(|e| AppError::DbCancelFailed(code(&e)))
 }
 
 /// The driver prints a kind alone ("invalid configuration"); why is in its source.
@@ -156,7 +171,7 @@ fn sql_error(e: &tokio_postgres::Error) -> SqlError {
             message: db.message().to_string(),
             detail: db.detail().map(str::to_string),
             hint: db.hint().map(str::to_string),
-            code: db.code().code().to_string(),
+            code: sql_state(db.code().code()),
             position: match db.position() {
                 Some(ErrorPosition::Original(n)) => Some(*n),
                 _ => None,
@@ -269,7 +284,7 @@ impl Pg {
                 self.broken = true;
                 tracing::warn!(
                     source = "db",
-                    code = %e.code().map(|c| c.code()).unwrap_or(""),
+                    code = %code(&e),
                     "read-only was not put back after a lifted statement: the connection is closed"
                 );
                 return Err(AppError::DbClosed);
@@ -425,9 +440,25 @@ mod tests {
         };
         let got = connect(Box::new(near), &profile, None, false).await;
         match got {
-            Err(AppError::DbAuthRejected) => {}
-            Err(e) => panic!("the window would show a failure, not the question: {e}"),
+            Err(NotOpened::App(AppError::DbAuthRejected)) => {}
+            Err(NotOpened::App(e)) => {
+                panic!("the window would show a failure, not the question: {e}")
+            }
+            Err(NotOpened::Refused(e)) => {
+                panic!(
+                    "the window would show a failure, not the question: {}",
+                    e.message
+                )
+            }
             Ok(_) => panic!("connected without a password"),
+        }
+    }
+
+    #[test]
+    fn a_sqlstate_cannot_carry_a_servers_text() {
+        assert_eq!(sql_state("3D000"), "3D000");
+        for sent in ["LEAKMARK", "a b c", "", "12345 and more"] {
+            assert_eq!(sql_state(sent), "?", "{sent}");
         }
     }
 }

@@ -1020,7 +1020,7 @@ mod tests {
 
     /// Gate (v1.0.36): the app opens sockets of its own only for SSH (incl. the
     /// user's proxy), for the explicit local access check, and for a database
-    /// (ADR 0080) — of this computer at the address the user typed, or the MySQL
+    /// (ADR 0080) — of this computer at its loopback or a socket, or the MySQL
     /// relay's one-connection door. Any other module dialing out would break the
     /// offline invariant (ADR 0004) silently — the network is only ever reached
     /// on the user's behalf. A driver that dials by itself counts too

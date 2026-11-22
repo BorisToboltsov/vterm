@@ -170,6 +170,16 @@ export interface DbOpened {
   rememberFailed: boolean;
 }
 
+/**
+ * What connecting came to (mirrors commands/db.rs `DbConnect`): a connection, or
+ * the database's refusal — an answer, for the screen, never a refused command:
+ * `call()` writes those to the diagnostics.
+ */
+export interface DbConnect {
+  opened: DbOpened | null;
+  refused: DbSqlError | null;
+}
+
 /** Another login of a server (mirrors model.rs `ServerLogin`). */
 export interface ServerLogin {
   id: string;

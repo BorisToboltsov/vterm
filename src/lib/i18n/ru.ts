@@ -4339,6 +4339,7 @@ export const ru: Record<MessageKey, string> = {
   "db.err.notLocal": "База этого компьютера доступна только по loopback или через сокет.",
   "db.err.badProfile": "В профиле есть непригодное поле: адрес, пользователь и база не начинаются с дефиса и занимают одну строку.",
   "db.err.notOneRow": "изменено строк: {n}, а должна быть одна",
+  "db.err.code": "ошибка базы {code}",
   "db.err.atStatement": "оператор {i}: {why}",
   "db.act.noSuch": "такого сеанса нет",
   "db.close.title": "Закрыть документ базы?",
