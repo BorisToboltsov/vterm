@@ -5,6 +5,7 @@ mod backup;
 mod ci;
 mod commands;
 mod container;
+mod db;
 mod diag;
 mod dragghost;
 mod dragout;
@@ -112,7 +113,7 @@ impl AppState {
     }
 
     /// The current profile of the server an SSH session was opened for.
-    fn session_server(&self, session_id: &str) -> Option<ServerProfile> {
+    pub(crate) fn session_server(&self, session_id: &str) -> Option<ServerProfile> {
         let server_id = self.session_servers.locked().get(session_id).cloned()?;
         self.servers
             .locked()
@@ -169,6 +170,17 @@ pub(crate) async fn end_session(app: &AppHandle, session_id: &str) {
             "language servers stopped with the session"
         );
     }
+    // So do its database connections (ADR 0080): they run through it.
+    let dbs = app.state::<db::Dbs>().close_session(session_id);
+    if !dbs.is_empty() {
+        tracing::info!(
+            source = "db",
+            sid = session_id,
+            connections = dbs.len(),
+            "database connections closed with the session"
+        );
+    }
+    dbs.into_iter().for_each(db::let_go);
     // So does its sync run, between two files (v1.36: the run is the backend's,
     // no window's teardown stops it any more).
     let run = state.sync_runs.locked().remove(session_id);
@@ -376,6 +388,7 @@ pub fn run() {
         .manage(appwin::Windows::default())
         .manage(transfers::Jobs::default())
         .manage(lsp::Lsps::default())
+        .manage(db::Dbs::default())
         // Read before any window asks: a journal that does not parse is
         // quarantined in time for the main window to be told.
         .manage(journal::Journal::load())
@@ -477,6 +490,15 @@ pub fn run() {
             commands::editor::lsp_start,
             commands::editor::lsp_send,
             commands::editor::lsp_stop,
+            commands::db::db_local_list,
+            commands::db::db_save_local,
+            commands::db::set_server_databases,
+            commands::db::db_forget_password,
+            commands::db::db_connect,
+            commands::db::db_query,
+            commands::db::db_apply,
+            commands::db::db_cancel,
+            commands::db::db_close,
             commands::sftp::nginx_config_files,
             commands::sftp::server_tools_status,
             commands::sftp::run_tool_install,

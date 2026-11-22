@@ -176,7 +176,9 @@ pub fn import_backup(
         settings,
     };
 
-    if let Some(c) = catalog {
+    if let Some(mut c) = catalog {
+        // "Password saved" for a database is this computer's word, not the archive's.
+        crate::db::keep_password_flags(&state.servers.locked(), &mut c.servers);
         let folders = backup::normalize_folders(c.folders);
         store::save_servers(&c.servers)?;
         store::save_folders(&folders)?;

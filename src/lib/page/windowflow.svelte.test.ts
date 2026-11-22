@@ -63,6 +63,7 @@ const settled = () => new Promise((r) => setTimeout(r, 0));
 function harness(
   over: {
     editorBusy?: (id: string) => boolean;
+    dbBusy?: (id: string) => boolean;
     snapshot?: (id: string, sent: number) => Promise<unknown>;
     ghostProbe?: () => HTMLElement | undefined;
   } = {},
@@ -71,6 +72,7 @@ function harness(
     title: vi.fn((tab: { sessionId: string }) => `title-${tab.sessionId.slice(0, 4)}`),
     alias: vi.fn(() => "alias"),
     editorBusy: over.editorBusy ?? (() => false),
+    dbBusy: over.dbBusy ?? (() => false),
     snapshot: vi.fn(
       over.snapshot ??
         (async (id: string, sent: number) => {

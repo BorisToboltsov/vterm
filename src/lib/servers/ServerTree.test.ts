@@ -17,6 +17,7 @@ function srv(p: Partial<ServerProfile> & { id: string; alias: string }): ServerP
     logins: [],
     defaultLogin: "",
     askLogin: false,
+    databases: [],
     group: null,
     tags: [],
     prod: null,

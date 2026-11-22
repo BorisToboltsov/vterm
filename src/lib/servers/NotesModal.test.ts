@@ -17,6 +17,7 @@ function server(notes = ""): ServerProfile {
     logins: [],
     defaultLogin: "",
     askLogin: false,
+    databases: [],
     group: null,
     tags: [],
     prod: null,

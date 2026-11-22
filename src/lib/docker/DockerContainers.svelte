@@ -12,6 +12,7 @@
   // stays whole when the details take half the row; the state column says the
   // health check, the exit and the restarts; a column says the address.
   import Icon from "../ui/Icon.svelte";
+  import { kindOfImage } from "../db/dbprofile";
   import Sparkline from "../monitoring/Sparkline.svelte";
   import { tooltip } from "../actions/tooltip";
   import { historyMax, padHistory, parsePercent, type LoadHistory } from "../monitoring/loadhistory";
@@ -71,6 +72,7 @@
     busy = false,
     run,
     onShell,
+    onAddDatabase,
     onLogs,
     onInspect,
     onComposeLogs,
@@ -106,6 +108,7 @@
     busy?: boolean;
     run: (args: string[], opts?: { destructive?: boolean; successKey?: string }) => Promise<boolean>;
     onShell: (c: DockerContainer) => void;
+    onAddDatabase?: (c: DockerContainer, facts: DockerFacts | undefined) => void;
     onLogs: (c: DockerContainer) => void;
     onInspect: (c: DockerContainer) => void;
     onComposeLogs: (project: string) => void;
@@ -270,6 +273,11 @@
   }
 
   function menuItems(c: DockerContainer): MenuItem[] {
+    const database = onAddDatabase && kindOfImage(c.image) ? {
+      icon: "database" as const,
+      label: t("docker.addDatabase"),
+      onSelect: () => onAddDatabase(c, factsById.get(c.id)),
+    } : null;
     return [
       { icon: "eye", label: t("docker.viewDetails"), onSelect: () => onViewDetails(c) },
       { kind: "separator" },
@@ -280,6 +288,7 @@
       { icon: "terminal", label: t("docker.openShell"), onSelect: () => onShell(c) },
       { icon: "note", label: t("docker.viewLogs"), onSelect: () => onLogs(c) },
       { icon: "braces", label: t("docker.inspect"), onSelect: () => onInspect(c) },
+      ...(database ? [database] : []),
       { kind: "separator" },
       { icon: "copy", label: t("docker.copyId"), onSelect: () => copyId(c) },
       { icon: "trash", label: t("docker.remove"), danger: true, onSelect: () => run(removeArgs([c.id], isRunning(c)), { destructive: true, successKey: "docker.removed" }) },

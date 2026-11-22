@@ -16,6 +16,14 @@ misconfigurations:
       Test-only sshd for the live su and sudo tests. sshd has to run as root to
       switch to the user logging in; the container is local and short-lived
       (docker compose up … down around the test run).
+  - id: DS-0002
+    paths:
+      - e2e/db/Dockerfile
+    statement: >-
+      Test-only sshd for the live database tests. sshd has to run as root to
+      switch to the user logging in; the container is local and short-lived,
+      published on the loopback address alone and forwarding only to the
+      databases of its own compose network.
   - id: DS-0026
     paths:
       - e2e/linux/Dockerfile

@@ -116,6 +116,13 @@ export function remapServers(
           hasSavedSudo: here?.hasSavedSudo ?? false,
         };
       }),
+      // A database's password is said to be saved only for the place and the
+      // user this computer saved it for (ADR 0080); the backend checks again.
+      databases: (s.databases ?? []).map((d) => {
+        const here = mine?.databases?.find((m) => m.id === d.id);
+        const same = !!here && here.kind === d.kind && here.host.trim() === d.host.trim() && here.port === d.port && here.user === d.user;
+        return { ...d, hasSavedPassword: same && here.hasSavedPassword };
+      }),
       proxy: s.proxy
         ? {
             ...s.proxy,

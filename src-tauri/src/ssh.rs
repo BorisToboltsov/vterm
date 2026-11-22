@@ -567,6 +567,37 @@ impl SshSession {
         Ok(channel)
     }
 
+    /// A channel to `host:port` as the server sees it (`direct-tcpip`, ADR 0080):
+    /// a database the server reaches, spoken to through this connection — no
+    /// socket opens on this computer.
+    pub async fn direct_tcpip(
+        &self,
+        host: &str,
+        port: u16,
+    ) -> AppResult<russh::Channel<client::Msg>> {
+        answered(
+            self.handle.channel_open_direct_tcpip(
+                host.to_string(),
+                u32::from(port),
+                "127.0.0.1",
+                0,
+            ),
+            &format!("{host}:{port}"),
+        )
+        .await
+    }
+
+    /// A channel to a unix socket on the server (`direct-streamlocal@openssh.com`,
+    /// ADR 0080): a database listening on a socket file there.
+    pub async fn direct_streamlocal(&self, path: &str) -> AppResult<russh::Channel<client::Msg>> {
+        answered(
+            self.handle
+                .channel_open_direct_streamlocal(path.to_string()),
+            path,
+        )
+        .await
+    }
+
     /// Push bytes into the active recording as output (no-op if not recording).
     /// Used to mirror AI-executed commands into the session recording (17.8).
     pub fn record_output(&self, data: &[u8]) {

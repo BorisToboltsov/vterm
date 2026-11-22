@@ -74,6 +74,100 @@ export interface ServerProfile {
   defaultLogin: string;
   /** Ask which login on every connect. */
   askLogin: boolean;
+  /** The databases this server reaches (ADR 0080; mirrors model.rs `DbProfile`). */
+  databases: DbProfile[];
+}
+
+/** Which database server a profile speaks to (mirrors model.rs `DbKind`). */
+export type DbKind = "postgres" | "mysql";
+
+/**
+ * A database a server — or this computer — reaches (ADR 0080; mirrors model.rs
+ * `DbProfile`). `host` as the server sees it, or a unix socket starting with `/`.
+ */
+export interface DbProfile {
+  id: string;
+  name: string;
+  kind: DbKind;
+  host: string;
+  port: number;
+  database: string;
+  user: string;
+  hasSavedPassword: boolean;
+  /** Opened read-only; a prod server's databases are read-only whatever this says. */
+  readOnly: boolean;
+  /** The container it was found in: the console runs its client there. */
+  container: string | null;
+}
+
+/** A column of a database's answer (mirrors db/mod.rs `Column`). */
+export interface DbColumn {
+  name: string;
+  typeName: string;
+  numeric: boolean;
+  /** PostgreSQL: the table's oid; MySQL: `schema.table`. Null — computed. */
+  table: string | null;
+  /** PostgreSQL: the column's number; MySQL: its name. */
+  column: string | null;
+  /** Part of the primary key, when the database says (MySQL). */
+  key: boolean;
+}
+
+/** What the database said was wrong (mirrors db/mod.rs `SqlError`). */
+export interface DbSqlError {
+  message: string;
+  detail: string | null;
+  hint: string | null;
+  code: string;
+  /** 1-based character in the statement. */
+  position: number | null;
+}
+
+/** The answer to one statement (mirrors db/mod.rs `Outcome`). */
+export interface DbOutcome {
+  columns: DbColumn[];
+  rows: (string | null)[][];
+  /** Cells cut at 64 KiB: `[row, column]`. */
+  cut: [number, number][];
+  truncated: boolean;
+  affected: number | null;
+  elapsedMs: number;
+  notices: string[];
+  error: DbSqlError | null;
+  /** The backend took it for a read: its rows may be edited, and it run again. */
+  read: boolean;
+  /** The transaction, as it stands after it. */
+  tx: DbTx;
+  /** `\` escapes inside a string on that server now. */
+  backslashEscapes: boolean;
+}
+
+/** Where a database connection stands in a transaction (mirrors db/mod.rs `Tx`). */
+export type DbTx = "none" | "open" | "aborted";
+
+/** Why edits were not applied (mirrors db/mod.rs `ApplyFailure`). */
+export interface DbApplyFailure {
+  /** The 1-based statement; null — the transaction itself. */
+  statement: number | null;
+  /** It changed this many rows instead of one. */
+  changed: number | null;
+  error: DbSqlError | null;
+}
+
+/** What applying edits came to (mirrors db/mod.rs `Applied`). */
+export interface DbApplied {
+  changed: number[];
+  failure: DbApplyFailure | null;
+}
+
+/** A database connection opened (mirrors commands/db.rs `DbOpened`). */
+export interface DbOpened {
+  connId: string;
+  version: string;
+  readOnly: boolean;
+  prod: boolean;
+  kind: DbKind;
+  rememberFailed: boolean;
 }
 
 /** Another login of a server (mirrors model.rs `ServerLogin`). */

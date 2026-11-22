@@ -31,6 +31,7 @@ const web: ServerProfile = {
   logins: [],
   defaultLogin: "",
   askLogin: false,
+  databases: [],
   group: "web",
   tags: [],
   prod: false,

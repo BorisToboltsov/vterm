@@ -14,10 +14,10 @@
 export type DockSide = "left" | "right" | "bottom";
 export const DOCK_SIDES: readonly DockSide[] = ["left", "right", "bottom"];
 
-/** Every tool panel. `servers` is the saved-server tree and `scenarios` the
- *  recipe library (ADR 0071); the rest need a session. */
-export type PanelId = "servers" | "files" | "git" | "docker" | "k8s" | "ci" | "scenarios" | "ai";
-export const PANEL_IDS: readonly PanelId[] = ["servers", "files", "git", "docker", "k8s", "ci", "scenarios", "ai"];
+/** Every tool panel. `servers` is the saved-server tree, `scenarios` the
+ *  recipe library (ADR 0071) and `db` the databases (ADR 0080); the rest need a session. */
+export type PanelId = "servers" | "db" | "files" | "git" | "docker" | "k8s" | "ci" | "scenarios" | "ai";
+export const PANEL_IDS: readonly PanelId[] = ["servers", "db", "files", "git", "docker", "k8s", "ci", "scenarios", "ai"];
 
 export const isPanelId = (v: unknown): v is PanelId =>
   typeof v === "string" && (PANEL_IDS as readonly string[]).includes(v);
@@ -32,7 +32,7 @@ export const isDockSide = (v: unknown): v is DockSide =>
  * the active session changes — every other panel is rebuilt for the session
  * in focus.
  */
-export const isSessionPanel = (id: PanelId): boolean => id !== "servers" && id !== "scenarios";
+export const isSessionPanel = (id: PanelId): boolean => id !== "servers" && id !== "scenarios" && id !== "db";
 
 export interface DockState {
   /** Tab order. Across the three docks every panel appears exactly once. */
@@ -73,7 +73,7 @@ export const COLLAPSED_RAIL = 36;
 export const BOTTOM_MAX_SHARE = 0.6;
 
 const DEFAULT_PANELS: Record<DockSide, PanelId[]> = {
-  left: ["servers"],
+  left: ["servers", "db"],
   right: ["files", "git", "ai"],
   bottom: ["docker", "k8s", "ci", "scenarios"],
 };

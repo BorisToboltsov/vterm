@@ -137,6 +137,7 @@ const idle: DetachState = {
   syncComparing: false,
   chatStep: false,
   editorBusy: false,
+  dbBusy: false,
 };
 
 describe("detachBlocker", () => {
@@ -171,6 +172,7 @@ describe("detachBlocker", () => {
     expect(detachBlocker({ ...idle, syncComparing: true })).toBe("sync");
     expect(detachBlocker({ ...idle, chatStep: true })).toBe("ai");
     expect(detachBlocker({ ...idle, editorBusy: true })).toBe("editor");
+    expect(detachBlocker({ ...idle, dbBusy: true })).toBe("db");
   });
 
   it("a file transfer under way is no reason at all", () => {
@@ -184,9 +186,10 @@ describe("detachBlocker", () => {
       syncComparing: true,
       chatStep: true,
       editorBusy: true,
+      dbBusy: true,
     };
     expect(Object.keys(fields).sort()).toEqual(
-      ["chatStep", "connected", "editorBusy", "mainWindow", "syncComparing", "tabs"],
+      ["chatStep", "connected", "dbBusy", "editorBusy", "mainWindow", "syncComparing", "tabs"],
     );
     expect(Object.keys(DETACH_BLOCK_MESSAGE)).not.toContain("transfers");
   });
@@ -199,6 +202,7 @@ describe("detachBlocker", () => {
       syncComparing: true,
       chatStep: true,
       editorBusy: true,
+      dbBusy: true,
     };
     expect(detachBlocker(everything)).toBe("lastTab");
     expect(detachBlocker({ ...everything, tabs: 2 })).toBe("notConnected");
@@ -325,6 +329,7 @@ describe("paneMoveBlocker", () => {
     syncComparing: false,
   chatStep: false,
     editorBusy: false,
+    dbBusy: false,
   };
 
   it("a pane of idle, connected tabs can go", () => {

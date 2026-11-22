@@ -8,7 +8,7 @@ name: Глубокие проверки
 #   fuzz      — те же property-тесты, что на PR, но на два порядка глубже;
 #   live-sftp — что делает НАСТОЯЩИЙ sshd, а не что вычислила функция (и
 #               вход через keyboard-interactive — live_kbdint;
-#               настоящие su и sudo — live_fileuser);
+#               настоящие su и sudo — live_fileuser; базы данных за sshd — live_db);
 #   e2e       — реальное нативное окно через tauri-driver.
 #
 # Не на PR: около 18 минут раннера и 9 минут ожидания на каждый пуш (релиз v1.25.10; график —
@@ -137,9 +137,20 @@ jobs:
       - name: Прогон (su и sudo)
         run: cargo test --manifest-path src-tauri/Cargo.toml --lib live_fileuser -- --ignored
 
+      # Базы данных за sshd (ADR 0080): что настоящие PostgreSQL, MySQL и MariaDB
+      # отвечают драйверам — отмена, только чтение, правки одной транзакцией.
+      - name: Тестовые базы данных
+        run: |
+          docker compose -f e2e/docker-compose.db.yml up -d --build --wait --wait-timeout 180 \
+            || { docker compose -f e2e/docker-compose.db.yml logs; exit 1; }
+
+      - name: Прогон (базы данных)
+        run: cargo test --manifest-path src-tauri/Cargo.toml --lib live_db -- --ignored --test-threads=1
+
       - name: Погасить sshd
         if: always()
         run: |
+          docker compose -f e2e/docker-compose.db.yml down -v
           docker compose -f e2e/docker-compose.ssh.yml down
           docker compose -f e2e/docker-compose.kbdint.yml down
           docker compose -f e2e/docker-compose.sudo.yml down

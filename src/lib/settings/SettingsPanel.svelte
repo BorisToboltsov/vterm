@@ -26,6 +26,7 @@
   import BackupSettings from "../servers/BackupSettings.svelte";
   import DockerSettings from "../docker/DockerSettings.svelte";
   import K8sSettings from "../k8s/K8sSettings.svelte";
+  import DbSettings from "../db/DbSettings.svelte";
   import ServerToolsPanel from "../editor/ServerToolsPanel.svelte";
   import {
     SETTINGS_GROUPS,
@@ -47,6 +48,7 @@
     sessions: "settings.groupSessions",
     docker: "settings.groupDocker",
     k8s: "settings.groupK8s",
+    databases: "settings.groupDatabases",
     assistant: "settings.groupAssistant",
     journal: "settings.groupJournal",
   };
@@ -647,6 +649,10 @@
 
         {#if show("k8s")}
         <K8sSettings />
+        {/if}
+
+        {#if show("databases")}
+        <DbSettings />
         {/if}
 
         {#if show("backup")}

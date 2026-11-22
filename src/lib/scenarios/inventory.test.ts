@@ -24,6 +24,7 @@ function server(p: Partial<ServerProfile>): ServerProfile {
     logins: [],
     defaultLogin: "",
     askLogin: false,
+    databases: [],
     group: null,
     tags: [],
     prod: false,

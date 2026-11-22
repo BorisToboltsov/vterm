@@ -45,7 +45,7 @@ export function sanitizeThreshold(v: unknown): DiagThreshold {
  * login, a name already taken, a file changed under the editor. The app answers
  * each of them with a question; it is `info`, not a fault.
  */
-export const EXPECTED_MARKERS = ["auth-rejected", "auth-cancelled", "dest-exists", "key-exists", "file-changed"] as const;
+export const EXPECTED_MARKERS = ["auth-rejected", "auth-cancelled", "dest-exists", "key-exists", "file-changed", "db-read-only"] as const;
 
 /** How a rejected backend call is written: `warn`, or `info` for an ordinary outcome. */
 export function rejectionLevel(err: unknown): "warn" | "info" {
@@ -137,6 +137,7 @@ export const DIAG_CODES = [
   "policy-refused",
   "local-run-refused",
   "netcheck-ended",
+  "db-connect-failed",
   "netcheck-stopped",
   "netcheck-failed",
   "recipe-started",

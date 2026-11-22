@@ -104,6 +104,9 @@ describe("tab teardown guard", () => {
       "forgetScenarios",
       // Its language servers and what was learned of them (ADR 0079).
       "forgetLsp",
+      // Its database connections (ADR 0080); handed to another window — only their state here.
+      "forgetDb(sessionId)",
+      "dropDb(sessionId)",
     ]) {
       expect(fn).toContain(cleanup);
     }

@@ -55,7 +55,7 @@ const FLUSH_WAIT: Duration = Duration::from_secs(2);
 /// The parts of the app an event comes from: the journal's sources
 /// (`notifications/journal.ts`, `JOURNAL_SOURCES`), `app` and `storage` —
 /// mirrored by `DIAG_SOURCES` in `diag/diag.ts` (gate `diag.guard`).
-pub const SOURCES: [&str; 21] = [
+pub const SOURCES: [&str; 22] = [
     "connection",
     "terminal",
     "files",
@@ -70,6 +70,7 @@ pub const SOURCES: [&str; 21] = [
     "ai",
     "netcheck",
     "scenarios",
+    "db",
     "monitoring",
     "servers",
     "settings",

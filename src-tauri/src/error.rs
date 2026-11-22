@@ -50,6 +50,62 @@ pub enum AppError {
     #[error("unknown server")]
     UnknownServer,
 
+    /// The database turned the user or the password down (ADR 0080): the
+    /// frontend matches `db-auth-rejected` to ask for the password.
+    #[error("db-auth-rejected: the database did not accept the user or the password")]
+    DbAuthRejected,
+
+    /// The SSH server would not open a channel to the database's address — its
+    /// `AllowTcpForwarding`/`AllowStreamLocalForwarding`, or nothing listens there
+    /// (`db-tunnel-refused: <address>: <what it said>`).
+    #[error("db-tunnel-refused: {0}")]
+    DbTunnelRefused(String),
+
+    /// The database connection is gone — closed by the server, the network or
+    /// its tab (`db-closed`). The console offers to connect again.
+    #[error("db-closed: the connection to the database is closed")]
+    DbClosed,
+
+    /// No database of that id in the profile of the tab's server or of this
+    /// computer (`unknown-database`).
+    #[error("unknown-database: no such database in the profile")]
+    UnknownDatabase,
+
+    /// A statement is still running on this connection (`db-busy`).
+    #[error("db-busy: a statement is still running on this connection")]
+    DbBusy,
+
+    /// A read-only connection, a statement that changes something, and no
+    /// consent to lift the lock (`db-read-only`): the window asks and sends again.
+    #[error("db-read-only: the statement needs read-only lifted")]
+    DbReadOnly,
+
+    /// The lock lifts for one statement; this one would keep it off (`db-lift-scope`).
+    #[error("db-lift-scope: read-only lifts for one statement and this one would keep it lifted")]
+    DbLiftScope,
+
+    /// Not inside a transaction of the user's: lifting the lock, applying edits
+    /// (`db-tx-open`).
+    #[error("db-tx-open: end the open transaction first")]
+    DbTxOpen,
+
+    /// One statement at a time (`db-many-statements`).
+    #[error("db-many-statements: one statement at a time")]
+    DbManyStatements,
+
+    /// Applying edits takes an UPDATE or a DELETE a row and nothing else (`db-not-an-edit`).
+    #[error("db-not-an-edit: only a row's UPDATE or DELETE is applied")]
+    DbNotAnEdit,
+
+    /// A database of this computer named an address that is not this computer's
+    /// (`db-not-local`, ADR 0080).
+    #[error("db-not-local: a database of this computer is reached at its loopback or a socket")]
+    DbNotLocal,
+
+    /// A field of a database profile that cannot be used (`db-bad-profile`).
+    #[error("db-bad-profile: the database profile has a field that cannot be used")]
+    DbBadProfile,
+
     /// The login a tab connects with was removed from its server's profile
     /// (`login-gone`, ADR 0074): the tab waits and says so, it does not guess
     /// another login.

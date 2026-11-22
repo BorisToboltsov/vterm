@@ -5,6 +5,7 @@
 // automatically whenever the relevant settings change.
 
 import { sanitizeForges, type Forge } from "../ci/forge";
+import { DEFAULT_DB_THRESHOLDS, type DbThresholds } from "../db/dbactivity";
 import { EDITOR_DEFAULTS, sanitizeEditorSettings, type EditorSettings } from "../editor/editorprefs";
 import { diag, swallowed } from "../api/diag";
 import { DEFAULT_PROD_TINT, sanitizeProdTint, type ProdTint } from "../appearance/prodtint";
@@ -289,6 +290,12 @@ export interface Settings {
   // Docker panel (Phase 35) — how often the live view (list + logs + stats)
   // re-polls the daemon while the panel is open, in seconds. See docker.ts.
   dockerRefreshSec: number;
+  // Databases (ADR 0080): the most rows a statement brings back, how often the
+  // activity view reads the server while it is on screen (s), and where
+  // activity turns into a problem (dbactivity.ts).
+  dbMaxRows: number;
+  dbActivitySec: number;
+  dbThresholds: DbThresholds;
   // Git panel (v1.27): the branches starred in its tree, by name, for every
   // repository; whether a history row shows tags; whether the commits of the
   // current branch stand out from the rest.
@@ -488,6 +495,9 @@ const DEFAULTS: Settings = {
   idleTimeoutSec: DEFAULT_IDLE_TIMEOUT,
   idleShiftEverySec: DEFAULT_IDLE_SHIFT,
   dockerRefreshSec: 3,
+  dbMaxRows: 1000,
+  dbActivitySec: 5,
+  dbThresholds: { ...DEFAULT_DB_THRESHOLDS },
   dockerRegistries: [],
   gitFavoriteBranches: [...DEFAULT_FAVORITE_BRANCHES],
   gitShowTags: true,
@@ -509,6 +519,34 @@ const DEFAULTS: Settings = {
   kubectlPath: "",
   prodTint: { ...DEFAULT_PROD_TINT },
 };
+
+/** The rows a statement brings back: 100…10 000 (the backend's own cap). */
+export function clampDbRows(v: unknown): number {
+  const n = typeof v === "number" && Number.isFinite(v) ? Math.round(v) : DEFAULTS.dbMaxRows;
+  return Math.max(100, Math.min(10_000, n));
+}
+
+/** How often the activity view reads: 2…60 s. */
+export function clampDbActivity(v: unknown): number {
+  const n = typeof v === "number" && Number.isFinite(v) ? Math.round(v) : DEFAULTS.dbActivitySec;
+  return Math.max(2, Math.min(60, n));
+}
+
+/** Database thresholds from storage: each a positive number in its bounds, the default otherwise. */
+export function sanitizeDbThresholds(v: unknown): DbThresholds {
+  const r = (v && typeof v === "object" ? v : {}) as Record<string, unknown>;
+  const pick = (k: keyof DbThresholds, lo: number, hi: number): number => {
+    const n = r[k];
+    return typeof n === "number" && Number.isFinite(n) ? Math.max(lo, Math.min(hi, Math.round(n))) : DEFAULT_DB_THRESHOLDS[k];
+  };
+  return {
+    idleTxSec: pick("idleTxSec", 5, 86_400),
+    lockWaitSec: pick("lockWaitSec", 1, 3600),
+    replLagSec: pick("replLagSec", 1, 86_400),
+    connPct: pick("connPct", 10, 100),
+    cacheHitPct: pick("cacheHitPct", 50, 100),
+  };
+}
 
 /** Clamp the Docker refresh interval to 1…30 s (polling, not streaming). */
 export function clampDockerRefresh(v: unknown): number {
@@ -634,6 +672,9 @@ function load(): Settings {
       idleTimeoutSec: clampIdleTimeout(raw.idleTimeoutSec),
       idleShiftEverySec: sanitizeShiftInterval(raw.idleShiftEverySec),
       dockerRefreshSec: clampDockerRefresh(raw.dockerRefreshSec),
+      dbMaxRows: clampDbRows(raw.dbMaxRows),
+      dbActivitySec: clampDbActivity(raw.dbActivitySec),
+      dbThresholds: sanitizeDbThresholds(raw.dbThresholds),
       dockerRegistries: sanitizeDockerRegistries(raw.dockerRegistries),
       gitFavoriteBranches: "gitFavoriteBranches" in raw
         ? sanitizeFavoriteBranches(raw.gitFavoriteBranches)
@@ -728,6 +769,7 @@ export function resetSettings(): void {
     customTheme: { ...DEFAULTS.customTheme },
     statusBarItems: { ...DEFAULTS.statusBarItems },
     statusBarThresholds: mergeThresholds(undefined),
+    dbThresholds: { ...DEFAULT_DB_THRESHOLDS },
     smartLogs: { ...DEFAULTS.smartLogs },
     highlightRules: defaultHighlightRules(),
     searchOptions: { ...DEFAULTS.searchOptions },
@@ -785,6 +827,7 @@ export function applyImportedSettings(raw: unknown): void {
     "customTheme",
     "statusBarItems",
     "statusBarThresholds",
+    "dbThresholds",
     "smartLogs",
     "highlightRules",
     "searchOptions",
@@ -825,6 +868,9 @@ export function applyImportedSettings(raw: unknown): void {
   next.idleTimeoutSec = clampIdleTimeout(next.idleTimeoutSec);
   next.idleShiftEverySec = sanitizeShiftInterval(next.idleShiftEverySec);
   next.dockerRefreshSec = clampDockerRefresh(next.dockerRefreshSec);
+  next.dbMaxRows = clampDbRows(next.dbMaxRows);
+  next.dbActivitySec = clampDbActivity(next.dbActivitySec);
+  next.dbThresholds = sanitizeDbThresholds(r.dbThresholds);
   next.dockerRegistries = sanitizeDockerRegistries(r.dockerRegistries);
   next.hiddenPanels = sanitizeHiddenPanels(r.hiddenPanels);
   next.scenarioSources = sanitizeSources(r.scenarioSources);

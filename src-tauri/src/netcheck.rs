@@ -11,7 +11,7 @@
 // and ports the user typed, only a TCP handshake that is closed at once with no
 // payload. The route-source lookup uses a *connected UDP socket*, which sends
 // nothing — it only asks the kernel which address it would use. The gate
-// `app_originated_sockets_live_only_in_ssh_and_netcheck` keeps it that narrow.
+// `app_originated_sockets_live_only_in_ssh_netcheck_and_db` keeps it that narrow.
 //
 // Output is the same tab-separated line protocol the remote script prints
 // (documented in netcheck.ts), with verdicts already classified (`N` lines), so
@@ -1019,17 +1019,30 @@ mod tests {
     }
 
     /// Gate (v1.0.36): the app opens sockets of its own only for SSH (incl. the
-    /// user's proxy) and for the explicit local access check. Any other module
-    /// dialing out would break the offline invariant (ADR 0004) silently — the
-    /// network is only ever reached on the user's behalf. Scans code with line
-    /// comments stripped, so docs may name the primitives.
+    /// user's proxy), for the explicit local access check, and for a database
+    /// (ADR 0080) — of this computer at the address the user typed, or the MySQL
+    /// relay's one-connection door. Any other module dialing out would break the
+    /// offline invariant (ADR 0004) silently — the network is only ever reached
+    /// on the user's behalf. A driver that dials by itself counts too
+    /// (`mysql_async::Conn::new`). Scans code with line comments stripped, so
+    /// docs may name the primitives.
     #[test]
-    fn app_originated_sockets_live_only_in_ssh_and_netcheck() {
-        const ALLOWED: &[&str] = &["ssh.rs", "netcheck.rs"];
+    fn app_originated_sockets_live_only_in_ssh_netcheck_and_db() {
+        const ALLOWED: &[&str] = &[
+            "ssh.rs",
+            "netcheck.rs",
+            "db/net.rs",
+            "db/relay.rs",
+            "db/my.rs",
+        ];
         const PRIMITIVES: &[&str] = &[
             "TcpStream::connect",
             "TcpSocket::",
             "UdpSocket::",
+            "TcpListener::bind",
+            "UnixListener::bind",
+            "UnixStream::connect",
+            "mysql_async::Conn::new",
             "lookup_host(",
             "to_socket_addrs(",
         ];
@@ -1046,26 +1059,26 @@ mod tests {
                 if path.extension().and_then(|e| e.to_str()) != Some("rs") {
                     continue;
                 }
-                let name = path.file_name().unwrap().to_string_lossy().to_string();
-                if ALLOWED.contains(&name.as_str()) {
+                let rel = path
+                    .strip_prefix(&root)
+                    .unwrap()
+                    .to_string_lossy()
+                    .replace('\\', "/");
+                if ALLOWED.contains(&rel.as_str()) {
                     continue;
                 }
                 let src = std::fs::read_to_string(&path).unwrap();
                 for (i, line) in src.lines().enumerate() {
                     let code = line.split("//").next().unwrap_or("");
                     if PRIMITIVES.iter().any(|p| code.contains(p)) {
-                        offenders.push(format!(
-                            "{}:{}",
-                            path.strip_prefix(&root).unwrap().display(),
-                            i + 1
-                        ));
+                        offenders.push(format!("{rel}:{}", i + 1));
                     }
                 }
             }
         }
         assert!(
             offenders.is_empty(),
-            "sockets opened outside ssh.rs/netcheck.rs (offline invariant): {offenders:?}"
+            "sockets opened outside ssh.rs/netcheck.rs/db (offline invariant): {offenders:?}"
         );
     }
 }

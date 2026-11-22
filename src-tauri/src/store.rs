@@ -247,6 +247,31 @@ pub fn save_folders(folders: &[String]) -> AppResult<()> {
     Ok(())
 }
 
+// ── Databases of this computer (ADR 0080) ──────────────────────────────────────
+//
+// A server's databases live in its profile (`ServerProfile.databases`) and travel
+// with it; the ones this computer reaches itself have no server to live in. Part
+// of the catalog: a change tells every window to read it again.
+
+fn databases_path() -> Option<PathBuf> {
+    config_file("databases.json")
+}
+
+pub fn load_local_databases() -> Vec<crate::model::DbProfile> {
+    let Some(path) = databases_path() else {
+        return Vec::new();
+    };
+    read_store(&path)
+}
+
+pub fn save_local_databases(dbs: &[crate::model::DbProfile]) -> AppResult<()> {
+    let path = databases_path().ok_or("could not resolve config directory")?;
+    let json = serde_json::to_vec_pretty(dbs).map_err(|e| format!("serialize: {e}"))?;
+    write_atomic(&path, &json)?;
+    catalog_changed();
+    Ok(())
+}
+
 // ── Window places (v1.36, ADR 0057) ────────────────────────────────────────────
 //
 // Where each window stood when the app last quit — `winplace` says what a place
@@ -466,6 +491,7 @@ mod tests {
             logins: Vec::new(),
             default_login: String::new(),
             ask_login: false,
+            databases: Vec::new(),
         }
     }
 

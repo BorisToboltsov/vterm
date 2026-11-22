@@ -15,6 +15,7 @@
 
 import type { MessageKey } from "../i18n";
 import type { CdShell } from "../pathsync/cdterminal";
+import type { DbDocState } from "../stores/db.svelte";
 import type { DockSessionState } from "../stores/dockstate.svelte";
 import type { SyncJob } from "../stores/syncjob.svelte";
 import type { Tab } from "../stores/tabs.svelte";
@@ -26,7 +27,7 @@ import type { LayoutNode, Pane } from "../layout/splitlayout";
 
 /** Bumped when the packet's shape changes. Both windows run the same build, so
  *  a mismatch is not a migration case — the packet is refused. */
-export const PACKET_VERSION = 6;
+export const PACKET_VERSION = 7;
 
 /** A terminal's screen, scrollback and modes, as `@xterm/addon-serialize` writes them. */
 export interface TermSnapshot {
@@ -101,6 +102,8 @@ export interface TabPacket {
   sync: SyncJob | null;
   /** The rows of its sync run so far, when the run is going (v1.36). */
   syncProgress: { map: SyncProgressMap; done: number; weight: number } | null;
+  /** Its database documents (ADR 0080): their connections are the backend's and stay open. */
+  db: Record<string, DbDocState> | null;
   page: PageSessionState;
 }
 
@@ -152,7 +155,8 @@ export type DetachBlock =
   | "notConnected"
   | "sync"
   | "ai"
-  | "editor";
+  | "editor"
+  | "db";
 
 /** What decides whether a tab can be moved out. */
 export interface DetachState {
@@ -172,6 +176,8 @@ export interface DetachState {
   chatStep: boolean;
   /** One of its editors is loading or being saved. */
   editorBusy: boolean;
+  /** One of its database documents is running a statement (ADR 0080): it ends here first. */
+  dbBusy: boolean;
 }
 
 /**
@@ -201,6 +207,7 @@ export function detachBlocker(s: DetachState, toOpenWindow = false): DetachBlock
   if (s.syncComparing) return "sync";
   if (s.chatStep) return "ai";
   if (s.editorBusy) return "editor";
+  if (s.dbBusy) return "db";
   return null;
 }
 
@@ -211,6 +218,7 @@ export const DETACH_BLOCK_MESSAGE: Record<DetachBlock, MessageKey> = {
   sync: "window.detachBlockedSync",
   ai: "window.detachBlockedAi",
   editor: "window.detachBlockedEditor",
+  db: "window.detachBlockedDb",
 };
 
 /**

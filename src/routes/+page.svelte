@@ -155,6 +155,13 @@
   import PipelinesTab from "#lib/pipeline/PipelinesTab.svelte";
   import ScenariosPanel from "#lib/scenarios/ScenariosPanel.svelte";
   import ProjectView from "#lib/scenarios/ProjectView.svelte";
+  import DbPanel from "#lib/db/DbPanel.svelte";
+  import DbConsole from "#lib/db/DbConsole.svelte";
+  import DbActivityView from "#lib/db/DbActivityView.svelte";
+  import { consoleArgv, profileFromContainer, profileTitle, type ContainerSeen } from "#lib/db/dbprofile.ts";
+  import { parsePorts } from "#lib/docker/dockernet.ts";
+  import { askNewDb, attachDb, connectDb, dbRunning, dbWork, dbWorking, dropDb, forgetDb, loadLocalDbs, profilesOf } from "#lib/stores/db.svelte.ts";
+  import type { DbProfile } from "#lib/types.ts";
   import NewProjectDialog from "#lib/scenarios/NewProjectDialog.svelte";
   import { folderName, isPinned as isProjectPinned, togglePin, type ProjectBookmark } from "#lib/scenarios/bookmarks.ts";
   import type { ProjectKind } from "#lib/scenarios/project.ts";
@@ -170,6 +177,7 @@
     workspacesState,
     addScratchEditor,
     addProjectView,
+    addDbView,
     type ProjectAsk,
     setEditorSaveIssue,
     carryEditor,
@@ -394,7 +402,7 @@
   let quitForUpdate = $state(false);
   let updateVersion = $state("");
   let updateFreeze = $state(false);
-  const dirtyEditors = () => Object.values(workspacesState.map).reduce((n, ws) => n + ws.editors.filter(isDirty).length, 0);
+  const dirtyEditors = () => Object.values(workspacesState.map).reduce((n, ws) => n + ws.editors.filter((ed) => isDirty(ed) || (ed.db && dbWork(ed.id) !== null)).length, 0);
   async function askToUpdate(version: string) {
     updateVersion = version;
     quitForUpdate = true;
@@ -699,6 +707,30 @@
     const zone = panes(getWorkspace(sid).layout).find((z) => z.tabs.includes(TERMINAL_VIEW));
     const beside = !!zone && canSplitZone(sid, zone.id, "right");
     addProjectView(sid, tab.kind === "local" ? "local" : "sftp", kind, root, folderName(root), ask, beside);
+  }
+
+  /**
+   * A database's console (with `sql` to start with) or its activity (ADR 0080):
+   * the tab of its place, connected — the server's, or a local one for this
+   * computer — and the document beside its terminal, connecting on its own.
+   */
+  async function openDb(place: string | null, db: DbProfile, view: "console" | "activity", sql = "") {
+    const sid = await readyTabForPlace(place);
+    const tab = sid ? findTab(sid) : null;
+    if (!sid || !tab) return;
+    const title = profileTitle(db);
+    const id = addDbView(sid, tab.kind === "local" ? "local" : "sftp", { place, dbId: db.id, kind: db.kind, view }, view === "console" ? title : `${title} · ${t("db.panel.activity")}`, sql);
+    // "First rows" of a table: the console runs what it opened with, once connected.
+    attachDb(id, { sessionId: sid, place, dbId: db.id, kind: db.kind, view, autorun: sql || null });
+    await connectDb(id);
+  }
+
+  /** The user's own client for a database, typed into its place's terminal. */
+  async function dbClientInTerminal(place: string | null, db: DbProfile) {
+    const sid = await readyTabForPlace(place);
+    if (!sid) return;
+    if (!terminalShown(getWorkspace(sid).layout)) showSessionView(sid, TERMINAL_VIEW);
+    typeInTerminal(sid, consoleArgv(db));
   }
 
   /** A tab for a place, once it is connected; null — none, or it did not connect (said). */
@@ -1157,7 +1189,7 @@
    * fetched its state and logs, so the question carries them; consent still runs
    * in the chat, exactly as for a hand-attached context.
    */
-  function askAiAboutResource(id: string, context: string, kind: "container" | "pod" | "ci") {
+  function askAiAboutResource(id: string, context: string, kind: "container" | "pod" | "ci" | "db") {
     askAbout(id, { source: kind, context });
     revealPanel("ai");
   }
@@ -1503,6 +1535,18 @@
       title: t("palette.showAi"),
       icon: "aiMark", group: t("palette.groupActions"), keywords: "ai chat assistant llm панель ии ассистент чат",
       run: () => revealPanel("ai") } satisfies CommandItem]),
+    // Databases (ADR 0080): the panel, a new connection.
+    ...(isPanelHidden("db") ? [] : [
+      { id: "act:databases", title: t("palette.databases"), icon: "database", group: t("palette.groupActions"),
+        keywords: "database databases postgres postgresql mysql mariadb sql console query activity locks базы база данных консоль запрос активность блокировки",
+        run: () => revealPanel("db") } satisfies CommandItem,
+      { id: "act:database-new", title: t("palette.newDatabase"), icon: "plus", group: t("palette.groupActions"),
+        keywords: "new database connection postgres mysql новое подключение база",
+        run: () => {
+          revealPanel("db");
+          askNewDb(null);
+        } } satisfies CommandItem,
+    ]),
     // Scenarios (ADR 0071): the panel, a new recipe, a new Ansible project.
     ...(isPanelHidden("scenarios") ? [] : [
       { id: "act:scenarios", title: t("palette.scenarios"), icon: "listCheck", group: t("palette.groupActions"),
@@ -1980,6 +2024,7 @@
     title: tabTitle,
     alias: tabAlias,
     editorBusy: (sid) => getWorkspace(sid).editors.some((ed) => ed.loading || ed.id === editors.savingId),
+    dbBusy: (sid) => dbRunning(sid),
     snapshot: async (sid, sent) => (await termRefs[sid]?.snapshot?.(sent)) ?? null,
     carried: (sid) => ({
       terminalCwd: terminalCwd[sid] ?? null,
@@ -2020,6 +2065,7 @@
   let viewGhost = $state({ w: 0, h: 0 });
 
   async function refresh() {
+    void loadLocalDbs();
     [servers, folders] = await Promise.all([listServers(), listFolders()]);
     if (!selectedId && servers.length > 0) selectedId = servers[0].id;
   }
@@ -2356,13 +2402,16 @@
     const tab = findTab(sessionId);
     // Its open files close with it (they are saved through it): unsaved edits
     // are a reason to ask even when the session itself is already dead.
-    if (tab && (isLive(tab.status) || hasUnsaved(getWorkspace(sessionId)))) closeConfirmId = sessionId;
+    if (tab && (isLive(tab.status) || hasUnsaved(getWorkspace(sessionId)) || dbWorking(sessionId).length > 0)) closeConfirmId = sessionId;
     else closeTabFully(sessionId);
   }
   /** Files of the tab being closed that have unsaved edits — said in the question. */
   const closeConfirmUnsaved = $derived(
     closeConfirmId ? getWorkspace(closeConfirmId).editors.filter(isDirty).length : 0,
   );
+
+  /** Databases of the tab being closed with work to lose (ADR 0080). */
+  const closeConfirmDb = $derived(closeConfirmId ? dbWorking(closeConfirmId).length : 0);
 
   /**
    * The one way a tab goes away. A session id keys state in four places besides
@@ -2427,6 +2476,10 @@
     forgetScenarios(sessionId);
     // Its language servers (ADR 0079); the backend stops them with the session too.
     forgetLsp(sessionId);
+    // Its database connections (ADR 0080) — unless the tab went to another
+    // window: that window has them now, open.
+    if (keepSession) dropDb(sessionId);
+    else forgetDb(sessionId);
     closeTabStore(sessionId);
   }
 
@@ -2440,6 +2493,8 @@
   // A connection with unsaved edits in its files is left open by a bulk close:
   // it has a question of its own to ask, and several at once would stack.
   function closeInBulk(tab: Tab) {
+    // A database's running statement, open transaction or changes ask the same way.
+    if (dbWorking(tab.sessionId).length > 0) return;
     if (!hasUnsaved(getWorkspace(tab.sessionId))) closeTabFully(tab.sessionId);
   }
 
@@ -2994,7 +3049,9 @@
      "the active tab": the docks keep the panels of every session on screen
      mounted, and a hidden one must go on working for its own session. -->
 {#snippet dockPanel(id: PanelId, visible: boolean, sid: string | null)}
-  {#if id === "scenarios"}
+  {#if id === "db"}
+    <DbPanel {servers} connected={connectedServers} onOpen={(place, db, view, sql) => void openDb(place, db, view, sql)} onTerminal={(place, db) => void dbClientInTerminal(place, db)} />
+  {:else if id === "scenarios"}
     <ScenariosPanel
       {visible}
       {servers}
@@ -3074,6 +3131,32 @@
         onIgnoreGitignore={(path, pattern) => editors.appendGitignore(tab.sessionId, path, pattern)}
         onSftpNavigate={(path) => cdTerminalTo(tab.sessionId, path)}
         onOpenContainerShell={(argv, target) => openContainerShell(tab.sessionId, argv, target)}
+        onAddDatabase={isPanelHidden("db") ? undefined : (container, facts) => {
+          const addresses = facts?.addresses ?? [];
+          const published: Record<number, number> = {};
+          const bound: Record<number, string> = {};
+          for (const port of parsePorts(facts?.ports || container.ports)) {
+            if (port.kind !== "published" || port.proto !== "tcp") continue;
+            const internal = Number(port.containerPort);
+            const external = Number(port.hostPort);
+            if (!Number.isInteger(internal) || !Number.isInteger(external) || internal in published) continue;
+            published[internal] = external;
+            bound[internal] = port.hostIp;
+          }
+          const seen: ContainerSeen = {
+            name: container.name,
+            image: container.image,
+            ip: addresses.find((address) => address.ipv4)?.ipv4 || addresses.find((address) => address.ipv6)?.ipv6 || null,
+            published,
+            bound,
+            env: {},
+          };
+          const profile = profileFromContainer(seen, crypto.randomUUID());
+          if (!profile) return;
+          // Its form lives in the panel: shown first.
+          revealPanel("db");
+          askNewDb(tab.kind === "ssh" ? tab.serverId : null, profile);
+        }}
         onAskAi={aiOn
           ? (context, kind) => askAiAboutResource(tab.sessionId, context, kind)
           : undefined}
@@ -3963,6 +4046,25 @@
                                 }
                               : undefined}
                           />
+                        {:else if ed.db}
+                          <!-- A database of the connection (ADR 0080): its console or its activity, no file. -->
+                          {@const dbProfile = profilesOf(ed.db.place, servers).find((x) => x.id === ed.db?.dbId) ?? null}
+                          {@const dbServer = ed.db.place === null ? t("db.here") : (servers.find((x) => x.id === ed.db?.place)?.alias ?? "")}
+                          {#if ed.db.view === "console"}
+                            <DbConsole
+                              sessionId={tab.sessionId}
+                              doc={ed}
+                              profile={dbProfile}
+                              serverName={dbServer}
+                              onTerminal={(argv) => {
+                                if (!terminalShown(getWorkspace(tab.sessionId).layout)) showSessionView(tab.sessionId, TERMINAL_VIEW);
+                                typeInTerminal(tab.sessionId, argv);
+                              }}
+                              onAsk={aiOn ? (context) => askAiAboutResource(tab.sessionId, context, "db") : undefined}
+                            />
+                          {:else}
+                            <DbActivityView sessionId={tab.sessionId} docId={ed.id} visible={zone?.active === ed.id && tabsState.activeId === tab.sessionId} profile={dbProfile} serverName={dbServer} />
+                          {/if}
                         {:else if ed.pipelines}
                           <!-- The map of a group of pipelines (ADR 0068): no text of its own. -->
                           <PipelinesTab
@@ -4457,6 +4559,9 @@
       {t("page.closeTabUnsaved", { n: closeConfirmUnsaved })}
     </span>
   {/if}
+  {#if closeConfirmDb > 0}
+    <span class="mt-1 block text-meta text-warn" data-testid="close-tab-db">{t("page.closeTabDb", { n: closeConfirmDb })}</span>
+  {/if}
 </ConfirmDialog>
 
 <!-- Tab-bar right-click menu -->
@@ -4471,6 +4576,18 @@
   ondiscard={() => editors.discardAndClose()}
   oncancel={() => editors.cancelClose()}
 />
+
+<!-- A database's console closing with work to lose (ADR 0080) -->
+<ConfirmDialog
+  open={!!editors.dbCloseAsk}
+  title={t("db.close.title")}
+  confirmLabel={t("common.close")}
+  danger
+  onconfirm={() => editors.confirmDbClose()}
+  oncancel={() => editors.cancelDbClose()}
+>
+  {#if editors.dbCloseAsk}<p class="text-xs text-muted">{t(`db.close.${editors.dbCloseAsk.work}`)}</p>{/if}
+</ConfirmDialog>
 
 <!-- Sudo prompt (ADR 0073): reopen, edit or save a file as root -->
 <SudoPrompt

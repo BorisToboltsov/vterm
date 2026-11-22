@@ -241,6 +241,9 @@ const CASES: Record<string, { bad: [string, string][]; good: [string, string][] 
       // A monitoring section polling GPUs itself, or reading a process in a loop.
       ["src/lib/monitoring/MonGpu.svelte", svelte(`import { fetchLiveExtras } from "../api";\nvoid fetchLiveExtras;`)],
       ["src/lib/monitoring/MonitoringOverlay.svelte", svelte(`import { fetchProcessDetail } from "../api";\nvoid fetchProcessDetail;`)],
+      // A database asked past its store: no question, no turn, no end with the tab (ADR 0080).
+      ["src/lib/db/DbConsole.svelte", svelte(`import { dbQuery } from "../api/db";\nvoid dbQuery;`)],
+      ["src/lib/db/DbPanel.svelte", svelte(`import { dbConnect } from "../api/db";\nvoid dbConnect;`)],
       // A second poller of the basic metrics — the status bar asking on its own timer.
       ["src/lib/monitoring/StatusBar.svelte", svelte(`import { fetchMetrics } from "../api";\nvoid fetchMetrics;`)],
       // A message slipped into the journal unmasked, or the list read past the store.

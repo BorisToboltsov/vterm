@@ -58,6 +58,7 @@ pub fn add_server(profile: NewServerProfile, state: State<AppState>) -> AppResul
         logins,
         default_login: profile.default_login,
         ask_login: profile.ask_login,
+        databases: Vec::new(),
     };
     let mut servers = state.servers.locked();
     add_persisted(&mut servers, created, store::save_servers)
@@ -315,16 +316,18 @@ fn path_sync_persisted(
 #[tauri::command]
 pub async fn delete_server(id: String, state: State<'_, AppState>) -> AppResult<()> {
     let mut logins = Vec::new();
+    let mut databases = Vec::new();
     let snapshot = {
         let mut servers = state.servers.lock().unwrap();
         if let Some(gone) = servers.iter().find(|s| s.id == id) {
             logins = gone.login_ids();
+            databases = gone.database_ids();
         }
         servers.retain(|s| s.id != id);
         servers.clone()
     };
     store::save_servers(&snapshot)?;
-    secrets::delete_all(&id, &logins).log_warn(
+    secrets::delete_all(&id, &logins, &databases).log_warn(
         "servers",
         "the server's saved passwords were not removed from the keychain",
     );
@@ -364,14 +367,14 @@ pub fn forget_login_secret(
 /// its proxy's too.
 #[tauri::command]
 pub fn forget_secrets(id: String, state: State<AppState>) -> AppResult<()> {
-    let logins = state
+    let (logins, databases) = state
         .servers
         .locked()
         .iter()
         .find(|p| p.id == id)
-        .map(ServerProfile::login_ids)
+        .map(|p| (p.login_ids(), p.database_ids()))
         .unwrap_or_default();
-    secrets::delete_all(&id, &logins)?;
+    secrets::delete_all(&id, &logins, &databases)?;
     let snapshot = {
         let mut servers = state.servers.lock().unwrap();
         if let Some(p) = servers.iter_mut().find(|p| p.id == id) {
@@ -380,6 +383,9 @@ pub fn forget_secrets(id: String, state: State<AppState>) -> AppResult<()> {
             for l in &mut p.logins {
                 l.has_saved_password = false;
                 l.has_saved_sudo = false;
+            }
+            for d in &mut p.databases {
+                d.has_saved_password = false;
             }
             if let Some(px) = p.proxy.as_mut() {
                 px.has_saved_password = false;

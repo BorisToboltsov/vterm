@@ -12,7 +12,7 @@
 // (unreachable) or a view with no document (an empty zone) cannot exist.
 
 import type { EditorLang } from "../editor/editorlang";
-import type { SudoRoute, TextFile, WriteResult } from "../types";
+import type { DbKind, SudoRoute, TextFile, WriteResult } from "../types";
 import {
   closeView,
   loadViews,
@@ -122,6 +122,13 @@ export interface EditorDoc {
    * is its file on this computer, whichever host the run goes to.
    */
   project?: { kind: "ansible" | "terraform"; root: string; ask?: ProjectAsk; askSeq?: number; library?: boolean };
+  /**
+   * Not a file but a database of the connection (ADR 0080): its SQL console
+   * (the text is the console's, never saved anywhere) or its activity view.
+   * `place` — the server whose profile holds it, null — this computer. Not
+   * reopened at launch: its connection is the backend's and ends with the session.
+   */
+  db?: { place: string | null; dbId: string; kind: DbKind; view: "console" | "activity" };
 }
 
 /** What a project view is opened for, beyond its overview. */
@@ -415,6 +422,11 @@ export function setEditorContent(sessionId: string, id: string, content: string)
   updateDoc(sessionId, id, { content });
 }
 
+/** A database console's text (ADR 0080): it is the console's own, never "unsaved". */
+export function setConsoleText(sessionId: string, id: string, text: string): void {
+  updateDoc(sessionId, id, { content: text, baseContent: text });
+}
+
 /**
  * The language of an open file, set by hand in the status bar or by the
  * remembered choice for its path (ADR 0076) — highlighting, lint and format follow.
@@ -535,6 +547,54 @@ export function addProjectView(
     project: { kind, root, ask, askSeq: ask ? 1 : 0, library },
   };
   patch(sessionId, { editors: [...ws.editors, doc], layout: openView(ws.layout, id, beside) });
+  return id;
+}
+
+/**
+ * A database's console or activity (ADR 0080) in the connection's file zone:
+ * a document with no file. The activity of a database asked for again is shown,
+ * not opened twice; a console opens anew each time — two consoles of one
+ * database are two connections, like two `psql` sessions. `sql` — text to start with.
+ */
+export function addDbView(
+  sessionId: string,
+  source: "sftp" | "local",
+  db: NonNullable<EditorDoc["db"]>,
+  name: string,
+  sql = "",
+): string {
+  const ws = ensure(sessionId);
+  if (db.view === "activity") {
+    const known = ws.editors.find((e) => e.db && e.db.view === "activity" && e.db.dbId === db.dbId && e.db.place === db.place);
+    if (known) {
+      patch(sessionId, { layout: showView(ws.layout, known.id) });
+      return known.id;
+    }
+  }
+  const id = crypto.randomUUID();
+  const doc: EditorDoc = {
+    id,
+    source,
+    path: "",
+    name,
+    lang: { kind: "sql", label: "SQL" },
+    content: sql,
+    baseContent: sql,
+    baseSha256: "",
+    eol: "lf",
+    encoding: "utf-8",
+    mode: null,
+    readOnly: db.view === "activity",
+    writeAccess: "unknown",
+    saveIssue: "none",
+    loading: false,
+    loadError: null,
+    sudo: false,
+    sudoRoute: null,
+    gotoLine: null,
+    db: { ...db },
+  };
+  patch(sessionId, { editors: [...ws.editors, doc], layout: openView(ws.layout, id) });
   return id;
 }
 

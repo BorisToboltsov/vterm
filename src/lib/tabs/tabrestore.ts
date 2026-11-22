@@ -120,8 +120,8 @@ export const isAbsolutePath = (path: string): boolean =>
   path.startsWith("/") || /^[A-Za-z]:[\\/]/.test(path) || path.startsWith("\\\\");
 
 /** Whether a document is written down: a file opened as it is, through its connection. */
-export function keepsDoc(doc: Pick<EditorDoc, "path" | "sudo" | "gitBase" | "pipelines" | "project">): boolean {
-  return !doc.sudo && doc.gitBase === undefined && !doc.pipelines && !doc.project && isAbsolutePath(doc.path);
+export function keepsDoc(doc: Pick<EditorDoc, "path" | "sudo" | "gitBase" | "pipelines" | "project" | "db">): boolean {
+  return !doc.sudo && doc.gitBase === undefined && !doc.pipelines && !doc.project && !doc.db && isAbsolutePath(doc.path);
 }
 
 /** More files than this in one connection is not something to reopen at launch. */

@@ -15,6 +15,7 @@
   import AiChat from "../ai/AiChat.svelte";
   import GitPanel from "../git/GitPanel.svelte";
   import DockerPanel from "../docker/DockerPanel.svelte";
+  import type { DockerContainer, DockerFacts } from "../docker/docker";
   import K8sPanel from "../k8s/K8sPanel.svelte";
   import CiPanel from "../ci/CiPanel.svelte";
   import type { Repo } from "../ci/forge";
@@ -50,6 +51,7 @@
     onIgnoreGitignore,
     onSftpNavigate,
     onOpenContainerShell,
+    onAddDatabase,
     onAskAi,
     onOpenAt,
     onOpenRunSchema,
@@ -103,6 +105,7 @@
     onSftpNavigate?: (path: string) => void;
     /** Docker panel → open a real terminal tab running an `exec` shell command. */
     onOpenContainerShell?: (argv: string[], target?: AttachTarget) => void;
+    onAddDatabase?: (container: DockerContainer, facts: DockerFacts | undefined) => void;
     /** Hand a container/pod's state + logs, or a failed CI job, to the AI assistant (Phase 41, ADR 0069). */
     onAskAi?: (context: string, kind: "container" | "pod" | "ci") => void;
     /** CI: a file of the repository at a line. */
@@ -202,6 +205,7 @@
     {visible}
     {sessionReady}
     onOpenShell={onOpenContainerShell}
+    {onAddDatabase}
     onAsk={onAskAi ? (ctx) => onAskAi(ctx, "container") : undefined}
   />
 {:else if id === "k8s"}

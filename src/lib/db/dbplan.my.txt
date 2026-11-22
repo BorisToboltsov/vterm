@@ -1,0 +1,7 @@
+-> Limit: 100 row(s)  (actual time=9.83..9.83 rows=100 loops=1)
+    -> Sort: `count(*)` DESC, limit input to 100 row(s) per chunk  (actual time=9.83..9.83 rows=100 loops=1)
+        -> Table scan on <temporary>  (actual time=9.76..9.77 rows=100 loops=1)
+            -> Aggregate using temporary table  (actual time=9.73..9.73 rows=100 loops=1)
+                -> Filter: ((invoices.`status` = 'unpaid') and (invoices.due_at < <cache>((now() - interval 30 day))))  (cost=5534 rows=1956) (actual time=0.333..9.56 rows=900 loops=1)
+                    -> Table scan on invoices  (cost=5534 rows=58690) (actual time=0.218..6.79 rows=60000 loops=1)
+

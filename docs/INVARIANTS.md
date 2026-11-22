@@ -13,6 +13,7 @@
 [Окна](#окна) ·
 [Панели-драйверы](#панели-драйверы) ·
 [Сценарии](#сценарии) ·
+[Базы данных](#базы-данных) ·
 [Логи, поиск, запись](#логи-поиск-запись-сессий) ·
 [Файлы, пути, текст](#файлы-пути-текст) ·
 [Хранение и секреты](#хранение-и-секреты) ·
@@ -56,12 +57,12 @@
    доступа» с локальной вкладки — рукопожатие или **его** `bash`/`nc`/`telnet`/`curl` (ADR 0012,
    0033, 0056); **его** `curl`/`openssl` в TLS-инспекторе и HTTP-клиенте (ADR 0014); проверка и
    скачивание релиза GitHub по явному действию (ADR 0031); **его** `gh`/`glab` к **его** GitHub/GitLab
-   в панели CI (ADR 0069); **его** `ansible`/`terraform` на хосте проекта (ADR 0071); **его** форматтеры и языковые серверы на хосте файла (ADR 0076, 0079). Такой трафик идёт только из Rust:
+   в панели CI (ADR 0069); **его** `ansible`/`terraform` на хосте проекта (ADR 0071); **его** форматтеры и языковые серверы на хосте файла (ADR 0076, 0079); база этого компьютера — loopback и сокет, база сервера — через его SSH (ADR 0080). Такой трафик идёт только из Rust:
    фронт сетевых вызовов не делает (`vterm/no-network`), CSP строгий; проксировать загрузку
    картинок или данных через Rust — то же обращение в сеть. Шрифты встроены, внешние ссылки —
    только по клику через `tauri-plugin-opener`; диагностика хоста исполняется на хосте сессии.
-   Сокеты приложения — только в `ssh.rs` и `netcheck.rs` (гейт
-   `app_originated_sockets_live_only_in_ssh_and_netcheck`).
+   Сокеты приложения — только в `ssh.rs`, `netcheck.rs` и драйверах БД (гейт
+   `app_originated_sockets_live_only_in_ssh_netcheck_and_db`).
 7. **Границы и предохранители — не одно и то же.** Границы: прод-/`noAi`-гейт в бэкенде, окно
    согласия ИИ, keychain, CSP, capabilities, политики argv (ADR 0036). Предохранители (bias:
    over-flag/over-mask): deny-list опасных команд, `needsConfirm`/`ConfirmDialog`, маскирование
@@ -147,7 +148,7 @@
   раскладка зон в сторе рабочих пространств — тем же деревом, что центр
   ([sessionviews.ts](../src/lib/layout/sessionviews.ts)).
   - Раскладку зон меняет только чистая модель; документ и его вид появляются и исчезают одним
-    шагом (`addEditor`, `addPipelinesView`/`closeEditor`), больше никто документы не добавляет и не убирает.
+    шагом (`addEditor`, `addPipelinesView`, `addDbView`/`closeEditor`), больше никто документы не добавляет и не убирает.
   - Новый файл встаёт к файлам (`fileZone`), а не поверх терминала, в котором печатают.
   - Редакторы — один плоский список на соединение: пересозданный теряет отмену, курсор и
     прокрутку; монтирование не зависит от зон и `tab.gen`.
@@ -613,6 +614,48 @@ Git, Docker, k8s, сетевые пробы и метрики — **один к�
   только `playbookLine` после `watchAnsibleRun`, серверы — только из каталога. Здесь — в своей папке,
   на сервере — копией в папке прогона (`carriedName`), удаляемой с ней. YAML с ошибкой показан с
   причиной, YAML папки-проекта — у проекта. Гейт `scenarios.guard`.
+
+## Базы данных
+
+PostgreSQL и MySQL/MariaDB — [ADR 0080](adr/0080-databases.md). Панель «Базы» глобальная
+(`isSessionPanel`); консоль и активность — документы соединения, у каждого своё подключение.
+
+- **Путь к базе выбирает бэкенд.** Окно называет вкладку и id базы: адрес, пароль и право писать — из
+  профиля. На SSH — канал через `answered`; с локальной вкладки — только loopback и сокет
+  (`on_this_computer`, имя не резолвится): исключение из офлайна не шире этого компьютера. Гейт
+  `a_database_of_this_computer_is_reached_on_this_computer_alone`.
+- **«Только чтение» держит бэкенд, окно лишь спрашивает.** Прод — всегда. Без `writable` проходит
+  только известное `db/sql.rs`: чтение, оператор транзакции, безобидная настройка; остальное —
+  `db-read-only` и вопрос. Замок снимается на один оператор, вне транзакции, и ставится заново;
+  продлевающее его — отказ и после согласия. Свои запросы приложения — в `appsql.cases.json`, иначе
+  панель ломается на проде. Гейты `read_only_is_held_by_the_backend_whatever_the_window_asked`,
+  `the_apps_own_reads_pass_and_its_changes_ask`.
+- **Один оператор за раз:** MySQL принимает несколько, поэтому их считает бэкенд по кавычкам
+  сервера (`sql_mode`). На пределе строк отменяется только чтение вне транзакции — отмена изменения
+  откатила бы его, — и отмену ждут до следующего оператора. Гейты
+  `a_second_statement_is_seen_behind_quotes_and_comments`,
+  `only_a_read_outside_a_transaction_is_stopped_at_the_row_cap`.
+- **Правится только чтение одной таблицы с её ключом** (`editTarget`), вне транзакции пользователя:
+  иначе ключ назвал бы другую строку, а COMMIT закрыл бы его транзакцию. Применение — одна
+  транзакция, каждый оператор — ровно одна строка; повторяется после него только чтение: повтор
+  `RETURNING` записал бы дважды. Гейт `edits_are_updates_and_deletes_outside_the_users_transaction`,
+  тест `dbflow.test.ts`.
+- **Пароль — keychain `vterm:db` у профиля:** не в файлах и argv; смена СУБД, адреса, порта или
+  пользователя его забывает, флаг из архива не берётся. Поля профиля не начинаются с `-` — они
+  уходят в argv клиента пользователя. Гейты
+  `a_saved_password_never_follows_a_changed_place_or_user`,
+  `nothing_of_a_profile_can_be_an_option_of_the_users_client`, `backupimport.guard`.
+- **SQL, строки и слова сервера не пишутся в диагностику и журнал:** ошибка цитирует значения,
+  поэтому отказ правки — ответ команды. Строку записи `[sql]` строит бэкенд: известный глагол и
+  таблицы, без значений. Гейты `sql_and_results_never_reach_the_diagnostics`,
+  `the_recordings_line_is_built_here_and_holds_no_value`, `db.guard`.
+- **Команды БД зовёт только стор `stores/db`** (`vterm/owned-imports`): операторы документа — по
+  одному. Подключение кончается с документом, вкладкой (`forgetDb`/`dropDb` в `closeTabFully`) и
+  сессией (`close_session`), идущее останавливают. Идущий оператор, открытая транзакция и
+  неприменённые правки без вопроса не закрываются (`dbWork`); активность читается, только пока
+  видна, по интервалу, а не на каждый ответ. Гейты `db.guard`, `tabteardown.guard`.
+
+---
 
 ## Логи, поиск, запись сессий
 
@@ -1342,7 +1385,7 @@ Git, Docker, k8s, сетевые пробы и метрики — **один к�
 `overlay-z-index` · `type-scale` · `rem-sizes` · `micro-label` · `motion-duration` · `locale-binding` · `md-links`
 · `backdrop-no-close` · `each-as-t` · `path-sync-mode` · `owned-imports` (вызов, правило которого
 живёт в одном модуле, импортирует только он: `setServerPathSync`, `transferStart`,
-`importBackup`, `transferResume`, `startChat`, `netcheckRun`, `ciRun`, `lspStart`, `formatRun`, команды сценариев, `sftpOpenAs`, `fetchMetrics`, `fetchLiveExtras`, `fetchProcessDetail`, команды журнала, `noteJournal`, сырой `closeTab`) · `forbidden-imports` (стор вкладок
+`importBackup`, `transferResume`, `startChat`, `netcheckRun`, `ciRun`, `lspStart`, `formatRun`, команды сценариев, команды БД, `sftpOpenAs`, `fetchMetrics`, `fetchLiveExtras`, `fetchProcessDetail`, команды журнала, `noteJournal`, сырой `closeTab`) · `forbidden-imports` (стор вкладок
 не знает сторов рабочих пространств и чата, стор пришедшей вкладки знает стор вкладок только
 по типу) · `owned-writes` (`settings.terminalLinks`/`terminalFileLinks` пишут только раздел
 настроек и вопрос, который он отключает) · `theme-colors` · `virtual-scroll` · `paste-caret` ·
@@ -1413,6 +1456,7 @@ Git, Docker, k8s, сетевые пробы и метрики — **один к�
 | `pipeline.guard` | Схема пайплайна читает файлы только через `connectionFiles` (его команды — редактора и панели файлов); в подсистеме нет `{@html}`; CodeMirror не размонтируется при смене вида |
 | `editorwork.guard` | HTML языкового сервера — через `sanitizeLspHtml`; схема с сервера — `untrustedSchema`; формат — одна правка на тексте, для которого сделан; полоса проекта без меню и диалогов, `files/` не пишет в терминал; каждая схема названа в NOTICE.md, источник её скрипта — у коммита и со сверкой хэша |
 | `liblayout.guard` | В корне `src/lib` — только папки и `types.ts`; папки — те, что в дереве ARCHITECTURE; слои линтера существуют |
+| `db.guard` | Строку записи БД окно не присылает; слова базы не уходят в диагностику, журнал и разметку; документ, вкладка, массовое закрытие и выход спрашивают перед потерей работы с базой |
 | `i18nkeys.guard` | Каждый ключ словаря используется приложением |
 | `cspnonce.test.ts` · `editorlangs.test.ts` | Каждый `EditorView` отдаёт nonce; грамматики — по требованию |
 | `tauri-security.guard` · `deny.toml` | Строгий CSP, права поимённо, окна создаёт только Rust; исключение advisory без цели роняет прогон |
@@ -1439,7 +1483,11 @@ Git, Docker, k8s, сетевые пробы и метрики — **один к�
 | `every_process_is_listed_with_its_cpu_now_not_its_lifetime_average` (Rust) | CPU% процесса — из прироста тиков между опросами, переиспользованный pid — без значения |
 | `a_poisoned_lock_never_cascades` · `the_bridge_source_lists_every_command_module` (Rust) | Вне тестов нет `.lock().unwrap()`; каждый файл `commands/` — в `BRIDGE` |
 | `network_utilities_never_record_raw_argv_or_output` · `a_netcheck_run_can_always_be_stopped` · `a_local_tool_runs_only_its_fixed_argv` (Rust) | Сетевые утилиты пишут итог; проверку доступа можно остановить; локальный инструмент — только со своим argv |
-| `app_originated_sockets_live_only_in_ssh_and_netcheck` (Rust) | Сокеты приложения — только в `ssh.rs` и `netcheck.rs` |
+| `app_originated_sockets_live_only_in_ssh_netcheck_and_db` (Rust) | Сокеты приложения — только в `ssh.rs`, `netcheck.rs` и драйверах БД |
+| `the_window_cannot_claim_a_saved_password_and_a_profile_that_left_is_named` · `a_saved_password_never_follows_a_changed_place_or_user` · `nothing_of_a_profile_can_be_an_option_of_the_users_client` (Rust) | «Пароль сохранён» — от прежнего профиля с тем же местом и пользователем, не от окна и архива; поле профиля не станет опцией клиента |
+| `a_prod_database_opens_read_only_whatever_its_profile_says` · `read_only_is_held_by_the_backend_whatever_the_window_asked` · `the_apps_own_reads_pass_and_its_changes_ask` (Rust) | Прод всегда read-only; без согласия — только известное политике, с ним — на один оператор; свои чтения приложения проходят |
+| `a_second_statement_is_seen_behind_quotes_and_comments` · `only_a_read_outside_a_transaction_is_stopped_at_the_row_cap` · `edits_are_updates_and_deletes_outside_the_users_transaction` (Rust) | Один оператор за раз; отмена на пределе не откатывает изменение; правки — только UPDATE/DELETE вне чужой транзакции |
+| `a_database_of_this_computer_is_reached_on_this_computer_alone` · `sql_and_results_never_reach_the_diagnostics` · `the_recordings_line_is_built_here_and_holds_no_value` (Rust) | Локальная база — только loopback и сокет; SQL и ответы не в диагностике; в записи — глагол и таблицы |
 | `quitting_always_goes_through_the_confirmation` (Rust) | Выход и закрытие окна — через вопрос |
 | `every_channel_open_is_answered_in_time` (Rust) | Каждое открытие канала SSH вне тестов — внутри `answered` с тайм-аутом |
 | `every_event_of_the_app_names_its_source_and_carries_no_secret` · `the_diagnostics_are_written_only_by_diag_never_per_chunk_nor_backed_up` · `an_event_below_the_threshold_is_written_nowhere` (Rust) | У каждого события `tracing` есть `source` и нет секретного поля; файлы диагностики называет только `diag/`, затворы вывода и ИИ событий не пишут, бэкап диагностику не трогает; событие ниже порога не доходит до файла |

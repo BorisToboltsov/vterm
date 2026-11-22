@@ -8,7 +8,7 @@
 **Содержание:**
 [Слои](#слои) · [Быстрый старт](#быстрый-старт) · [Что нужно установить](#что-нужно-установить) ·
 [Что чем покрыто](#что-чем-покрыто) · [Гейты-контракты](#гейты-контракты) ·
-[Покрытие](#покрытие) · [Живые SFTP-тесты](#живые-sftp-тесты) ·
+[Покрытие](#покрытие) · [Живые SFTP-тесты](#живые-sftp-тесты) · [Живые тесты БД](#живые-тесты-бд) ·
 [E2E и тестовый SSH](#e2e-и-тестовый-ssh) · [CI на GitHub](CI.md) ·
 [Фаззинг](#фаззинг-недоверенного-входа) ·
 [Как добавить тест](#как-добавить-тест)
@@ -247,6 +247,28 @@ kubectl --context docker-desktop apply -n vterm-stand -f e2e/k8s/stand.yaml
 kubectl --context docker-desktop -n vterm-stand set image deployment/rollout app=busybox:vterm-missing-tag
 kubectl --context docker-desktop delete namespace vterm-stand
 ```
+
+## Живые тесты БД
+
+`live_db` в `src-tauri/src/db/` проверяет PostgreSQL, MySQL и MariaDB за тестовым `sshd`, а также
+PostgreSQL по локальному TCP. Контейнеры одноразовые; тесты помечены `#[ignore]` и запускаются
+последовательно:
+
+```sh
+docker compose -f e2e/docker-compose.db.yml up -d --build --wait
+cargo test --manifest-path src-tauri/Cargo.toml --lib live_db -- --ignored --test-threads=1
+docker compose -f e2e/docker-compose.db.yml down -v
+```
+
+Набор проверяет оба транспорта и сокет, первый вопрос пароля, типы, отмену и предел строк (изменение
+с `RETURNING` не откатывается), только чтение на сервере под политикой, транзакции, правки и свой SQL
+панели из `appsql.cases.json`. Логины стенда лежат в репозитории, поэтому порты (`2225`, `15432`)
+публикуются только на `127.0.0.1`, а sshd пробрасывает только к трём базам и сокету (`e2e/db/db.conf`,
+держит тест `the_stands_sshd_forwards_to_its_databases_alone`). После прогона стенд гасится; в CI —
+джоба `live-sftp` в `deep.yml`.
+
+`appsql.cases.json` пишет `appsql.test.ts` из билдеров и читает тест политики Rust. Изменили свой SQL
+— `pnpm exec vitest run src/lib/db/appsql.test.ts -u`, затем `cargo test db::sql`.
 
 ## Живые SFTP-тесты
 
