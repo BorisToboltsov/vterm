@@ -706,7 +706,7 @@ PostgreSQL и MySQL/MariaDB — [ADR 0080](adr/0080-databases.md), обзор и
   темы); не внутри escape-последовательностей, только в нормальном буфере; порядок правил —
   приоритет ([highlight.ts](../src/lib/terminal/highlight.ts)).
 - **Ссылка из вывода открывается одним путём — `clickLink`**
-  ([stores/linkopen](../src/lib/stores/linkopen.svelte.ts)), только по клику и через `openUrl`;
+  ([stores/linkopen](../src/lib/stores/linkopen.svelte.ts)), только после гейта клика и через `openUrl`;
   что делает клик, решает `linkClick` ([termlink.ts](../src/lib/terminal/termlink.ts)) по
   `settings.terminalLinks`. Каждый xterm (и проигрыватель записей) получает
   `terminalLinkHandler`, иначе OSC 8 уходит в `confirm()`/`window.open()` xterm; адреса находит
@@ -715,6 +715,14 @@ PostgreSQL и MySQL/MariaDB — [ADR 0080](adr/0080-databases.md), обзор и
   `off`, и «Больше не спрашивать» ей не предлагается (`canSilence`). В вопросе — хост, к
   которому подключится браузер (punycode, выделен). Открываются
   https и http, у http — пометка «без шифрования» (ADR 0055). Гейт `termlink.guard`.
+- **Клик по ссылке из вывода проходит гейт терминала** (ADR 0083,
+  [linkgate.ts](../src/lib/terminal/linkgate.ts)): адрес, OSC 8 и имя файла — один
+  `createLinkGate` на xterm (`terminalLinkGate`), жест решает `linkGesture` по
+  `settings.terminalLinkClick`. По умолчанию открывает ⌘-клик (Ctrl-клик вне macOS); простой клик
+  не открывает ничего — через `DOUBLE_CLICK_MS` подсказка (`LinkHint`), её кнопка — тот же ⌘-клик.
+  Гейт молчит при выделении и на первом клике двойного, после ожидания спрашивает о выделении снова;
+  провайдер файлов после `dispose` не открывает. Esc подсказки в шелл не идёт. Гейты
+  `termlink.guard`, `termfilelink.guard`.
 - **Файл из вывода открывается по проверенному имени и в каталоге своей команды** (ADR 0035):
   решает `fileLinkClick` ([termfiles.ts](../src/lib/terminal/termfiles.ts)), открывает
   [filelinkflow](../src/lib/page/filelinkflow.svelte.ts) путями панели файлов. Ссылкой делает
@@ -807,6 +815,12 @@ PostgreSQL и MySQL/MariaDB — [ADR 0080](adr/0080-databases.md), обзор и
 - **Запись текста на сервер — только через `create`** (`sftp::write_bytes`:
   CREATE|TRUNCATE|WRITE): `SftpSession::write` без `CREATE` падает на новом пути. Форма —
   sibling-temp → `set_metadata` → `remove_file` → `rename`; упавшая запись не обрезает оригинал.
+- **Сравнение перед сохранением и при конфликте — две панели без пустот** (ADR 0084,
+  [DiffPanes](../src/lib/editor/DiffPanes.svelte)): у стороны без строк — линия на месте вставки, а не
+  пустое место; панели прокручиваются каждая сама, вторая ставит в середину соответствующую строку —
+  только `followScroll` ([sidediff.ts](../src/lib/editor/sidediff.ts)), по высотам строк редактора, не
+  по номерам. `MergeView` с выравниванием пустотой не возвращаем. Тесты `sidediff.test.ts`,
+  `DiffPanes.test.ts`.
 - **Конфликт правки — по хэшу:** `expectedSha256` открытия сверяется перед записью →
   `FileChangedOnServer`; молча перезаписать нельзя. Лимит открытия — `settings.sftp.maxOpenMb`,
   бэкенд клампит в `[1, 64 МБ]`.
@@ -1474,7 +1488,7 @@ PostgreSQL и MySQL/MariaDB — [ADR 0080](adr/0080-databases.md), обзор и
 | `dragout.guard` | Вынос файла: система спрашивается один раз после сказанного, отпускание ждёт ответа, длина не уходит со страницы |
 | `dragselect.guard` · `dragtarget.guard` | Каждое перетаскивание зовёт `holdSelection()`; цель переписывается только под сравнением |
 | `topbar.guard` | Список верхней панели меняет только `topbarpins` моделью; панель рисует `shownTopbar`/`fitTopbar`; убранное — в «Утилитах» |
-| `termlink.guard` · `termfilelink.guard` | Ссылка из вывода — только через `clickLink`; файл — по листингу и каталогу на момент отправки, клик не открывает выделяемое |
+| `termlink.guard` · `termfilelink.guard` | Ссылка из вывода — только через гейт клика и `clickLink`, гейт молчит при выделении и на первом клике двойного; файл — по листингу и каталогу на момент отправки, клик не открывает выделяемое |
 | `termpaste.guard` · `termsearch.guard` · `termctxfocus.guard` · `rightclickmenu.guard` | Вставка — через `term.paste()`; строка поиска не шире области; меню ПКМ возвращает фокус в xterm и достижимо при любой настройке |
 | `termfit.guard` | У элемента, который меряет `FitAddon`, нет паддинга |
 | `groupinput.guard` | История строки синхронного ввода — приложения; нажатия — по плану экранов и только из терминала в фокусе; загрузка на группу заменяет по ответу; правка на группе пишет копию после сохранения источника и против хэша чтения |

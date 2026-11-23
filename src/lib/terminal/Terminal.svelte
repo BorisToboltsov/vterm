@@ -15,7 +15,8 @@
   import Icon from "../ui/Icon.svelte";
   import { t } from "../i18n";
   import { notifyError, notifyInfo, notifySuccess } from "../stores/toasts.svelte";
-  import { clickLink, terminalLinkHandler } from "../stores/linkopen.svelte";
+  import { clickLink, terminalLinkGate, terminalLinkHandler } from "../stores/linkopen.svelte";
+  import { modifierHeld } from "../stores/linkhint.svelte";
   import { createFileLinks, type FileLinks, type SavedBlock } from "./filelinkprovider";
   import { createUrlLinks } from "./urllinks";
   import type { FileLinkTarget } from "./termfiles";
@@ -372,6 +373,12 @@
   // URLs found in the text are clickable under their own setting (v1.20), not
   // the highlight toggle; every click goes to `clickLink`, which asks or opens.
   const linksEnabled = $derived(settings.terminalLinks !== "off");
+  // Every link of this terminal — found, OSC 8, file — passes one gate (v1.36):
+  // ⌘/Ctrl-click opens, a plain click shows the hint (`linkgate.ts`).
+  const linkGate = terminalLinkGate(() => term?.hasSelection() ?? false);
+  // In modifier mode a hovered link shows the hand only while ⌘/Ctrl is held:
+  // a plain click would show the hint, not open it.
+  const linksQuiet = $derived(settings.terminalLinkClick === "modifier" && !modifierHeld());
   let webLinks: IDisposable | undefined;
   const fileLinksOn = $derived(!!onfilelink && settings.terminalFileLinks !== "off");
   // Where each command ran is noted whenever the page gives this terminal file
@@ -793,7 +800,7 @@
       // OSC 8 hyperlinks set what is shown apart from where it leads, so they
       // take the same question as found URLs, with the text shown — never
       // xterm's own English confirm() and window.open().
-      linkHandler: terminalLinkHandler(() => term?.buffer.active),
+      linkHandler: terminalLinkHandler(() => term?.buffer.active, linkGate),
       theme,
       ...(adopt
         ? { cols: adopt.cols, rows: adopt.rows }
@@ -1195,7 +1202,9 @@
   $effect(() => {
     if (!term) return;
     if (linksEnabled && !webLinks) {
-      webLinks = term.registerLinkProvider(createUrlLinks(term, clickLink));
+      webLinks = term.registerLinkProvider(
+        createUrlLinks(term, (event, uri) => linkGate.activate(event, "web", () => clickLink(uri))),
+      );
     } else if (!linksEnabled && webLinks) {
       webLinks.dispose();
       webLinks = undefined;
@@ -1213,8 +1222,7 @@
         style: () => (local && hostEnv.os === "windows" ? "windows" : "posix"),
         shell: () => pasteShell,
         dirs: () => filelinkDirs,
-        click: () => settings.terminalFileLinkClick,
-        mac: () => hostEnv.os === "macos",
+        gate: linkGate,
         open: (target) => onfilelink?.(target),
         list: (dir) => (local ? localList(dir) : sftpList(sessionId, dir)),
         submittedCwd: () => localSubmittedCwd(sessionId),
@@ -1258,6 +1266,7 @@
     searchAddon?.dispose();
     serializer?.dispose();
     webLinks?.dispose();
+    linkGate.dispose();
     fileLinkProvider?.dispose();
     fileLinks?.dispose();
     seedMark?.dispose();
@@ -1266,7 +1275,7 @@
   });
 </script>
 
-<div class="relative h-full w-full">
+<div class="relative h-full w-full" class:vt-links-quiet={linksQuiet}>
   <!-- px-2 pt-1: lift the console text off the left edge and the tab-bar border.
        The padding lives on this OUTER wrapper, never on `container`: FitAddon sizes
        the grid from its parent's getComputedStyle height/width, which under

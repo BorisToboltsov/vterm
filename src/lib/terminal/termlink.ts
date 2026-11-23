@@ -12,7 +12,7 @@
 /** `settings.terminalLinks`: ask before opening, open right away, or never open. */
 export const TERMINAL_LINK_MODES = ["confirm", "direct", "off"] as const;
 export type TerminalLinkMode = (typeof TERMINAL_LINK_MODES)[number];
-export const DEFAULT_TERMINAL_LINK_MODE: TerminalLinkMode = "confirm";
+export const DEFAULT_TERMINAL_LINK_MODE: TerminalLinkMode = "direct";
 
 export const isTerminalLinkMode = (v: unknown): v is TerminalLinkMode =>
   typeof v === "string" && (TERMINAL_LINK_MODES as readonly string[]).includes(v);

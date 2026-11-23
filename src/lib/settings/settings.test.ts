@@ -626,36 +626,33 @@ describe("local path sync", () => {
   });
 });
 
-describe("terminal links", () => {
-  it("asks before opening by default", () => {
-    expect(settings.terminalLinks).toBe("confirm");
-  });
-
-  it("imports a valid mode and rejects junk", () => {
-    applyImportedSettings({ terminalLinks: "direct" });
-    flushSync();
+describe("terminal links and files (v1.36)", () => {
+  it("open on ⌘/Ctrl-click, right away, by default", () => {
     expect(settings.terminalLinks).toBe("direct");
-    applyImportedSettings({ terminalLinks: "always" });
-    flushSync();
-    expect(settings.terminalLinks).toBe("confirm");
-  });
-});
-
-describe("file links in output", () => {
-  it("asks before opening, on a plain click, by default", () => {
-    expect(settings.terminalFileLinks).toBe("confirm");
-    expect(settings.terminalFileLinkClick).toBe("click");
+    expect(settings.terminalFileLinks).toBe("direct");
+    expect(settings.terminalLinkClick).toBe("modifier");
   });
 
   it("imports valid values and rejects junk", () => {
-    applyImportedSettings({ terminalFileLinks: "off", terminalFileLinkClick: "modifier" });
+    applyImportedSettings({ terminalLinks: "off", terminalFileLinks: "confirm", terminalLinkClick: "click" });
     flushSync();
-    expect(settings.terminalFileLinks).toBe("off");
-    expect(settings.terminalFileLinkClick).toBe("modifier");
-    applyImportedSettings({ terminalFileLinks: "maybe", terminalFileLinkClick: 3 });
-    flushSync();
+    expect(settings.terminalLinks).toBe("off");
     expect(settings.terminalFileLinks).toBe("confirm");
-    expect(settings.terminalFileLinkClick).toBe("click");
+    expect(settings.terminalLinkClick).toBe("click");
+    applyImportedSettings({ terminalLinks: "always", terminalFileLinks: "maybe", terminalLinkClick: 3 });
+    flushSync();
+    expect(settings.terminalLinks).toBe("direct");
+    expect(settings.terminalFileLinks).toBe("direct");
+    expect(settings.terminalLinkClick).toBe("modifier");
+  });
+
+  it("takes «ask first» from a backup made before the gate for the old default, not a choice", () => {
+    applyImportedSettings({ terminalLinks: "confirm", terminalFileLinks: "confirm", terminalFileLinkClick: "modifier" });
+    flushSync();
+    expect(settings.terminalLinks).toBe("direct");
+    expect(settings.terminalFileLinks).toBe("direct");
+    expect(settings.terminalLinkClick).toBe("modifier");
+    expect("terminalFileLinkClick" in settings).toBe(false);
   });
 });
 

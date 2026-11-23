@@ -16,9 +16,11 @@ import { describe, expect, it } from "vitest";
 //    whatever the setting (v1.35) — turned on later, the links read earlier
 //    output in its own folders — and only then: the menu's "open the selected
 //    path" waits for the setting like the links;
-//  - a click never opens with a selection (dragging across a name selects it)
-//    or on the second click of a double-click, and the delayed open asks
-//    about the selection again; only `activate` opens;
+//  - a click goes through the terminal's link gate, the one its web links
+//    pass (v1.36, linkgate.ts — held by `termlink.guard`): never with a
+//    selection (dragging across a name selects it), never on the first click
+//    of a double-click; only `activate` opens, and never once the provider is
+//    disposed (the gate's wait or hint may outlive it);
 //  - a block of output reads names in the folder taken when its line was sent:
 //    on a local tab the backend's note (`submittedCwd`), never the folder the
 //    shell stands in now (`localCwd`); over SSH the folder the shell reported
@@ -97,6 +99,9 @@ export function terminalViolations(raw: string): string[] {
   if (count(src, /createFileLinks\(/g) !== 1 || !/createFileLinks\(/.test(created)) {
     out.push("blocks are noted other than while the page gives file links");
   }
+  if (!/\bgate: linkGate,/.test(created)) {
+    out.push("file links click past the terminal's link gate");
+  }
   if (!/watchLocalSubmits\(sessionId, fileLinksTracked\)/.test(src)) {
     out.push("a local shell notes folders other than while blocks are");
   }
@@ -130,14 +135,11 @@ export function providerViolations(raw: string): string[] {
   const src = strip(raw);
   const out: string[] = [];
   const activate = block(src, "function activate(");
-  if (!/^[^]*?\{\s*clearTimeout\(pending\);\s*pending = undefined;\s*if \(term\.hasSelection\(\) \|\| !clickOpens\(/.test(activate)) {
-    out.push("a click opens without asking about the selection first");
+  if (!/^[^]*?\{\s*host\.gate\.activate\(event, hintKind\(target\), \(\) => \{\s*if \(!disposed\) host\.open\(target\);\s*\}\);\s*\}$/.test(activate)) {
+    out.push("a click opens past the terminal's link gate, or after the links are gone");
   }
-  if (!/if \(event\.detail > 1\) return;/.test(activate)) {
-    out.push("the first click of a double-click opens the name it selects");
-  }
-  if (!/pending = setTimeout\(\(\) => \{\s*pending = undefined;\s*if \(!term\.hasSelection\(\)\) host\.open\(target\);/.test(activate)) {
-    out.push("the delayed open does not ask about the selection again");
+  if (!/dispose\(\) \{\s*disposed = true;/.test(src)) {
+    out.push("a click waiting at the gate opens after the links are gone");
   }
   if (count(src, /host\.open\(/g) !== count(activate, /host\.open\(/g)) {
     out.push("something other than a click opens a link");
@@ -220,8 +222,8 @@ describe("terminal file link guard", () => {
 
   it("catches the file-link provider registered past the setting", () => {
     const src = read(TERMINAL).replace(
-      "webLinks = term.registerLinkProvider(createUrlLinks(term, clickLink));",
-      "webLinks = term.registerLinkProvider(createUrlLinks(term, clickLink));\n      term.registerLinkProvider(fileLinks.provider);",
+      "webLinks = term.registerLinkProvider(",
+      "term.registerLinkProvider(fileLinks.provider);\n      webLinks = term.registerLinkProvider(",
     );
     expect(src).not.toBe(read(TERMINAL));
     expect(terminalViolations(src)).toContain("the file-link provider is registered other than while file links are on");
@@ -231,7 +233,7 @@ describe("terminal file link guard", () => {
     expect(flowViolations(read(FLOW))).toEqual([]);
   });
 
-  it("a click opens only without a selection and past a double-click", () => {
+  it("a click opens only through the link gate, and not once the links are gone", () => {
     expect(providerViolations(read(PROVIDER))).toEqual([]);
   });
 
@@ -272,23 +274,25 @@ describe("terminal file link guard — catches what it exists for", () => {
     );
   });
 
-  it("a click that opens what a drag selected", () => {
-    const src = swap(read(PROVIDER), "if (term.hasSelection() || !clickOpens(", "if (!clickOpens(");
-    expect(providerViolations(src)).toContain("a click opens without asking about the selection first");
-  });
-
-  it("a delayed open that forgets the double-click's selection", () => {
+  it("a click that opens past the gate", () => {
     const src = swap(
       read(PROVIDER),
-      "if (!term.hasSelection()) host.open(target);",
+      "host.gate.activate(event, hintKind(target), () => {\n      if (!disposed) host.open(target);\n    });",
       "host.open(target);",
     );
-    expect(providerViolations(src)).toContain("the delayed open does not ask about the selection again");
+    expect(providerViolations(src)).toContain("a click opens past the terminal's link gate, or after the links are gone");
   });
 
-  it("a first click of a double-click that opens", () => {
-    const src = swap(read(PROVIDER), "if (event.detail > 1) return;", "");
-    expect(providerViolations(src)).toContain("the first click of a double-click opens the name it selects");
+  it("a click that opens after the links are gone", () => {
+    const src = swap(read(PROVIDER), "if (!disposed) host.open(target);", "host.open(target);");
+    expect(providerViolations(src)).toContain("a click opens past the terminal's link gate, or after the links are gone");
+    const kept = swap(read(PROVIDER), "dispose() {\n      disposed = true;", "dispose() {");
+    expect(providerViolations(kept)).toContain("a click waiting at the gate opens after the links are gone");
+  });
+
+  it("file links given no gate", () => {
+    const src = swap(read(TERMINAL), "        gate: linkGate,\n", "");
+    expect(terminalViolations(src)).toContain("file links click past the terminal's link gate");
   });
 
   it("an SSH block that keeps the last folder after a line went to another program", () => {

@@ -61,8 +61,9 @@ export function findUrls(text: string): { from: number; to: number }[] {
 /** The part of xterm the provider uses — a fake one stands in for tests. */
 export type UrlTerminal = Pick<Terminal, "buffer" | "cols">;
 
-/** A provider that offers each address on the hovered line; a click calls `open`. */
-export function createUrlLinks(term: UrlTerminal, open: (uri: string) => void): ILinkProvider {
+/** A provider that offers each address on the hovered line; a click is handed
+ *  to `click` with its keys — the terminal's link gate decides what it does. */
+export function createUrlLinks(term: UrlTerminal, click: (event: MouseEvent, uri: string) => void): ILinkProvider {
   return {
     provideLinks(bufferLineNumber, callback) {
       const { first, rows } = logicalRows(term.buffer.active, bufferLineNumber - 1, MAX_WRAPPED_ROWS);
@@ -71,7 +72,7 @@ export function createUrlLinks(term: UrlTerminal, open: (uri: string) => void): 
       const links: ILink[] = findUrls(line.text).map(({ from, to }) => ({
         range: spanRange(line, from, to, cols, first),
         text: line.text.slice(from, to),
-        activate: (_event, uri) => open(uri),
+        activate: (event, uri) => click(event, uri),
       }));
       callback(links.length ? links : undefined);
     },

@@ -84,7 +84,7 @@ body {
    (its `.sheet` is null) and NONE of CodeMirror's styles apply (numbers stacked,
    no gutter column, no syntax colours, native focus ring, selection collapse).
    `tauri dev` is served by Vite without that CSP, so it only broke in release
-   builds. The fix lives in EditorTab.svelte / DiffModal.svelte: hand CodeMirror the
+   builds. The fix lives in EditorTab.svelte / DiffPanes.svelte: hand CodeMirror the
    nonce via `EditorView.cspNonce` so its <style> is allowed. No CSS workaround is
    needed here once the nonce is threaded through — see cspnonce.ts. */
 
@@ -219,6 +219,15 @@ summary:focus-visible,
   border-bottom: none;
   border-left: 1px solid var(--color-edge);
   border-top: 1px solid var(--color-edge);
+}
+
+/* Terminal links in modifier mode (v1.36, terminal/linkgate.ts): the hand over a
+   hovered link only while ⌘/Ctrl is held — a plain click shows the hint, it does
+   not open. xterm puts `xterm-cursor-pointer` on the terminal for any hovered link
+   (OSC 8 ones too), so one rule covers every kind. */
+.vt-links-quiet .xterm.xterm-cursor-pointer,
+.vt-links-quiet .xterm .xterm-cursor-pointer {
+  cursor: text;
 }
 
 /* While something is dragged — a tab, a column border, a server, a file — nothing

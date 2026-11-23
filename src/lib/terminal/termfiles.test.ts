@@ -2,8 +2,6 @@ import { describe, expect, it } from "vitest";
 import {
   absPath,
   blockAt,
-  clickOpens,
-  DEFAULT_FILE_LINK_CLICK,
   DEFAULT_FILE_LINK_MODE,
   dirsToList,
   entryKind,
@@ -11,7 +9,6 @@ import {
   fileLinksAllowed,
   headerDir,
   isSecurityContext,
-  isFileLinkClick,
   isFileLinkMode,
   lineCandidates,
   lineText,
@@ -78,35 +75,7 @@ describe("settings", () => {
     expect(isFileLinkMode("off")).toBe(true);
     expect(isFileLinkMode("always")).toBe(false);
     expect(isFileLinkMode(1)).toBe(false);
-    expect(isFileLinkClick("click")).toBe(true);
-    expect(isFileLinkClick("modifier")).toBe(true);
-    expect(isFileLinkClick("ctrl")).toBe(false);
-    expect(DEFAULT_FILE_LINK_MODE).toBe("confirm");
-    expect(DEFAULT_FILE_LINK_CLICK).toBe("click");
-  });
-});
-
-describe("clickOpens", () => {
-  const keys = (k: Partial<{ metaKey: boolean; ctrlKey: boolean; altKey: boolean }> = {}) => ({
-    metaKey: false,
-    ctrlKey: false,
-    altKey: false,
-    ...k,
-  });
-
-  it("opens on any plain click, never on alt-click (xterm moves the cursor)", () => {
-    expect(clickOpens("click", keys(), true)).toBe(true);
-    expect(clickOpens("click", keys({ metaKey: true }), true)).toBe(true);
-    expect(clickOpens("click", keys({ altKey: true }), false)).toBe(false);
-  });
-
-  it("in modifier mode wants ⌘ on macOS and Ctrl elsewhere", () => {
-    expect(clickOpens("modifier", keys(), true)).toBe(false);
-    expect(clickOpens("modifier", keys({ metaKey: true }), true)).toBe(true);
-    expect(clickOpens("modifier", keys({ ctrlKey: true }), true)).toBe(false);
-    expect(clickOpens("modifier", keys({ ctrlKey: true }), false)).toBe(true);
-    expect(clickOpens("modifier", keys({ metaKey: true }), false)).toBe(false);
-    expect(clickOpens("modifier", keys({ ctrlKey: true, altKey: true }), false)).toBe(false);
+    expect(DEFAULT_FILE_LINK_MODE).toBe("direct");
   });
 });
 

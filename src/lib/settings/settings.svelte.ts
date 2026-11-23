@@ -39,19 +39,9 @@ import { defaultSnippets, sanitizeSnippets, type Snippet } from "../editor/snipp
 import { WINDOWS_SHELLS, type WindowsShell } from "../terminal/localshell";
 import { isRightClickAction, type RightClickAction } from "../terminal/termmouse";
 import { pathSyncMode, type PathSyncMode } from "../pathsync/pathsync";
-import {
-  DEFAULT_TERMINAL_LINK_MODE,
-  isTerminalLinkMode,
-  type TerminalLinkMode,
-} from "../terminal/termlink";
-import {
-  DEFAULT_FILE_LINK_CLICK,
-  DEFAULT_FILE_LINK_MODE,
-  isFileLinkClick,
-  isFileLinkMode,
-  type FileLinkClick,
-  type FileLinkMode,
-} from "../terminal/termfiles";
+import { DEFAULT_TERMINAL_LINK_MODE, type TerminalLinkMode } from "../terminal/termlink";
+import { DEFAULT_FILE_LINK_MODE, type FileLinkMode } from "../terminal/termfiles";
+import { DEFAULT_LINK_CLICK, migrateLinkSettings, type LinkClick } from "../terminal/linkgate";
 import { DEFAULT_RESTORE_MODE, isRestoreMode, type RestoreMode } from "../tabs/tabrestore";
 import { DEFAULT_JOURNAL_DAYS, sanitizeJournalDays } from "../notifications/journal";
 import { sanitizeDockerRegistries, type DockerRegistry } from "../docker/docker";
@@ -216,12 +206,12 @@ export interface Settings {
   middleClickPaste: boolean;
   /** Right-click in the terminal: paste or the context menu (Shift gives the other). */
   rightClick: RightClickAction;
-  /** A click on a web link in terminal output: ask first, open, or nothing (termlink.ts). */
+  /** Opening a web link in terminal output: ask first, open, or nothing (termlink.ts). */
   terminalLinks: TerminalLinkMode;
-  /** A click on a file named in terminal output: ask first, open, or nothing (termfiles.ts). */
+  /** Opening a file named in terminal output: ask first, open, or nothing (termfiles.ts). */
   terminalFileLinks: FileLinkMode;
-  /** Which click opens it: a plain one, or ⌘/Ctrl-click only. */
-  terminalFileLinkClick: FileLinkClick;
+  /** Which click opens either kind: ⌘/Ctrl-click only (a plain one shows a hint), or a plain one (linkgate.ts). */
+  terminalLinkClick: LinkClick;
   /** Plain Ctrl+V pastes on Windows/Linux (off = it goes to the shell). */
   ctrlVPaste: boolean;
   /** How path sync starts in a local tab (pathsync.ts). A server keeps its own
@@ -429,7 +419,7 @@ const DEFAULTS: Settings = {
   rightClick: "paste",
   terminalLinks: DEFAULT_TERMINAL_LINK_MODE,
   terminalFileLinks: DEFAULT_FILE_LINK_MODE,
-  terminalFileLinkClick: DEFAULT_FILE_LINK_CLICK,
+  terminalLinkClick: DEFAULT_LINK_CLICK,
   ctrlVPaste: true,
   localPathSync: "ask",
   historySearch: true,
@@ -641,15 +631,7 @@ function load(): Settings {
         ? raw.windowsShell
         : DEFAULTS.windowsShell,
       rightClick: isRightClickAction(raw.rightClick) ? raw.rightClick : DEFAULTS.rightClick,
-      terminalLinks: isTerminalLinkMode(raw.terminalLinks)
-        ? raw.terminalLinks
-        : DEFAULTS.terminalLinks,
-      terminalFileLinks: isFileLinkMode(raw.terminalFileLinks)
-        ? raw.terminalFileLinks
-        : DEFAULTS.terminalFileLinks,
-      terminalFileLinkClick: isFileLinkClick(raw.terminalFileLinkClick)
-        ? raw.terminalFileLinkClick
-        : DEFAULTS.terminalFileLinkClick,
+      ...migrateLinkSettings(raw, DEFAULTS),
       ctrlVPaste: typeof raw.ctrlVPaste === "boolean" ? raw.ctrlVPaste : DEFAULTS.ctrlVPaste,
       localPathSync: pathSyncMode(raw.localPathSync),
       localShellPath:
@@ -865,11 +847,7 @@ export function applyImportedSettings(raw: unknown): void {
   if (!WINDOWS_SHELLS.includes(next.windowsShell)) next.windowsShell = DEFAULTS.windowsShell;
   if (typeof next.localShellPath !== "string") next.localShellPath = DEFAULTS.localShellPath;
   if (!isRightClickAction(next.rightClick)) next.rightClick = DEFAULTS.rightClick;
-  if (!isTerminalLinkMode(next.terminalLinks)) next.terminalLinks = DEFAULTS.terminalLinks;
-  if (!isFileLinkMode(next.terminalFileLinks)) next.terminalFileLinks = DEFAULTS.terminalFileLinks;
-  if (!isFileLinkClick(next.terminalFileLinkClick)) {
-    next.terminalFileLinkClick = DEFAULTS.terminalFileLinkClick;
-  }
+  Object.assign(next, migrateLinkSettings(r, DEFAULTS));
   if (typeof next.ctrlVPaste !== "boolean") next.ctrlVPaste = DEFAULTS.ctrlVPaste;
   next.localPathSync = pathSyncMode(next.localPathSync);
   if (!isIdleSetting(next.idleEffect)) next.idleEffect = DEFAULTS.idleEffect;

@@ -78,6 +78,8 @@
   // unit-tested). The right pane renders the active group's sections, or — while
   // searching — every section matching the query across all groups.
   let search = $state("");
+  // The key that opens a terminal link (v1.36): ⌘ on macOS, Ctrl elsewhere.
+  const modKey = $derived(hostEnv.os === "macos" ? "⌘" : "Ctrl");
   let activeGroup = $state<string>(DEFAULT_SETTINGS_GROUP);
   // Reset-to-defaults requires explicit confirmation — it wipes every setting.
   let resetConfirm = $state(false);
@@ -344,8 +346,8 @@
               class="mt-1 w-full rounded border border-edge bg-panel px-2 py-1 text-sm text-text outline-none focus:border-accent"
               bind:value={settings.terminalLinks}
             >
-              <option value="confirm">{t("settings.terminalLinksConfirm")}</option>
               <option value="direct">{t("settings.terminalLinksDirect")}</option>
+              <option value="confirm">{t("settings.terminalLinksConfirm")}</option>
               <option value="off">{t("settings.terminalLinksOff")}</option>
             </select>
           </label>
@@ -358,25 +360,25 @@
               class="mt-1 w-full rounded border border-edge bg-panel px-2 py-1 text-sm text-text outline-none focus:border-accent"
               bind:value={settings.terminalFileLinks}
             >
-              <option value="confirm">{t("settings.terminalFileLinksConfirm")}</option>
               <option value="direct">{t("settings.terminalFileLinksDirect")}</option>
+              <option value="confirm">{t("settings.terminalFileLinksConfirm")}</option>
               <option value="off">{t("settings.terminalFileLinksOff")}</option>
             </select>
           </label>
-          {#if settings.terminalFileLinks !== "off"}
+          {#if settings.terminalLinks !== "off" || settings.terminalFileLinks !== "off"}
             <label class="mt-2 block text-xs text-muted">
-              {t("settings.terminalFileLinkClick")}
-              <select
-                data-testid="settings-terminal-file-link-click"
-                class="mt-1 w-full rounded border border-edge bg-panel px-2 py-1 text-sm text-text outline-none focus:border-accent"
-                bind:value={settings.terminalFileLinkClick}
+              <span class="flex items-center gap-1"
+                >{t("settings.terminalLinkClick")}<InfoHint
+                  text={t("settings.terminalLinkClickHint", { key: modKey })}
+                /></span
               >
-                <option value="click">{t("settings.terminalFileLinkClickPlain")}</option>
-                <option value="modifier"
-                  >{t("settings.terminalFileLinkClickModifier", {
-                    key: hostEnv.os === "macos" ? "⌘" : "Ctrl",
-                  })}</option
-                >
+              <select
+                data-testid="settings-terminal-link-click"
+                class="mt-1 w-full rounded border border-edge bg-panel px-2 py-1 text-sm text-text outline-none focus:border-accent"
+                bind:value={settings.terminalLinkClick}
+              >
+                <option value="modifier">{t("settings.terminalLinkClickModifier", { key: modKey })}</option>
+                <option value="click">{t("settings.terminalLinkClickPlain")}</option>
               </select>
             </label>
           {/if}

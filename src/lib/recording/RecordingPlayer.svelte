@@ -8,7 +8,7 @@
   import { tooltip } from "../actions/tooltip";
   import { Terminal } from "@xterm/xterm";
   import { FitAddon } from "@xterm/addon-fit";
-  import { terminalLinkHandler } from "../stores/linkopen.svelte";
+  import { terminalLinkGate, terminalLinkHandler } from "../stores/linkopen.svelte";
   import "@xterm/xterm/css/xterm.css";
   import Icon from "../ui/Icon.svelte";
   import { t } from "../i18n";
@@ -40,6 +40,7 @@
 
   let container: HTMLDivElement;
   let term: Terminal;
+  const linkGate = terminalLinkGate(() => term?.hasSelection() ?? false);
   let fit: FitAddon;
   let observer: ResizeObserver | undefined;
   let events: CastEvent[] = [];
@@ -145,8 +146,8 @@
       scrollback: 5000,
       disableStdin: true,
       cursorBlink: false,
-      // A recording replays a session's OSC 8 links too: same question as live.
-      linkHandler: terminalLinkHandler(() => term?.buffer.active),
+      // A recording replays a session's OSC 8 links too: same gate and question as live.
+      linkHandler: terminalLinkHandler(() => term?.buffer.active, linkGate),
       theme: { ...th },
     });
     fit = new FitAddon();
@@ -162,6 +163,7 @@
   onDestroy(() => {
     pause();
     observer?.disconnect();
+    linkGate.dispose();
     term?.dispose();
   });
 </script>

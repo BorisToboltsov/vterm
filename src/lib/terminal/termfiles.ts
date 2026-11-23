@@ -27,50 +27,14 @@ import { baseName, isRoot, parentOf, resolveRelative } from "../files/fspath";
 
 // ── Settings ─────────────────────────────────────────────────────────────────
 
-/** `settings.terminalFileLinks`: ask before opening, open right away, or never. */
+/** `settings.terminalFileLinks`: ask before opening, open right away, or never.
+ *  Which click counts as opening is the gate's (`linkgate.ts`). */
 export const FILE_LINK_MODES = ["confirm", "direct", "off"] as const;
 export type FileLinkMode = (typeof FILE_LINK_MODES)[number];
-export const DEFAULT_FILE_LINK_MODE: FileLinkMode = "confirm";
+export const DEFAULT_FILE_LINK_MODE: FileLinkMode = "direct";
 
 export const isFileLinkMode = (v: unknown): v is FileLinkMode =>
   typeof v === "string" && (FILE_LINK_MODES as readonly string[]).includes(v);
-
-/**
- * `settings.terminalFileLinkClick`: a plain click, or only ⌘-click (macOS) /
- * Ctrl-click (Windows, Linux) — for those who click into the terminal to
- * focus it and would rather not land on a name.
- */
-export const FILE_LINK_CLICKS = ["click", "modifier"] as const;
-export type FileLinkClick = (typeof FILE_LINK_CLICKS)[number];
-export const DEFAULT_FILE_LINK_CLICK: FileLinkClick = "click";
-
-export const isFileLinkClick = (v: unknown): v is FileLinkClick =>
-  typeof v === "string" && (FILE_LINK_CLICKS as readonly string[]).includes(v);
-
-/** The keys of a click that decide whether it opens. */
-export interface ClickKeys {
-  metaKey: boolean;
-  ctrlKey: boolean;
-  altKey: boolean;
-}
-
-/**
- * Whether a click on a file link opens it. Alt-click is xterm's "move the
- * cursor here" and never opens; in `modifier` mode only ⌘ (macOS) or Ctrl
- * (elsewhere) does.
- */
-export function clickOpens(click: FileLinkClick, keys: ClickKeys, mac: boolean): boolean {
-  if (keys.altKey) return false;
-  if (click === "click") return true;
-  return mac ? keys.metaKey : keys.ctrlKey;
-}
-
-/**
- * How long a plain click waits before it opens: long enough for the second
- * click of a double-click, which selects the name instead (the user wants to
- * copy it). A ⌘/Ctrl-click opens at once — nobody double-clicks with it held.
- */
-export const DOUBLE_CLICK_MS = 400;
 
 // ── What a click does ────────────────────────────────────────────────────────
 
@@ -117,7 +81,7 @@ export type FileLinkQuestion =
   | { kind: "open"; sessionId: string; target: NamedPath; where: string | null; prod: boolean; following: boolean }
   | { kind: "sync"; sessionId: string; where: string | null; following: boolean };
 
-/** A click on a file link that `clickOpens` let through. */
+/** A click on a file link that the gate (`linkgate.ts`) let through. */
 export function fileLinkClick(mode: FileLinkMode, target: FileLinkTarget): FileLinkAction {
   if (mode === "off") return { kind: "ignore" };
   // Not a question about a file: in any mode, the folder is what is missing.

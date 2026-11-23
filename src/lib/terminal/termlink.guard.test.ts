@@ -17,6 +17,11 @@ import { describe, expect, it } from "vitest";
 //    URL provider (`createUrlLinks`, urllinks.ts) hands the link to `clickLink`
 //    — and xterm's own URL addon, which never made a non-Latin host a link,
 //    stays out;
+//  - every click on a link passes the terminal's one link gate first (v1.36,
+//    linkgate.ts): the component builds it with `terminalLinkGate` and gives it
+//    to the OSC 8 handler and the URL provider alike, so ⌘-click means the same
+//    on every link; the gate never acts with a selection, never on the first
+//    click of a double-click, and asks about the selection again after its wait;
 //  - in the store the opener is reached only from `open`, which is called only
 //    for what `linkClick` said to open and for an answered question;
 //  - an answer opens only a link the opener may open — http or https, as its
@@ -89,16 +94,42 @@ export function terminalViolations(raw: string): string[] {
   if (calls.some((c) => !/linkHandler:\s*terminalLinkHandler\(/.test(c))) {
     out.push("an xterm is created without terminalLinkHandler — OSC 8 links fall back to xterm's own");
   }
+  if (
+    calls.some((c) => !/linkHandler:\s*terminalLinkHandler\([^\n]*,\s*linkGate\),/.test(c)) ||
+    (calls.length > 0 && !/const linkGate = terminalLinkGate\(/.test(src))
+  ) {
+    out.push("OSC 8 links skip the terminal's link gate");
+  }
   if (/plugin-opener|openUrl\s*\(/.test(src)) {
     out.push("a terminal component calls the opener itself");
   }
   if (/new WebLinksAddon\(/.test(src)) {
     out.push("xterm's URL addon is back — it drops every address with a non-Latin host");
   }
-  for (const m of src.matchAll(/createUrlLinks\(([^;]*)\);/g)) {
-    if (!/,\s*clickLink\s*\)$/.test(m[1])) {
-      out.push("the URL provider does not hand the link to clickLink");
-    }
+  const viaGate = /createUrlLinks\(term, \(event, uri\) => linkGate\.activate\(event, "web", \(\) => clickLink\(uri\)\)\)/g;
+  if ((src.match(/createUrlLinks\(/g) ?? []).length !== (src.match(viaGate) ?? []).length) {
+    out.push("the URL provider does not hand the link to clickLink through the link gate");
+  }
+  return out;
+}
+
+/** Violations in the gate every click on a link passes (linkgate.ts). */
+export function gateViolations(raw: string): string[] {
+  const src = strip(raw);
+  const out: string[] = [];
+  const at = src.indexOf("activate(event, kind, act) {");
+  const activate = at < 0 ? "" : src.slice(at, src.indexOf("dispose: cancel", at));
+  if (!/^activate\(event, kind, act\) \{\s*cancel\(\);\s*if \(host\.selected\(\)\) return;/.test(activate)) {
+    out.push("a click acts without asking about the selection first");
+  }
+  if (!/if \(event\.detail > 1\) return;/.test(activate)) {
+    out.push("the first click of a double-click acts on the name it selects");
+  }
+  if (!/pending = setTimeout\(\(\) => \{\s*pending = undefined;\s*if \(host\.selected\(\)\) return;/.test(activate)) {
+    out.push("the delayed click does not ask about the selection again");
+  }
+  if ((activate.match(/\bact\(\)/g) ?? []).length !== 2 || (activate.match(/host\.hint\(/g) ?? []).length !== 1) {
+    out.push("the gate opens or hints past its gesture");
   }
   return out;
 }
@@ -137,6 +168,10 @@ describe("terminal link guard", () => {
     for (const { rel, src } of creators) expect(terminalViolations(src), rel).toEqual([]);
   });
 
+  it("every click on a link passes the gate, which leaves selections and double-clicks alone", () => {
+    expect(gateViolations(read("lib/terminal/linkgate.ts"))).toEqual([]);
+  });
+
   it("the store opens only what linkClick or an answer decided", () => {
     expect(storeViolations(read("lib/stores/linkopen.svelte.ts"))).toEqual([]);
   });
@@ -155,17 +190,49 @@ describe("terminal link guard", () => {
 
   it("catches a terminal that opens links itself", () => {
     const src = read("lib/terminal/Terminal.svelte").replace(
-      "createUrlLinks(term, clickLink)",
-      "createUrlLinks(term, (uri) => openUrl(uri))",
+      'createUrlLinks(term, (event, uri) => linkGate.activate(event, "web", () => clickLink(uri)))',
+      "createUrlLinks(term, (_event, uri) => openUrl(uri))",
     );
     const found = terminalViolations(src);
     expect(found).toContain("a terminal component calls the opener itself");
-    expect(found).toContain("the URL provider does not hand the link to clickLink");
+    expect(found).toContain("the URL provider does not hand the link to clickLink through the link gate");
+  });
+
+  it("catches a URL provider that opens past the gate", () => {
+    const src = read("lib/terminal/Terminal.svelte").replace(
+      'createUrlLinks(term, (event, uri) => linkGate.activate(event, "web", () => clickLink(uri)))',
+      "createUrlLinks(term, (_event, uri) => clickLink(uri))",
+    );
+    expect(terminalViolations(src)).toContain("the URL provider does not hand the link to clickLink through the link gate");
+  });
+
+  it("catches OSC 8 links handled past the gate", () => {
+    const src = read("lib/recording/RecordingPlayer.svelte").replace(
+      "terminalLinkHandler(() => term?.buffer.active, linkGate)",
+      "terminalLinkHandler(() => term?.buffer.active, terminalLinkGate(() => false))",
+    );
+    expect(terminalViolations(src)).toContain("OSC 8 links skip the terminal's link gate");
+  });
+
+  it("catches a gate that forgets the selection or the double-click", () => {
+    const gate = read("lib/terminal/linkgate.ts");
+    expect(gateViolations(gate.replace("      if (host.selected()) return;\n      const gesture", "      const gesture"))).toContain(
+      "a click acts without asking about the selection first",
+    );
+    expect(gateViolations(gate.replace("if (event.detail > 1) return;", ""))).toContain(
+      "the first click of a double-click acts on the name it selects",
+    );
+    expect(
+      gateViolations(gate.replace("pending = undefined;\n        if (host.selected()) return;", "pending = undefined;")),
+    ).toContain("the delayed click does not ask about the selection again");
+    expect(gateViolations(gate.replace('if (gesture === "none") return;', 'if (gesture === "none") act();'))).toContain(
+      "the gate opens or hints past its gesture",
+    );
   });
 
   it("catches xterm's URL addon coming back", () => {
     const src = read("lib/terminal/Terminal.svelte").replace(
-      "term.registerLinkProvider(createUrlLinks(term, clickLink))",
+      /term\.registerLinkProvider\(\s*createUrlLinks\([^\n]*\n\s*\)/,
       "new WebLinksAddon((_event, uri) => clickLink(uri))",
     );
     expect(terminalViolations(src)).toContain(
