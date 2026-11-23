@@ -808,13 +808,18 @@ describe("ServerFormModal path sync", () => {
     expect(screen.queryByTestId("server-path-sync-prod")).toBeNull();
   });
 
-  it("a copy keeps the source's answer", async () => {
-    const { comp } = renderForm();
-    comp.openDuplicate(server({ id: "s1", alias: "Web", pathSync: "auto" }));
-    await tick();
-    await userEvent.click(screen.getByTestId("save-server"));
-    await waitFor(() => expect(addServer).toHaveBeenCalledOnce());
-    expect(addServer).toHaveBeenCalledWith(expect.objectContaining({ pathSync: "auto" }));
+  it("a copy asks again: the source's answer was about the source", async () => {
+    for (const mode of ["auto", "manual"]) {
+      addServer.mockClear();
+      const { comp, unmount } = renderForm();
+      comp.openDuplicate(server({ id: "s1", alias: "Web", pathSync: mode }));
+      await tick();
+      expect(screen.getByTestId("server-section-terminal")).toHaveTextContent("Path sync: Ask");
+      await userEvent.click(screen.getByTestId("save-server"));
+      await waitFor(() => expect(addServer).toHaveBeenCalledOnce());
+      expect(addServer).toHaveBeenCalledWith(expect.objectContaining({ pathSync: null }));
+      unmount();
+    }
   });
 });
 

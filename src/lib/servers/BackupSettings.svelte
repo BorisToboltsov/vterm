@@ -18,9 +18,10 @@
     type BackupKind,
   } from "../api";
   import BackupImportDialog, { type ImportChoice } from "./BackupImportDialog.svelte";
+  import { loadLocalDbs, localDbs } from "../stores/db.svelte";
   import InfoHint from "../ui/InfoHint.svelte";
   import { baseName } from "../files/fspath";
-  import type { ServerProfile } from "../types";
+  import type { DbProfile, ServerProfile } from "../types";
   import { t } from "../i18n";
 
   let { onImported }: { onImported?: () => void } = $props();
@@ -33,6 +34,7 @@
     contents: BackupContents;
     servers: ServerProfile[];
     folders: string[];
+    dbs: DbProfile[];
   } | null>(null);
   // What to include in an export. "all" by default; the others scope the archive.
   let exportKind = $state<BackupKind>("all");
@@ -55,8 +57,14 @@
       const stem = exportKind === "all" ? "backup" : exportKind;
       const path = await pickBackupSavePath(`vterm-${stem}-${todayStamp()}.zip`);
       if (!path) return;
-      await exportBackup(path, exportKind, $state.snapshot(settings));
-      backupMsg = t("settings.backupExported");
+      const done = await exportBackup(path, exportKind, $state.snapshot(settings));
+      // What the library cannot read is not in the backup either — said, not dropped quietly.
+      backupMsg = [
+        t("settings.backupExported"),
+        done.scriptsSkipped > 0 ? t("settings.backupScriptsSkipped", { count: done.scriptsSkipped }) : "",
+      ]
+        .filter(Boolean)
+        .join(" ");
     } catch (e) {
       backupErr = true;
       backupMsg = t("settings.exportFailed", { error: String(e) });
@@ -70,12 +78,14 @@
     try {
       const path = await pickBackupFile();
       if (!path) return;
-      const [contents, servers, folders] = await Promise.all([
+      const [contents, servers, folders, dbs] = await Promise.all([
         readBackup(path),
         listServers(),
         listFolders(),
+        // This computer's databases, as the database store reads them (ADR 0080).
+        loadLocalDbs().then(localDbs),
       ]);
-      pending = { path, contents, servers, folders };
+      pending = { path, contents, servers, folders, dbs };
     } catch (e) {
       backupErr = true;
       backupMsg = t("settings.importFailed", { error: String(e) });
@@ -87,7 +97,13 @@
     pending = null;
     if (!path) return;
     try {
-      const result = await importBackup(path, choice.catalog, choice.recordings, choice.scripts);
+      const result = await importBackup(
+        path,
+        choice.catalog,
+        choice.recordings,
+        choice.scripts,
+        choice.localDatabases,
+      );
       const appliedSettings = choice.settings && !!result.settings;
       if (appliedSettings) applyImportedSettings(result.settings);
       onImported?.();
@@ -103,6 +119,9 @@
               })
             : t("settings.restoredServers", { servers: result.servers, folders: result.folders ?? 0 }),
         );
+      }
+      if (result.localDatabases != null) {
+        parts.push(t("settings.restoredLocalDbs", { count: result.localDatabases }));
       }
       if (appliedSettings) parts.push(t("settings.restoredSettings"));
       if (result.recordings !== null)
@@ -159,6 +178,7 @@
   fileName={pending ? baseName(pending.path) : ""}
   current={pending?.servers ?? []}
   currentFolders={pending?.folders ?? []}
+  currentDbs={pending?.dbs ?? []}
   onimport={doImport}
   oncancel={() => (pending = null)}
 />

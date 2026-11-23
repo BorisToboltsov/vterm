@@ -37,6 +37,12 @@ import {
   SHIFT_PATH_STEP,
   shiftOffset,
   silentSince,
+  smallLayout,
+  SMALL_PULSE_SHARE,
+  MARK_FROM,
+  PULSE_MIN,
+  PULSE_TOLD_MIN,
+  clockWidth,
   SPAN_BASE_MS,
   SPAN_MAX_MS,
   spanLabel,
@@ -45,7 +51,6 @@ import {
   standbyTransfer,
   STORY_GAP_MS,
   timeAtX,
-  timeRuns,
   timeX,
   verdictLine,
   windowPeak,
@@ -54,7 +59,9 @@ import {
   type AwayReading,
   type AwaySpan,
   type AwayThresholds,
+  type SmallLayout,
 } from "./standby";
+import { cardTier } from "./idlefx";
 import type { TransferRow } from "../files/transfer";
 import type { Problem } from "../monitoring/monproblems";
 
@@ -588,70 +595,172 @@ describe("under the pointer", () => {
   });
 });
 
-describe("the small cards' chart", () => {
-  it("places points by time, breaking the line at a gap", () => {
-    const pts = [
-      { at: T0, cpu: 0, mem: null, load: null },
-      { at: T0 + MIN, cpu: 1, mem: null, load: null },
-      { at: T0 + 2 * MIN, cpu: null, mem: null, load: null },
-      { at: T0 + 4 * MIN, cpu: 0.5, mem: null, load: null },
-    ];
-    expect(timeRuns(pts, "cpu", T0, T0 + 4 * MIN, 10, 0, 400, 100)).toEqual([
-      [
-        { x: 10, y: 100 },
-        { x: 110, y: 0 },
-      ],
-      [{ x: 410, y: 50 }],
-    ]);
-    expect(timeRuns(pts, "mem", T0, T0 + 4 * MIN, 0, 0, 1, 1)).toEqual([]);
-    // One sample so far: the axis has no span yet — it stands at the start.
-    expect(timeRuns(pts.slice(0, 1), "cpu", T0, T0, 7, 0, 100, 10)).toEqual([[{ x: 7, y: 10 }]]);
+describe("time on an axis", () => {
+  it("places a moment by time across the box", () => {
     expect(timeX(T0 + MIN, T0, T0 + 2 * MIN, 0, 200)).toBe(100);
+    // No span yet: everything stands at the start.
     expect(timeX(T0, T0, T0, 5, 200)).toBe(5);
   });
+});
 
-  it("cuts the line at an edge on its way, never past the box", () => {
-    const pts = [
-      { at: 0, cpu: 0, mem: null, load: null },
-      { at: 10, cpu: 1, mem: null, load: null },
-      { at: 20, cpu: 0, mem: null, load: null },
-      { at: 30, cpu: 1, mem: null, load: null },
-    ];
-    // The right edge halfway to the newest point: the last stretch drawn to the edge.
-    expect(timeRuns(pts, "cpu", 0, 25, 0, 0, 100, 100)).toEqual([
-      [
-        { x: 0, y: 100 },
-        { x: 40, y: 0 },
-        { x: 80, y: 100 },
-        { x: 100, y: 50 },
-      ],
-    ]);
-    // The left edge past the oldest point (a small card sliding on): cut there too.
-    expect(timeRuns(pts, "cpu", 5, 30, 0, 0, 100, 100)).toEqual([
-      [
-        { x: 0, y: 50 },
-        { x: 20, y: 0 },
-        { x: 60, y: 100 },
-        { x: 100, y: 0 },
-      ],
-    ]);
-    // Both edges inside one stretch.
-    expect(timeRuns(pts, "cpu", 12, 18, 0, 0, 100, 100)).toEqual([
-      [
-        { x: 0, y: 20 },
-        { x: 100, y: 80 },
-      ],
-    ]);
-    // No line is drawn across a gap to reach an edge.
-    const gapped = [
-      { at: 0, cpu: 0.5, mem: null, load: null },
-      { at: 10, cpu: null, mem: null, load: null },
-      { at: 20, cpu: 0.5, mem: null, load: null },
-    ];
-    expect(timeRuns(gapped, "cpu", 5, 15, 0, 0, 100, 100)).toEqual([]);
-    expect(timeRuns(gapped, "cpu", 0, 15, 0, 0, 100, 100)).toEqual([[{ x: 0, y: 50 }]]);
+describe("the small forms (ADR 0082)", () => {
+  type Box = { x: number; y: number; size?: number; w?: number; h?: number; align?: string };
+  /** The left and right edges of a text box as aligned at its x. */
+  const span = (b: { x: number; w: number; align: string }) =>
+    b.align === "right" ? [b.x - b.w, b.x] : b.align === "center" ? [b.x - b.w / 2, b.x + b.w / 2] : [b.x, b.x + b.w];
+  /** Everything a layout draws, with its bottom. */
+  function boxes(l: SmallLayout): [string, Box, number][] {
+    const out: [string, Box, number][] = [];
+    if (l.clock) out.push(["clock", l.clock, l.clock.y + l.clock.size]);
+    if (l.date) out.push(["date", l.date, l.date.y + l.date.size]);
+    out.push(["host", l.host, l.host.y + l.host.size]);
+    if (l.verdict) out.push(["verdict", l.verdict, l.verdict.y + l.verdict.size]);
+    if (l.story) out.push(["story", l.story, l.story.y + l.story.size * 2 + 4]);
+    if (l.pulse) out.push(["pulse", l.pulse.chart, l.pulse.chart.y + l.pulse.chart.h]);
+    if (l.numbers) out.push(["numbers", l.numbers, l.numbers.y + (l.numbers.kind === "line" ? l.numbers.size : 0)]);
+    if (l.hint) out.push(["hint", l.hint, l.hint.y + l.hint.size]);
+    return out;
+  }
+  const numbersBottom = (l: SmallLayout) =>
+    !l.numbers
+      ? 0
+      : l.numbers.kind === "line"
+        ? l.numbers.y + l.numbers.size
+        : l.numbers.y + Math.ceil(4 / l.numbers.cols) * (l.numbers.labelSize + l.numbers.gap + l.numbers.valueSize) + (Math.ceil(4 / l.numbers.cols) - 1) * l.numbers.rowGap;
+  /** Every area the small forms are drawn in, on a grid. */
+  const areas = (): [number, number][] => {
+    const out: [number, number][] = [];
+    for (let W = 200; W < 1400; W += 23) for (let H = 100; H < 800; H += 17) out.push([W, H]);
+    return out;
+  };
+
+  it("draws everything inside its area, top to bottom, never one thing over another", () => {
+    for (const [W, H] of areas()) {
+      const tier = cardTier(W, H);
+      if (tier !== "small" && tier !== "narrow") continue;
+      for (const session of [true, false]) {
+        const l = smallLayout(tier, W, H, { session });
+        const at = `${tier} ${W}×${H}${session ? "" : " no session"}`;
+        for (const [name, b, bottom] of boxes(l)) {
+          expect(b.y, `${at} ${name} top`).toBeGreaterThanOrEqual(0);
+          expect(bottom, `${at} ${name} bottom`).toBeLessThanOrEqual(H);
+          if (b.w != null) {
+            const [left, right] = "align" in b && b.align ? span(b as { x: number; w: number; align: string }) : [b.x, b.x + b.w];
+            expect(left, `${at} ${name} left`).toBeGreaterThanOrEqual(0);
+            expect(right, `${at} ${name} right`).toBeLessThanOrEqual(W);
+            expect(b.w, `${at} ${name} width`).toBeGreaterThan(0);
+          }
+        }
+        // The clock, the date and the host's lines above the pulse, the pulse
+        // above the numbers, the numbers above the hint.
+        const top = Math.max(
+          l.clock ? l.clock.y + l.clock.size : 0,
+          l.date ? l.date.y + l.date.size : 0,
+          l.verdict ? l.verdict.y + l.verdict.size : 0,
+          l.story ? l.story.y + l.story.size * 2 + 4 : 0,
+        );
+        if (l.pulse) {
+          expect(l.pulse.headY ?? l.pulse.chart.y, at).toBeGreaterThan(top);
+          if (l.pulse.headY != null) expect(l.pulse.headY + l.pulse.headSize, at).toBeLessThan(l.pulse.chart.y);
+          const under = l.pulse.axisY != null ? l.pulse.axisY + l.pulse.smallSize : l.pulse.chart.y + l.pulse.chart.h;
+          if (l.pulse.axisY != null) expect(l.pulse.axisY, at).toBeGreaterThan(l.pulse.chart.y + l.pulse.chart.h);
+          if (l.numbers) expect(under, at).toBeLessThan(l.numbers.y);
+        } else if (l.numbers) {
+          expect(l.numbers.y, at).toBeGreaterThan(top);
+        }
+        if (l.hint) expect(Math.max(top, numbersBottom(l)), at).toBeLessThan(l.hint.y);
+        // The host and its verdict beside the clock stand clear of it.
+        if (l.clock && l.host.align === "right") {
+          expect(l.host.x - l.host.w, at).toBeGreaterThanOrEqual(l.clock.x + clockWidth(l.clock.size));
+        }
+        // Without a session there is nothing to chart or count.
+        if (!session) expect(l.pulse == null && l.numbers == null && l.story == null, at).toBe(true);
+      }
+    }
   });
 
+  it("keeps the pulse a height worth drawing, no more than its share, and its mark only where the label fits", () => {
+    for (const [W, H] of areas()) {
+      const tier = cardTier(W, H);
+      if (tier !== "small" && tier !== "narrow") continue;
+      const p = smallLayout(tier, W, H, { session: true }).pulse;
+      if (!p) continue;
+      const at = `${tier} ${W}×${H}`;
+      expect(p.chart.h, at).toBeGreaterThanOrEqual(PULSE_MIN);
+      // Words around the line only where the line is worth them.
+      if (p.headY != null || p.axisY != null) expect(p.chart.h, at).toBeGreaterThanOrEqual(PULSE_TOLD_MIN);
+      expect(p.chart.h, at).toBeLessThanOrEqual(Math.max(PULSE_TOLD_MIN, Math.round(H * SMALL_PULSE_SHARE)));
+      expect(p.markRoom > 0, at).toBe(p.chart.h >= MARK_FROM);
+    }
+  });
+
+  it("gives things up in one order, and as the area grows only takes them back", () => {
+    const kept = (l: SmallLayout) => ({
+      axis: l.pulse?.axisY != null,
+      hint: l.hint != null,
+      head: l.pulse?.headY != null || l.story != null,
+      grid: l.numbers?.kind === "grid",
+      date: l.date != null,
+      pulse: l.pulse != null,
+      numbers: l.numbers != null,
+    });
+    for (let W = 200; W < 1400; W += 37) {
+      let last: ReturnType<typeof kept> | null = null;
+      let lastTier = "";
+      for (let H = 100; H < 800; H += 3) {
+        const tier = cardTier(W, H);
+        if (tier !== "small" && tier !== "narrow") continue;
+        const now = kept(smallLayout(tier, W, H, { session: true }));
+        if (last && lastTier === tier) {
+          for (const [k, v] of Object.entries(last)) {
+            if (v) expect(now[k as keyof typeof now], `${tier} ${W}×${H}: ${k} came and went`).toBe(true);
+          }
+        }
+        last = now;
+        lastTier = tier;
+      }
+    }
+  });
+
+  it("shows everything where there is room for it", () => {
+    // Half a laptop's window, a 2×2 split: the screen whole, only smaller.
+    const half = smallLayout("small", 560, 360, { session: true });
+    expect(half.date && half.hint && half.pulse?.headY != null && half.pulse.axisY != null && half.pulse.markRoom > 0).toBeTruthy();
+    expect(half.numbers).toMatchObject({ kind: "grid", cols: 4 });
+    // A low strip under a raised bottom dock keeps the pulse and the four numbers.
+    const low = smallLayout("small", 900, 240, { session: true });
+    expect(low.pulse).not.toBeNull();
+    expect(low.numbers?.kind).toBe("grid");
+    // A narrow column: the sentence on lines of its own, the numbers two by two.
+    const column = smallLayout("narrow", 330, 560, { session: true });
+    expect(column.story?.lines).toBe(2);
+    expect(column.numbers).toMatchObject({ kind: "grid", cols: 2 });
+    expect(column.pulse?.axisY).not.toBeNull();
+    // The smallest pane the centre makes: the clock, the host, a strip and a line of numbers.
+    const pane = smallLayout("small", 240, 140, { session: true });
+    expect(pane.clock).not.toBeNull();
+    expect(pane.pulse).not.toBeNull();
+    expect(pane.numbers?.kind).toBe("line");
+  });
+
+  it("falls back to the host and its verdict alone, side by side or one over the other", () => {
+    for (const [W, H] of [
+      [150, 30],
+      [150, 300],
+      [900, 60],
+      [120, 90],
+    ]) {
+      const l = smallLayout("line", W, H, { session: true });
+      expect(l.clock ?? l.pulse ?? l.numbers ?? l.hint ?? null).toBeNull();
+      for (const b of [l.host, l.verdict!]) {
+        expect(b.y).toBeGreaterThanOrEqual(0);
+        expect(b.y + b.size).toBeLessThanOrEqual(Math.max(H, b.size));
+        const [left, right] = span(b);
+        expect(left).toBeGreaterThanOrEqual(0);
+        expect(right).toBeLessThanOrEqual(W);
+      }
+    }
+  });
 });
 
 describe("the server's clock", () => {

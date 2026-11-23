@@ -14,7 +14,11 @@ import { describe, expect, it } from "vitest";
 //  - `importBackup` is called from one place, with the catalog the dialog chose;
 //  - the dialog's catalog is `planImport` over `remapServers` — logins and key
 //    paths changed, the current servers kept or replaced as chosen;
-//  - "password saved" comes only from a current server of the same id.
+//  - "password saved" comes only from a current server of the same id;
+//  - the databases of this computer (ADR 0080) are only added: the dialog
+//    hands on what `planLocalDbs` left, with no saved password, and the
+//    backend writes `local_additions` over the ones here — checked before
+//    anything is written, never the archive's own list.
 // Each check is a function over source text, run against a planted violation
 // too. Checked without comments.
 
@@ -67,6 +71,14 @@ export function backendViolations(raw: string): string[] {
   const flags = fn.indexOf("keep_password_flags(");
   if (flags < 0 || flags > save) out.push("a database's saved-password flag is written as the archive has it");
   if (!/store::save_servers\(&c\.servers\)/.test(fn)) out.push("the import writes something but the given catalog");
+  // The databases of this computer: added to the ones here, checked before
+  // the first write, never the archive's own list.
+  if (/\b(?:doc|d)\.local_databases\b/.test(fn)) out.push("the import writes the archive's own databases of this computer");
+  const additions = fn.indexOf("backup::local_additions(");
+  const saveLocal = fn.indexOf("store::save_local_databases(");
+  if (additions < 0 || saveLocal < 0 || additions > save || !/store::save_local_databases\(&next\)/.test(fn)) {
+    out.push("the databases of this computer are written but as added to the ones here, checked first");
+  }
   return out;
 }
 
@@ -79,8 +91,20 @@ export function frontendViolations(dialog: string, settingsSection: string, rema
   }
   if (!/catalog:\s*plan\?\.catalog\s*\?\?\s*null/.test(d)) out.push("the dialog hands on a catalog it did not plan");
   const s = strip(settingsSection);
-  if (!/importBackup\(path,\s*choice\.catalog,\s*choice\.recordings,\s*choice\.scripts\)/.test(s)) {
+  if (
+    !/importBackup\(\s*path,\s*choice\.catalog,\s*choice\.recordings,\s*choice\.scripts,\s*choice\.localDatabases,?\s*\)/.test(s)
+  ) {
     out.push("the import is not given the chosen catalog");
+  }
+  if (
+    !/planLocalDbs\(currentDbs,\s*localDbs\)/.test(d) ||
+    !/localDatabases:\s*takeLocalDbs\s*&&\s*dbPlan\s*\?\s*dbPlan\.add\s*:\s*null/.test(d)
+  ) {
+    out.push("the dialog hands on databases of this computer it did not plan");
+  }
+  const p = strip(body(strip(remap), /export function planLocalDbs\(/));
+  if (!/add\.push\(\{\s*\.\.\.d,\s*hasSavedPassword:\s*false\s*\}\)/.test(p)) {
+    out.push("an added database of this computer claims a saved password");
   }
   const r = strip(body(strip(remap), /export function remapServers\(/));
   // The server's own login, its jump host's, each other login's (ADR 0074) and
@@ -152,6 +176,28 @@ describe("backup import guard", () => {
     }
     const lib = read(LIB).replace("crate::db::keep_password_flags(&state.servers.locked(), &mut c.servers);", "");
     expect(backendViolations(lib)).toContain("a database's saved-password flag is written as the archive has it");
+  });
+
+  it("catches the archive's databases of this computer written, or written unchecked", () => {
+    const archive = read(LIB).replace("dbs,\n        )?)", "doc.local_databases,\n        )?)");
+    expect(backendViolations(archive)).toContain("the import writes the archive's own databases of this computer");
+    const unchecked = read(LIB).replace("store::save_local_databases(&next)?;", "store::save_local_databases(&dbs)?;");
+    expect(backendViolations(unchecked)).toContain(
+      "the databases of this computer are written but as added to the ones here, checked first",
+    );
+  });
+
+  it("catches a dialog that hands on databases it did not plan, or a password hint for them", () => {
+    const dialog = read(DIALOG).replace("dbPlan ? dbPlan.add : null", "localDbs");
+    expect(frontendViolations(dialog, read(SECTION), read(REMAP))).toContain(
+      "the dialog hands on databases of this computer it did not plan",
+    );
+    const remap = read(REMAP).replace("add.push({ ...d, hasSavedPassword: false })", "add.push(d)");
+    expect(frontendViolations(read(DIALOG), read(SECTION), remap)).toContain(
+      "an added database of this computer claims a saved password",
+    );
+    const section = read(SECTION).replace("choice.localDatabases,", "null,");
+    expect(frontendViolations(read(DIALOG), section, read(REMAP))).toContain("the import is not given the chosen catalog");
   });
 
   it("catches another login's hint carried over from the backup (ADR 0074)", () => {

@@ -92,7 +92,7 @@ pub struct RecipeScan {
     pub folders: Vec<SourceFolder>,
     /// Sources that could not be read — named, never shown as empty (principle 5).
     pub unreadable: Vec<String>,
-    /// Files skipped: too large or not text.
+    /// Files skipped: too large, not text, or past the most a folder is read for.
     pub skipped: usize,
 }
 
@@ -182,6 +182,7 @@ fn scan_dir(dir: &Path, own: bool, scan: &mut RecipeScan) {
         })
         .collect();
     paths.sort();
+    scan.skipped += paths.len().saturating_sub(MAX_RECIPES_PER_DIR);
     for path in paths.into_iter().take(MAX_RECIPES_PER_DIR) {
         let Ok(meta) = std::fs::metadata(&path) else {
             scan.skipped += 1;
@@ -798,6 +799,17 @@ mod tests {
         // The app's own folder before anything is saved: nothing, and no complaint.
         let fresh = scan(&own.path().join("none"), &[]);
         assert!(fresh.files.is_empty() && fresh.unreadable.is_empty());
+    }
+
+    #[test]
+    fn files_past_the_most_a_folder_is_read_for_are_counted_not_dropped() {
+        let own = tempfile::tempdir().unwrap();
+        for i in 0..MAX_RECIPES_PER_DIR + 3 {
+            std::fs::write(own.path().join(format!("r{i:04}.sh")), "# r").unwrap();
+        }
+        let out = scan(own.path(), &[]);
+        assert_eq!(out.files.len(), MAX_RECIPES_PER_DIR);
+        assert_eq!(out.skipped, 3);
     }
 
     #[test]

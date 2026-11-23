@@ -11,7 +11,6 @@ import { loadHealth } from "../monitoring/monhealth";
 import type { Problem } from "../monitoring/monproblems";
 import { fmtUptime } from "../monitoring/format";
 import { etaSeconds, transferPct, type TransferRow } from "../files/transfer";
-import type { IdleSample } from "./idlefx";
 
 // ── History of the time away (v1.34, ADR 0065; ADR 0075) ────────────────────
 // One stream of readings, told two ways, each on a scale that holds still:
@@ -674,59 +673,365 @@ export function pulseLayout(W: number, H: number, big: boolean, o: { yourTime: b
   };
 }
 
-// ── Time on an axis ──────────────────────────────────────────────────────────
+// ── The small forms (ADR 0082) ───────────────────────────────────────────────
+// Below the short form the screen keeps its look instead of turning back into
+// the old card: the same clock, host and verdict, pulse and four numbers, only
+// smaller — and what has no room leaves in one order, the least needed first:
+// the axis, the hint, the pulse's heading (and the sentence in it), the numbers'
+// own row (they become one line), the date, the pulse, the numbers. A narrow,
+// tall area stands the same things in a column, the numbers two by two. The
+// model places; the overlay paints and fits each text to the width it is given.
+
+/** A line of text: its top, its size, where it is aligned at `x`, and how wide it may run. */
+export interface TextBox {
+  x: number;
+  y: number;
+  size: number;
+  align: "left" | "right" | "center";
+  w: number;
+}
+
+/** What `drawPulse` needs of a layout. No heading, no axis — null; no room for the mark — `markRoom` 0. */
+export interface PulseBox {
+  chart: { x: number; y: number; w: number; h: number };
+  markRoom: number;
+  headY: number | null;
+  headSize: number;
+  axisY: number | null;
+  smallSize: number;
+}
+
+/** The four numbers: a grid of `cols` (a label over its value), or one line of `LABEL value`. */
+export type NumbersBox =
+  | { kind: "grid"; x: number; y: number; w: number; cols: number; labelSize: number; valueSize: number; gap: number; rowGap: number }
+  | { kind: "line"; x: number; y: number; w: number; size: number };
+
+/** The small forms of the card's layouts (`cardTier`). */
+export type SmallForm = "small" | "narrow" | "line";
+
+/** Where everything of a small form stands; null — no room for it here. */
+export interface SmallLayout {
+  clock: { x: number; y: number; size: number } | null;
+  date: TextBox | null;
+  host: TextBox;
+  verdict: TextBox | null;
+  /** The sentence about the time away on lines of its own (a column), its lead on the first; null — in the pulse's heading, or nowhere. */
+  story: (TextBox & { lines: 2 }) | null;
+  pulse: PulseBox | null;
+  numbers: NumbersBox | null;
+  hint: TextBox | null;
+}
+
+/** A monospace digit's advance, em: the clock "HH:MM" is five of them. */
+const DIGIT_EM = 0.62;
+/** How wide the clock stands at `size` px. */
+export const clockWidth = (size: number): number => Math.ceil(size * DIGIT_EM * 5);
+
+/** The least height a small form draws its pulse at: a bare strip. */
+export const PULSE_MIN = 18;
+/** The least height of a pulse that keeps its heading or axis: words around a thinner line say more than it. */
+export const PULSE_TOLD_MIN = 40;
+const pulseMin = (k: SmallKeep): number => (k.head || k.axis ? PULSE_TOLD_MIN : PULSE_MIN);
+/** A pulse lower than this carries no mark: its label would stand on the line. */
+export const MARK_FROM = 56;
+const MARK_ROOM = 16;
+/** The share of the area a small form's pulse may take; the rest above it is air. */
+export const SMALL_PULSE_SHARE = 0.42;
+
+/** What a small form keeps. */
+export interface SmallKeep {
+  date: boolean;
+  head: boolean;
+  axis: boolean;
+  story: boolean;
+  hint: boolean;
+  numbers: "grid" | "line" | null;
+  pulse: boolean;
+}
 
 /**
- * Canvas points of one series across a `w × h` box at (`x0`, `y0`), placed by
- * TIME over `from…to`, fraction 1 at the top edge — the small cards' chart.
- * Split into runs at unknown points, so a gap is drawn as a gap. The edges of a
- * chart move smoothly to a new reading (v1.33), so the line crosses them: it is
- * cut at each edge, at the value between the last point inside and the first
- * outside — never drawn past the box.
+ * The order a small form gives things up in, the least needed first: the axis,
+ * the hint, the pulse's heading and the sentence, the numbers' own row (one
+ * line instead — a column keeps its grid), the date, the pulse, the numbers.
  */
-export function timeRuns(
-  points: readonly ({ at: number } & IdleSample)[],
-  key: keyof IdleSample,
-  from: number,
-  to: number,
-  x0: number,
-  y0: number,
-  w: number,
-  h: number,
-): { x: number; y: number }[][] {
-  const span = to - from;
-  const xAt = (at: number) => (span > 0 ? x0 + ((at - from) / span) * w : x0);
-  const yAt = (v: number) => y0 + h - Math.min(1, Math.max(0, v)) * h;
-  // The value between two points at time `at` (inside their stretch).
-  const between = (a: { at: number; v: number }, b: { at: number; v: number }, at: number) =>
-    yAt(a.v + ((b.v - a.v) * (at - a.at)) / (b.at - a.at));
-  const runs: { x: number; y: number }[][] = [];
-  let run: { x: number; y: number }[] = [];
-  let prev: { at: number; v: number } | null = null;
-  for (const pt of points) {
-    const v = pt[key];
-    if (v == null) {
-      if (run.length) runs.push(run);
-      run = [];
-      prev = null;
-      continue;
-    }
-    const cur = { at: pt.at, v };
-    if (pt.at < from) {
-      prev = cur;
-      continue;
-    }
-    if (prev && prev.at < from && pt.at > from) run.push({ x: x0, y: between(prev, cur, from) });
-    if (pt.at > to) {
-      if (prev && prev.at < to && run.length) run.push({ x: xAt(to), y: between(prev, cur, to) });
-      break;
-    }
-    run.push({ x: xAt(pt.at), y: yAt(v) });
-    prev = cur;
-  }
-  if (run.length) runs.push(run);
-  return runs;
+export const SMALL_DROPS: readonly ((k: SmallKeep) => SmallKeep)[] = [
+  (k) => ({ ...k, axis: false }),
+  (k) => ({ ...k, hint: false }),
+  (k) => ({ ...k, head: false, story: false }),
+  (k) => ({ ...k, numbers: k.numbers === "grid" ? "line" : k.numbers }),
+  (k) => ({ ...k, date: false }),
+  (k) => ({ ...k, pulse: false, head: false, axis: false }),
+  (k) => ({ ...k, numbers: null }),
+];
+/** The step that turns the numbers' grid into a line — a column has no room for the line. */
+const TO_LINE = 3;
+
+const clampN = (v: number, lo: number, hi: number): number => Math.min(hi, Math.max(lo, v));
+
+/** The least gap between the parts of a small form; of a column. */
+const MIN_GAP = 6;
+const COLUMN_GAP = 10;
+
+/**
+ * The gap the parts `k` keeps stand at: what is left of `H` shared between its
+ * gaps, no more than `want`, never less than the least gap it was kept at.
+ */
+function spreadGap(
+  k: SmallKeep,
+  gaps: (k: SmallKeep) => number,
+  need: (k: SmallKeep, g: number) => number,
+  H: number,
+  want: number,
+): number {
+  const n = gaps(k);
+  if (n === 0) return want;
+  const least = need(k, 1) - need(k, 0) > 0 ? Math.floor((H - need(k, 0)) / (need(k, 1) - need(k, 0))) : want;
+  return Math.max(Math.min(want, least), Math.min(want, MIN_GAP));
 }
+
+/** The first of `keep` and what follows it in `drops` that `need` finds room for (or the last). */
+function fitKeep(keep: SmallKeep, drops: readonly ((k: SmallKeep) => SmallKeep)[], need: (k: SmallKeep) => number, H: number): SmallKeep {
+  let k = keep;
+  for (const drop of drops) {
+    if (need(k) <= H) return k;
+    k = drop(k);
+  }
+  return k;
+}
+
+/** Move every box of `l` but the hint down by `dy` — a form without its pulse stands in the middle. */
+function lowered(l: SmallLayout, dy: number): SmallLayout {
+  if (!(dy > 0)) return l;
+  const down = <T extends { y: number }>(b: T | null): T | null => (b ? { ...b, y: b.y + dy } : null);
+  return {
+    ...l,
+    clock: down(l.clock),
+    date: down(l.date),
+    host: { ...l.host, y: l.host.y + dy },
+    verdict: down(l.verdict),
+    story: down(l.story),
+    numbers: down(l.numbers),
+  };
+}
+
+/**
+ * The small form at its widest: the clock with the date under it on the left,
+ * the host and its verdict flush right beside it; under them the pulse with
+ * its heading and axis, the numbers in a row of their own (one line where the
+ * area is narrow), the hint. The pulse stands on the numbers and takes up to
+ * `SMALL_PULSE_SHARE` of the area; what is left goes above it, as air.
+ */
+function rowLayout(W: number, H: number, session: boolean): SmallLayout {
+  const pad = Math.round(clampN(Math.min(W, H * 1.6) * 0.05, 14, 28));
+  const clockSize = Math.round(clampN(Math.min(H * 0.17, W * 0.11), 26, 64));
+  const clockY = Math.round(pad * 0.75);
+  const hostSize = Math.round(clampN(clockSize * 0.27, 12, 16));
+  const verdictSize = Math.max(10, hostSize - 3);
+  const hostY = clockY + Math.round(clockSize * 0.08);
+  const verdictY = hostY + Math.round(hostSize * 1.6);
+  const dateSize = clockSize >= 40 ? 11 : 10;
+  const dateY = clockY + Math.round(clockSize * 1.1);
+  const bottom = Math.round(pad * 0.7);
+  const wide = W >= 480;
+  const headSize = 10;
+  const headGap = 8;
+  const axisH = 16;
+  const hintSize = 10;
+  const labelSize = 10;
+  const labelGap = 4;
+  const valueSize = Math.round(clampN(H * 0.067, 16, 24));
+  const lineSize = wide ? 12 : 10;
+  const side = clockWidth(clockSize) + Math.max(12, pad);
+  const topOf = (k: SmallKeep) => (k.date ? dateY + dateSize : Math.max(clockY + clockSize, verdictY + verdictSize));
+  const numbersH = (k: SmallKeep) => (k.numbers === "grid" ? labelSize + labelGap + valueSize : k.numbers === "line" ? lineSize : 0);
+  const gaps = (k: SmallKeep) => Number(k.pulse) + Number(k.numbers != null) + Number(k.hint);
+  const need = (k: SmallKeep, g: number) =>
+    topOf(k) +
+    (k.pulse ? (k.head ? headSize + headGap : 0) + pulseMin(k) + (k.axis ? axisH : 0) : 0) +
+    (k.numbers ? numbersH(k) : 0) +
+    (k.hint ? hintSize : 0) +
+    gaps(k) * g +
+    bottom;
+  const all: SmallKeep = {
+    date: true,
+    head: wide && session,
+    axis: wide && session,
+    story: false,
+    hint: true,
+    numbers: session ? (wide ? "grid" : "line") : null,
+    pulse: session,
+  };
+  // What stays is decided at the least gap, so a taller area never keeps less;
+  // the gaps then grow into the room left, up to their share of the height.
+  const k = fitKeep(all, SMALL_DROPS, (k) => need(k, MIN_GAP), H);
+  const gap = spreadGap(k, gaps, need, H, Math.round(clampN(H * 0.04, MIN_GAP, 16)));
+
+  let y = H - bottom;
+  const hint: TextBox | null = k.hint ? { x: W / 2, y: y - hintSize, size: hintSize, align: "center", w: W - 2 * pad } : null;
+  if (k.hint) y -= hintSize + gap;
+  let numbers: NumbersBox | null = null;
+  if (k.numbers === "grid") {
+    y -= labelSize + labelGap + valueSize;
+    numbers = { kind: "grid", x: pad, y, w: W - 2 * pad, cols: 4, labelSize, valueSize, gap: labelGap, rowGap: 0 };
+  } else if (k.numbers === "line") {
+    y -= lineSize;
+    numbers = { kind: "line", x: pad, y, w: W - 2 * pad, size: lineSize };
+  }
+  let pulse: PulseBox | null = null;
+  if (k.pulse) {
+    y -= gap;
+    const axisY = k.axis ? y - 10 : null;
+    if (k.axis) y -= axisH;
+    const room = y - (topOf(k) + gap + (k.head ? headSize + headGap : 0));
+    const h = Math.max(pulseMin(k), Math.min(room, Math.round(H * SMALL_PULSE_SHARE)));
+    const chartY = y - h;
+    pulse = {
+      chart: { x: pad, y: chartY, w: W - 2 * pad, h },
+      markRoom: h >= MARK_FROM ? MARK_ROOM : 0,
+      headY: k.head ? chartY - headGap - headSize : null,
+      headSize,
+      axisY,
+      smallSize: 10,
+    };
+  }
+  const verdictBottom = verdictY + verdictSize;
+  const l: SmallLayout = {
+    clock: { x: pad, y: clockY, size: clockSize },
+    date: k.date
+      ? { x: pad, y: dateY, size: dateSize, align: "left", w: verdictBottom > dateY ? side - 8 : Math.round((W - 2 * pad) / 2) }
+      : null,
+    host: { x: W - pad, y: hostY, size: hostSize, align: "right", w: W - 2 * pad - side },
+    verdict: { x: W - pad, y: verdictY, size: verdictSize, align: "right", w: W - 2 * pad - side },
+    story: null,
+    pulse,
+    numbers,
+    hint,
+  };
+  if (pulse) return l;
+  // No pulse: the top row and the numbers stand in the middle of what is left above the hint.
+  const content = need({ ...k, hint: false }, gap) - bottom - clockY;
+  const free = (hint ? hint.y - gap : H - bottom) - clockY;
+  if (numbers) numbers.y = topOf(k) + gap;
+  return lowered(l, Math.round((free - content) / 2));
+}
+
+/**
+ * The small form in a narrow, tall area: a column — the clock, the date, the
+ * host and its verdict, the sentence about the time away on two lines; at the
+ * bottom the pulse with its axis, the numbers two by two, the hint.
+ */
+function columnLayout(W: number, H: number, session: boolean): SmallLayout {
+  const pad = W < 360 ? 18 : 24;
+  const clockSize = Math.round(clampN(Math.min(W * 0.2, H * 0.13), 34, 72));
+  const clockY = pad;
+  const dateSize = 11;
+  const dateY = clockY + Math.round(clockSize * 1.1);
+  const hostSize = 15;
+  const verdictSize = 13;
+  const storySize = 11;
+  const bottom = Math.round(pad * 0.7);
+  const axisH = 16;
+  const hintSize = 10;
+  const labelSize = 10;
+  const labelGap = 4;
+  const rowGap = 12;
+  const valueSize = Math.round(clampN(W * 0.075, 18, 26));
+  const grid = 2 * (labelSize + labelGap + valueSize) + rowGap;
+  const storyH = storySize * 2 + 4;
+  const hostOf = (k: SmallKeep, g: number) => (k.date ? dateY + dateSize : clockY + clockSize) + g;
+  const topOf = (k: SmallKeep, g: number) => {
+    const verdictBottom = hostOf(k, g) + Math.round(hostSize * 1.6) + verdictSize;
+    return k.story ? verdictBottom + g + storyH : verdictBottom;
+  };
+  const gaps = (k: SmallKeep) => Number(k.story) + Number(k.pulse) + Number(k.numbers != null) + Number(k.hint);
+  const need = (k: SmallKeep, g: number) =>
+    topOf(k, g) +
+    (k.pulse ? g + pulseMin(k) + (k.axis ? axisH : 0) : 0) +
+    (k.numbers ? g + grid : 0) +
+    (k.hint ? g + hintSize : 0) +
+    bottom;
+  const all: SmallKeep = { date: true, head: false, axis: session, story: session, hint: true, numbers: session ? "grid" : null, pulse: session };
+  const k = fitKeep(all, SMALL_DROPS.filter((_, i) => i !== TO_LINE), (k) => need(k, COLUMN_GAP), H);
+  // The host's gap counts too: it is there whatever stays.
+  const gap = spreadGap(k, (k) => gaps(k) + 1, need, H, Math.round(clampN(H * 0.03, COLUMN_GAP, 18)));
+
+  let y = H - bottom;
+  const hint: TextBox | null = k.hint ? { x: W / 2, y: y - hintSize, size: hintSize, align: "center", w: W - 2 * pad } : null;
+  if (k.hint) y -= hintSize + gap;
+  let numbers: NumbersBox | null = null;
+  if (k.numbers) {
+    y -= grid;
+    numbers = { kind: "grid", x: pad, y, w: W - 2 * pad, cols: 2, labelSize, valueSize, gap: labelGap, rowGap };
+  }
+  let pulse: PulseBox | null = null;
+  if (k.pulse) {
+    y -= gap;
+    const axisY = k.axis ? y - 10 : null;
+    if (k.axis) y -= axisH;
+    const room = y - (topOf(k, gap) + gap);
+    const h = Math.max(pulseMin(k), Math.min(room, Math.round(H * SMALL_PULSE_SHARE)));
+    pulse = {
+      chart: { x: pad, y: y - h, w: W - 2 * pad, h },
+      markRoom: h >= MARK_FROM ? MARK_ROOM : 0,
+      headY: null,
+      headSize: 10,
+      axisY,
+      smallSize: 10,
+    };
+  }
+  const hostY = hostOf(k, gap);
+  const verdictY = hostY + Math.round(hostSize * 1.6);
+  const l: SmallLayout = {
+    clock: { x: pad, y: clockY, size: clockSize },
+    date: k.date ? { x: pad, y: dateY, size: dateSize, align: "left", w: W - 2 * pad } : null,
+    host: { x: pad, y: hostY, size: hostSize, align: "left", w: W - 2 * pad },
+    verdict: { x: pad, y: verdictY, size: verdictSize, align: "left", w: W - 2 * pad },
+    story: k.story ? { x: pad, y: verdictY + verdictSize + gap, size: storySize, align: "left", w: W - 2 * pad, lines: 2 } : null,
+    pulse,
+    numbers,
+    hint,
+  };
+  if (pulse) return l;
+  const content = topOf(k, gap) - clockY + (numbers ? gap + grid : 0);
+  const free = (hint ? hint.y - gap : H - bottom) - clockY;
+  if (numbers) numbers.y = topOf(k, gap) + gap;
+  return lowered(l, Math.round((free - content) / 2));
+}
+
+/** The host and its verdict alone: side by side, or one over the other where the area is narrow. */
+function lineLayout(W: number, H: number, session: boolean): SmallLayout {
+  const w = Math.max(0, W);
+  const h = Math.max(0, H);
+  const pad = Math.round(clampN(w * 0.04, 6, 16));
+  const size = h >= 44 ? 13 : 12;
+  const none = { clock: null, date: null, story: null, pulse: null, numbers: null, hint: null };
+  if (h >= 44 && w < 360) {
+    const top = Math.round(h / 2) - size - 2;
+    return {
+      ...none,
+      host: { x: pad, y: top, size, align: "left", w: w - 2 * pad },
+      verdict: { x: pad, y: top + size + 4, size: 11, align: "left", w: w - 2 * pad },
+    };
+  }
+  const y = Math.max(0, Math.round((h - size) / 2));
+  const half = Math.round(w / 2) - pad;
+  return {
+    ...none,
+    host: { x: pad, y, size, align: "left", w: session ? half : w - 2 * pad },
+    verdict: { x: w - pad, y: y + 1, size: 11, align: "right", w: half },
+  };
+}
+
+/**
+ * Where everything of a small form stands in a `W × H` area. Without a session
+ * there is nothing to chart or count: the clock, the host and "no sessions".
+ */
+export function smallLayout(form: SmallForm, W: number, H: number, o: { session: boolean }): SmallLayout {
+  if (form === "line") return lineLayout(W, H, o.session);
+  return form === "narrow" ? columnLayout(W, H, o.session) : rowLayout(W, H, o.session);
+}
+
+// ── Time on an axis ──────────────────────────────────────────────────────────
 
 /** The x of wall-clock time `at` on a `from…to` axis of width `w` starting at `x0`. */
 export function timeX(at: number, from: number, to: number, x0: number, w: number): number {

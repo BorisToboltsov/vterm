@@ -1,5 +1,6 @@
 <script lang="ts" module>
   import type { ImportCatalog } from "../api/servers";
+  import type { DbProfile } from "../types";
   import type { ImportMode, ImportPlan } from "./backupimport";
 
   /** What the user chose to import. */
@@ -12,6 +13,8 @@
     recordings: boolean;
     /** The recipes of the library (ADR 0071). */
     scripts: boolean;
+    /** The databases of this computer to add (ADR 0080); null — none. */
+    localDatabases: DbProfile[] | null;
   }
 </script>
 
@@ -33,6 +36,7 @@
     keyPathRows,
     loginRows,
     planImport,
+    planLocalDbs,
     remapServers,
     type UsageRow,
   } from "./backupimport";
@@ -45,6 +49,7 @@
     fileName = "",
     current = [],
     currentFolders = [],
+    currentDbs = [],
     onimport,
     oncancel,
   }: {
@@ -54,6 +59,8 @@
     /** The servers and folders there are now. */
     current?: ServerProfile[];
     currentFolders?: string[];
+    /** The databases of this computer there are now. */
+    currentDbs?: DbProfile[];
     onimport?: (choice: ImportChoice) => void;
     oncancel?: () => void;
   } = $props();
@@ -62,6 +69,7 @@
   let takeSettings = $state(true);
   let takeRecordings = $state(true);
   let takeScripts = $state(true);
+  let takeLocalDbs = $state(true);
   let mode = $state<ImportMode>("merge");
   let logins = $state<Record<string, string>>({});
   let keys = $state<Record<string, string>>({});
@@ -82,6 +90,7 @@
     takeSettings = contents.settings;
     takeRecordings = contents.recordings !== null;
     takeScripts = (contents.scripts ?? null) !== null;
+    takeLocalDbs = (contents.localDatabases?.length ?? 0) > 0;
     mode = "merge";
     logins = {};
     keys = {};
@@ -126,18 +135,23 @@
         )
       : null,
   );
+  // The databases of this computer are only added (ADR 0080), whichever way the servers go.
+  const localDbs = $derived(contents?.localDatabases?.length ? contents.localDatabases : null);
+  const dbPlan = $derived(localDbs ? planLocalDbs(currentDbs, localDbs) : null);
   const holdsSomething = $derived(
     !!contents &&
       (contents.servers !== null ||
         contents.settings ||
         contents.recordings !== null ||
-        (contents.scripts ?? null) !== null),
+        (contents.scripts ?? null) !== null ||
+        localDbs !== null),
   );
   const chosen = $derived(
     (takeServers && servers !== null) ||
       (takeSettings && !!contents?.settings) ||
       (takeRecordings && contents?.recordings != null) ||
-      (takeScripts && contents?.scripts != null),
+      (takeScripts && contents?.scripts != null) ||
+      (takeLocalDbs && localDbs !== null),
   );
   const removes = $derived(!!plan && plan.removed > 0);
 
@@ -157,6 +171,7 @@
       settings: takeSettings && !!contents?.settings,
       recordings: takeRecordings && contents?.recordings != null,
       scripts: takeScripts && contents?.scripts != null,
+      localDatabases: takeLocalDbs && dbPlan ? dbPlan.add : null,
     });
   }
 </script>
@@ -204,6 +219,15 @@
                 servers: contents.servers.length,
                 folders: contents.folders?.length ?? 0,
               })}
+            </span>
+          </label>
+        {/if}
+        {#if localDbs && dbPlan}
+          <label class="flex items-center gap-2 text-text">
+            <input type="checkbox" bind:checked={takeLocalDbs} data-testid="backup-take-local-dbs" />
+            {t("backup.localDbs")}
+            <span class="text-muted" data-testid="backup-local-dbs-plan">
+              {t("backup.localDbsCount", { added: dbPlan.add.length, skipped: dbPlan.skipped })}
             </span>
           </label>
         {/if}

@@ -278,7 +278,10 @@
     noAi = server.noAi;
     aiPromptId = server.chatPromptId ?? "";
     aiExecMode = server.execMode ?? "";
-    pathSync = pathSyncMode(server.pathSync);
+    // How path sync starts is an answer about the source (ADR 0034): a copy is
+    // most often another server, and asks again rather than typing a command
+    // into its shell on the first connect.
+    pathSync = "ask";
     // A duplicate is a new id, so neither secret is carried over.
     loadProxy(server.proxy, false);
     foldSections();

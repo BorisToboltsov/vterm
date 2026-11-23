@@ -10,6 +10,19 @@ const pickBackupFile = vi.fn();
 const readBackup = vi.fn();
 const listServers = vi.fn();
 const listFolders = vi.fn();
+const dbLocalList = vi.fn();
+// This computer's databases come through the database store, which alone calls the backend for them.
+vi.mock("../stores/db.svelte", async (importOriginal) => {
+  const real = await importOriginal<typeof import("../stores/db.svelte")>();
+  let got: unknown[] = [];
+  return {
+    ...real,
+    loadLocalDbs: async () => {
+      got = await dbLocalList();
+    },
+    localDbs: () => got,
+  };
+});
 vi.mock("../api", () => ({
   exportBackup: (...a: unknown[]) => exportBackup(...a),
   importBackup: (...a: unknown[]) => importBackup(...a),
@@ -30,13 +43,27 @@ import { DEFAULT_THEME_ID } from "../appearance/themes";
 beforeEach(() => {
   localStorage.clear();
   settings.language = "en";
-  exportBackup.mockReset().mockResolvedValue(undefined);
+  exportBackup.mockReset().mockResolvedValue({ localDatabases: 0, scripts: 0, scriptsSkipped: 0 });
   importBackup.mockReset();
   pickBackupSavePath.mockReset();
   pickBackupFile.mockReset();
   readBackup.mockReset();
   listServers.mockReset().mockResolvedValue([]);
   listFolders.mockReset().mockResolvedValue([]);
+  dbLocalList.mockReset().mockResolvedValue([]);
+});
+
+const localDb = (id: string, port = 5432) => ({
+  id,
+  name: id,
+  kind: "postgres",
+  host: "127.0.0.1",
+  port,
+  database: "app",
+  user: "postgres",
+  hasSavedPassword: true,
+  readOnly: false,
+  container: null,
 });
 
 const backupServer = (id: string, username: string) => ({
@@ -163,10 +190,62 @@ describe("SettingsPanel — backup", () => {
     await userEvent.click(screen.getByTestId("backup-import"));
     await userEvent.click(await screen.findByTestId("backup-import-confirm"));
 
-    await waitFor(() => expect(importBackup).toHaveBeenCalledWith("/in/settings.zip", null, false, false));
+    await waitFor(() => expect(importBackup).toHaveBeenCalledWith("/in/settings.zip", null, false, false, null));
     const msg = await screen.findByTestId("backup-msg");
     expect(msg).toHaveTextContent(/Settings applied/);
     expect(msg).not.toHaveTextContent(/server/i);
+  });
+
+  it("names the scenario files the export left out", async () => {
+    pickBackupSavePath.mockResolvedValue("/out/vterm.zip");
+    exportBackup.mockResolvedValue({ localDatabases: 1, scripts: 4, scriptsSkipped: 2 });
+    render(SettingsPanel, { props: { open: true } });
+    await userEvent.click(screen.getByTestId("backup-export"));
+    const msg = await screen.findByTestId("backup-msg");
+    expect(msg).toHaveTextContent(/exported/i);
+    expect(msg).toHaveTextContent(/Scenario files left out: 2/);
+  });
+
+  it("adds the backup's databases of this computer that are not here, and only those", async () => {
+    pickBackupFile.mockResolvedValue("/in/vterm.zip");
+    dbLocalList.mockResolvedValue([localDb("here")]);
+    readBackup.mockResolvedValue({
+      kind: "servers",
+      servers: [],
+      folders: [],
+      settings: false,
+      recordings: null,
+      localDatabases: [localDb("here"), localDb("new", 6543)],
+    });
+    importBackup.mockResolvedValue({ kind: "servers", servers: 0, folders: 0, recordings: null, localDatabases: 1, settings: null });
+    render(SettingsPanel, { props: { open: true } });
+    await userEvent.click(screen.getByTestId("backup-import"));
+    expect(await screen.findByTestId("backup-local-dbs-plan")).toHaveTextContent("1 to add, 1 already here");
+    await userEvent.click(screen.getByTestId("backup-import-confirm"));
+    await waitFor(() => expect(importBackup).toHaveBeenCalledOnce());
+    const added = importBackup.mock.calls[0][4] as { id: string; hasSavedPassword: boolean }[];
+    expect(added.map((d) => d.id)).toEqual(["new"]);
+    expect(added[0].hasSavedPassword).toBe(false);
+    expect(await screen.findByTestId("backup-msg")).toHaveTextContent(/Added 1 database\(s\) of this computer/);
+  });
+
+  it("takes no database of this computer when its box is cleared", async () => {
+    pickBackupFile.mockResolvedValue("/in/vterm.zip");
+    readBackup.mockResolvedValue({
+      kind: "servers",
+      servers: [backupServer("a", "root")],
+      folders: [],
+      settings: false,
+      recordings: null,
+      localDatabases: [localDb("new")],
+    });
+    importBackup.mockResolvedValue({ kind: "servers", servers: 1, folders: 0, recordings: null, localDatabases: null, settings: null });
+    render(SettingsPanel, { props: { open: true } });
+    await userEvent.click(screen.getByTestId("backup-import"));
+    await userEvent.click(await screen.findByTestId("backup-take-local-dbs"));
+    await userEvent.click(screen.getByTestId("backup-import-confirm"));
+    await waitFor(() => expect(importBackup).toHaveBeenCalledOnce());
+    expect(importBackup.mock.calls[0][4]).toBeNull();
   });
 
   it("a backup that cannot be read is an error, not an empty preview", async () => {

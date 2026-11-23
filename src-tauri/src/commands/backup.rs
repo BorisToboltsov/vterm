@@ -3,10 +3,22 @@
 
 use crate::error::{AppError, AppResult};
 use crate::locks::Locked;
-use crate::model::ServerProfile;
+use crate::model::{DbProfile, ServerProfile};
 use crate::{backup, now_secs, recording, scenarios, store, AppState};
 use serde::{Deserialize, Serialize};
 use tauri::State;
+
+/// What an export wrote, beyond the servers: the databases of this computer and
+/// the recipes (`None` — their section is not in this kind of backup), and the
+/// files of the recipes folder left out — the library cannot read them either
+/// (larger than 64 KB, not text, past the 300 it reads), and the user is told.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ExportResult {
+    local_databases: Option<usize>,
+    scripts: Option<usize>,
+    scripts_skipped: usize,
+}
 
 /// Write a backup `.zip` archive to `path`. `kind` chooses which sections go in
 /// ("servers" / "settings" / "recordings" / "all"); the archive always carries a
@@ -18,7 +30,7 @@ pub fn export_backup(
     kind: String,
     settings: Option<serde_json::Value>,
     state: State<AppState>,
-) -> AppResult<()> {
+) -> AppResult<ExportResult> {
     use std::io::Write;
     let exported_at = now_secs();
     let manifest = backup::build_manifest(&kind, exported_at);
@@ -37,8 +49,15 @@ pub fn export_backup(
     zip.write_all(backup::encode_manifest(&manifest)?.as_bytes())
         .map_err(|e| AppError::Message(format!("write manifest: {e}")))?;
 
-    // servers/folders + settings travel in an inner backup.json (only the
-    // selected sections are populated — a settings-only backup carries no servers).
+    let mut result = ExportResult {
+        local_databases: None,
+        scripts: None,
+        scripts_skipped: 0,
+    };
+
+    // servers/folders/the databases of this computer + settings travel in an
+    // inner backup.json (only the selected sections are populated — a
+    // settings-only backup carries no servers).
     if manifest.has(backup::SECTION_SERVERS) || manifest.has(backup::SECTION_SETTINGS) {
         let servers = if manifest.has(backup::SECTION_SERVERS) {
             state.servers.locked().clone()
@@ -50,12 +69,19 @@ pub fn export_backup(
         } else {
             Vec::new()
         };
+        let local_databases = if manifest.has(backup::SECTION_SERVERS) {
+            let dbs = store::load_local_databases();
+            result.local_databases = Some(dbs.len());
+            dbs
+        } else {
+            Vec::new()
+        };
         let settings = if manifest.has(backup::SECTION_SETTINGS) {
             settings
         } else {
             None
         };
-        let doc = backup::build(servers, folders, settings, exported_at);
+        let doc = backup::build(servers, folders, local_databases, settings, exported_at);
         zip.start_file(backup::BACKUP_NAME, opts).map_err(zip_err)?;
         zip.write_all(backup::encode(&doc)?.as_bytes())
             .map_err(|e| AppError::Message(format!("write backup.json: {e}")))?;
@@ -86,19 +112,40 @@ pub fn export_backup(
 
     // The recipes of the app's own folder (ADR 0071) under scripts/; a source
     // folder the user added is theirs, and not copied.
+    // The library's own limits hold here too — an import writes no more than it
+    // reads — so a file it leaves out is counted and named, never dropped quietly.
     if manifest.has(backup::SECTION_SCRIPTS) {
+        let mut written = 0usize;
         if let Some(dir) = scenarios::recipes_dir() {
-            for f in scenarios::scan(&dir, &[]).files {
+            let scan = scenarios::scan(&dir, &[]);
+            result.scripts_skipped = scan.skipped;
+            for f in scan.files {
                 zip.start_file(format!("{}{}", backup::SCRIPTS_PREFIX, f.name), opts)
                     .map_err(zip_err)?;
                 zip.write_all(f.text.as_bytes())
                     .map_err(|e| AppError::Message(format!("write recipe: {e}")))?;
+                written += 1;
             }
         }
+        result.scripts = Some(written);
     }
 
     zip.finish().map_err(zip_err)?;
-    Ok(())
+    if result.scripts_skipped > 0 {
+        tracing::warn!(
+            source = "storage",
+            skipped = result.scripts_skipped,
+            "files of the recipes folder were left out of the backup: larger than 64 KB, not text, or past the 300 the library reads"
+        );
+    }
+    tracing::info!(
+        source = "storage",
+        kind = %manifest.kind,
+        local_databases = result.local_databases.unwrap_or(0),
+        scripts = result.scripts.unwrap_or(0),
+        "a backup was exported"
+    );
+    Ok(result)
 }
 
 /// Result of importing a backup. `servers`/`folders` count the catalog written
@@ -115,6 +162,8 @@ pub struct ImportResult {
     recordings: Option<usize>,
     /// Recipes written into the app's folder (`None` when not asked for or absent).
     scripts: Option<usize>,
+    /// Databases of this computer added (`None` when none were asked for).
+    local_databases: Option<usize>,
     settings: Option<serde_json::Value>,
 }
 
@@ -131,20 +180,30 @@ pub struct ImportCatalog {
 
 /// Restore a backup from `path` (a `.zip` archive or a legacy JSON document):
 /// write `catalog` when given — the archive's own server list is not written
-/// as is — and extract the recordings when `recordings` is set. Settings are
-/// returned, not applied. Nothing is written before the catalog is checked.
+/// as is — add `local_databases` (the backup's databases of this computer the
+/// preview chose, `backupimport.ts`) to the ones here, and extract the
+/// recordings when `recordings` is set. Settings are returned, not applied.
+/// Nothing is written before the catalog and the databases are checked.
 #[tauri::command]
 pub fn import_backup(
     path: String,
     catalog: Option<ImportCatalog>,
     recordings: bool,
     scripts: Option<bool>,
+    local_databases: Option<Vec<DbProfile>>,
     state: State<AppState>,
 ) -> AppResult<ImportResult> {
     let bytes = std::fs::read(&path).map_err(|e| AppError::Message(format!("read {path}: {e}")))?;
     if let Some(c) = &catalog {
         backup::check_catalog(&c.servers)?;
     }
+    let local = match local_databases {
+        Some(dbs) => Some(backup::local_additions(
+            &store::load_local_databases(),
+            dbs,
+        )?),
+        None => None,
+    };
     let (kind, settings, mut archive, take) = if bytes.starts_with(b"PK") {
         let (zip, manifest, doc) = backup::open_archive(bytes)?;
         let settings = if manifest.has(backup::SECTION_SETTINGS) {
@@ -173,6 +232,7 @@ pub fn import_backup(
         folders: None,
         recordings: None,
         scripts: None,
+        local_databases: None,
         settings,
     };
 
@@ -186,6 +246,13 @@ pub fn import_backup(
         result.folders = Some(folders.len());
         *state.servers.locked() = c.servers;
         *state.folders.locked() = folders;
+    }
+
+    if let Some((next, added)) = local {
+        if added > 0 {
+            store::save_local_databases(&next)?;
+        }
+        result.local_databases = Some(added);
     }
 
     // Recordings: each recordings/*.cast goes into the recordings directory
