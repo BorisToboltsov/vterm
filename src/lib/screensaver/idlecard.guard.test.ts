@@ -22,9 +22,11 @@ import { describe, expect, it } from "vitest";
 // And the card is laid out for the room it has (v1.14.1). It is drawn over the
 // terminal area, which a raised bottom dock turns into a low strip: laid out by
 // fixed offsets there, the numbers left the card and the chart landed on the
-// header. `drawCard` asks `cardTier` and draws the card itself only where it
-// fits; the smaller layouts carry no "press any key" hint — it has nowhere to
-// stand in them.
+// header. `drawCard` asks `cardTier`; the standby screen stands only where it
+// fits, and a smaller area gets its small form (ADR 0082) — the same clock,
+// verdict, pulse, sentence and numbers, laid out by `smallLayout`, which also
+// says where the "press any key" hint has room. The six old card layouts, with
+// a chart and numbers of their own, are gone and stay gone.
 //
 // And it need not hold its pixels still (v1.31). The standby screen fills a
 // large area and may stay up for hours: every layout is drawn moved by the
@@ -53,7 +55,7 @@ import { describe, expect, it } from "vitest";
 // a chart of their own over the last half hour, sliding right to left — a band
 // from lowest to highest, the mean as a line — and the whole time away is a
 // strip of cells that steps to a longer cell only when it runs out of room. A
-// silence longer than a gap is a gap, in the small cards' chart too.
+// silence longer than a gap is a gap.
 //
 // And the standby screen is calm again (ADR 0075). Three charts with rings, a
 // strip of cells and a block of facts had made it a dashboard nobody read from
@@ -129,22 +131,25 @@ export function cardLayoutViolations(overlay: string): string[] {
   if (!/const tier = cardTier\(W, H\);/.test(bodyOf(o, "drawCard"))) {
     out.push("drawCard does not ask what layout the area has room for");
   }
-  // `drawCardFull(ctx,` is a call; the definition reads `drawCardFull(ctx:`.
-  const calls = o.match(/\bdrawCardFull\(ctx,/g)?.length ?? 0;
-  const guarded = o.match(/if \(tier === "full"\) drawCardFull\(ctx,/g)?.length ?? 0;
-  if (calls !== 1 || guarded !== 1) {
-    out.push("the card itself is drawn outside the layout that fits it");
-  }
   const standby = o.match(/\bdrawStandby\(ctx,/g)?.length ?? 0;
   const standbyGuarded =
     o.match(/if \(tier === "standby" \|\| tier === "compact"\) drawStandby\(ctx,/g)?.length ?? 0;
   if (standby !== 1 || standbyGuarded !== 1) {
     out.push("the standby screen is drawn outside the layouts that fit it");
   }
-  for (const small of ["drawCardWide", "drawCardStack", "drawCardSmall"]) {
-    const body = bodyOf(o, small);
-    if (!body) out.push(`${small} is gone`);
-    else if (/\bhint\(/.test(body)) out.push(`${small} draws the hint it has no room for`);
+  // `drawSmall(ctx,` is a call; the definition reads `drawSmall(ctx:`.
+  const small = o.match(/\bdrawSmall\(ctx,/g)?.length ?? 0;
+  const smallGuarded = o.match(/\belse drawSmall\(ctx, W, H, now, p, tier\);/g)?.length ?? 0;
+  if (small !== 1 || smallGuarded !== 1) out.push("the small form is drawn outside the layouts left to it");
+  const body = bodyOf(o, "drawSmall");
+  if (!/const lay = smallLayout\(form, W, H, \{ session: sessionId != null \}\);/.test(body)) {
+    out.push("the small form is not laid out for its area");
+  }
+  if (/\bhint\(ctx,/.test(body) || (body.match(/\bhintAt\(/g)?.length ?? 0) !== (body.match(/if \(lay\.hint\) hintAt\(/g)?.length ?? 0)) {
+    out.push("the small form draws the hint where its layout left no room");
+  }
+  if (/\b(?:drawCardFull|drawCardWide|drawCardStack|drawCardSmall|sharedChart|drawSeries)\b/.test(o)) {
+    out.push("an old card layout is back");
   }
   return out;
 }
@@ -160,7 +165,7 @@ export function driftViolations(overlay: string): string[] {
   const moved = body.indexOf("ctx.translate(dx, dy);");
   // The layouts are drawn through `drawTier` — the new one and, while it gives
   // way, the old one: whichever comes first must come after the shift.
-  const first = body.search(/drawTier\(|drawStandby\(ctx,|drawCardFull\(ctx,/);
+  const first = body.search(/drawTier\(|drawStandby\(ctx,|drawSmall\(ctx,/);
   if (offset < 0 || moved < offset || first < 0 || moved > first) out.push("the card is drawn without drifting");
   const restore = body.lastIndexOf("ctx.restore();");
   const frame = body.indexOf("prodFrame(ctx,");
@@ -170,9 +175,8 @@ export function driftViolations(overlay: string): string[] {
 }
 
 /**
- * What lets the history of the time away, or the small cards' chart, draw a
- * line through a poll that failed or through a silence — in the overlay's own
- * source. Empty when the rule holds.
+ * What lets the history of the time away draw a line through a poll that
+ * failed — in the overlay's own source. Empty when the rule holds.
  */
 export function gapViolations(overlay: string): string[] {
   const o = bare(overlay);
@@ -181,11 +185,6 @@ export function gapViolations(overlay: string): string[] {
   const caught = /\}\s*else\s*\{([\s\S]*?)\n {4}\}/.exec(body)?.[1] ?? "";
   const kept = /\baway = awayPush\(away, r, awayThresholds\(\)\);/.test(bodyOf(o, "remember"));
   if (!/\bremember\(gapReading\(/.test(caught) || !kept) out.push("a failed poll leaves no gap in the history");
-  if (!/\bpushHist\(NO_SAMPLE\);/.test(caught)) out.push("a failed poll leaves no gap in the small chart");
-  // The silence is measured before the reading joins anything.
-  const silence = body.indexOf("if (silentSince(away.lastAt, at, away.gapMs)) pushHist(NO_SAMPLE);");
-  const first = body.search(/\bpushHist\(idleSample\(|\bremember\(/);
-  if (silence < 0 || first < 0 || silence > first) out.push("a silence leaves no gap in the small chart");
   // A silence is a gap only against the poll's own beat.
   if (!/\baway = emptyAway\(pollEveryMs\(false\)\);/.test(bodyOf(o, "activate"))) {
     out.push("the history does not know how often it is polled");
@@ -227,6 +226,17 @@ export function calmViolations(overlay: string): string[] {
   if ((o.match(/\bbandRuns\(/g)?.length ?? 0) !== 1) out.push("more than one line is drawn");
   const items = /const items: \[[^\]]*\]\[\] = \[([\s\S]*?)\n {4}\];/.exec(bodyOf(o, "drawNumbers"))?.[1] ?? "";
   if ((items.match(/^\s*\[/gm)?.length ?? 0) !== 4) out.push("the numbers under the pulse are not four");
+  // The small forms (ADR 0082) say the same, in the same words: no card of their own.
+  const small = bodyOf(o, "drawSmall");
+  if (
+    !/const problems = barProblems\(lastMetrics, settings\.statusBarThresholds\);/.test(small) ||
+    !/verdictLine\(lastMetrics != null, problems\)/.test(small)
+  ) {
+    out.push("a small form has a verdict of its own");
+  }
+  if (!/drawPulse\(ctx, lay\.pulse, pulseOf\(problems\),/.test(small)) out.push("a small form's pulse does not follow the verdict");
+  if (!/storyText\(awayStory\(away, leftAt\), wall\)/.test(small)) out.push("a small form tells the time away other than in one sentence");
+  if (!/drawNumbers\(ctx, lay\.numbers, p\)/.test(small)) out.push("a small form counts other than the four numbers");
   return out;
 }
 
@@ -239,7 +249,7 @@ export function smoothViolations(overlay: string): string[] {
   const out: string[] = [];
   const keys = ["cpu", "mem", "load", "disk"];
   const numbers = bodyOf(o, "drawNumbers");
-  const drawn = bodyOf(o, "cardMetrics") + numbers + bodyOf(o, "drawPulse");
+  const drawn = numbers + bodyOf(o, "drawPulse");
   if (
     /\bfmtPct\((?:cpu|mem|diskPct)\)|\bload1 != null \? load1\.toFixed/.test(drawn) ||
     !keys.every((k) => numbers.includes(`shown(shownTw.${k})`))
@@ -257,9 +267,6 @@ export function smoothViolations(overlay: string): string[] {
     !/const loadTop = tweenAt\(loadTopTw, frameAt, ms\(SCALE_MS\)\)/.test(pulse)
   ) {
     out.push("the load pulse's ceiling jumps");
-  }
-  if (!/const end = tweenAt\(histTw, frameAt, ms\(LINE_MS\)\);/.test(bodyOf(o, "drawSeries"))) {
-    out.push("the small chart jumps to the newest sample");
   }
   const reduced = /const ms = \(base: number\) => motionMs\(base, reduce\);/.test(o);
   const raw = /\b(?:tweenAt|retarget|progress)\([^;]*?,\s*(?:RING_MS|LINE_MS|BAR_MS|SCALE_MS|TIER_MS)\b/.test(o);
@@ -326,7 +333,7 @@ describe("idle card guard", () => {
 
   it("forgets the previous activation's numbers before the first sample", () => {
     const body = fn("activate");
-    for (const v of ["cpu", "mem", "uptimeSecs", "load1", "cpuCount", "diskUsed", "diskTotal", "offsetMin", "lastMetrics"]) {
+    for (const v of ["cpu", "mem", "load1", "cpuCount", "diskUsed", "diskTotal", "offsetMin", "lastMetrics"]) {
       expect(body, `${v} is reset on activation`).toMatch(
         new RegExp(`\\b${v}\\s*=[^;]*\\bnull\\s*;`),
       );
@@ -374,41 +381,41 @@ describe("idle card guard", () => {
   it("lays the card out for the room the terminal area has", () => {
     const overlay = read("lib", "screensaver", "IdleOverlay.svelte");
     expect(cardLayoutViolations(overlay)).toEqual([]);
+    const caught = (from: string, to: string) => {
+      const changed = overlay.replace(from, to);
+      expect(changed, from).not.toBe(overlay);
+      return cardLayoutViolations(changed);
+    };
     // The check catches its own violations: a card that never asks…
-    const fixed = overlay.replace("const tier = cardTier(W, H);", 'const tier = "full";');
-    expect(fixed).not.toBe(overlay);
-    expect(cardLayoutViolations(fixed)).toEqual([
+    expect(caught("const tier = cardTier(W, H);", 'const tier = "small";')).toEqual([
       "drawCard does not ask what layout the area has room for",
     ]);
     // …a rule that is only named in a comment…
-    const commented = overlay.replace("const tier = cardTier(W, H);", "// const tier = cardTier(W, H);");
-    expect(cardLayoutViolations(commented)).toEqual([
+    expect(caught("const tier = cardTier(W, H);", "// const tier = cardTier(W, H);")).toEqual([
       "drawCard does not ask what layout the area has room for",
     ]);
-    // …the card drawn whatever the answer…
-    const always = overlay.replace('if (tier === "full") drawCardFull(ctx,', "drawCardFull(ctx,");
-    expect(always).not.toBe(overlay);
-    expect(cardLayoutViolations(always)).toEqual([
-      "the card itself is drawn outside the layout that fits it",
+    // …a small form drawn past the question…
+    expect(caught("else drawCard(ctx, W, H, now, p);", "else drawSmall(ctx, W, H, now, p, \"small\");")).toEqual([
+      "the small form is drawn outside the layouts left to it",
     ]);
-    // …a second place that draws it, past the question…
-    const twice = overlay.replace(
-      "else drawCard(ctx, W, H, now, p);",
-      "else drawCardFull(ctx, W, H, now, p);",
-    );
-    expect(twice).not.toBe(overlay);
-    expect(cardLayoutViolations(twice)).toEqual([
-      "the card itself is drawn outside the layout that fits it",
+    // …a small form laid out for one size of area…
+    expect(
+      caught(
+        "const lay = smallLayout(form, W, H, { session: sessionId != null });",
+        "const lay = smallLayout(form, 560, 360, { session: sessionId != null });",
+      ),
+    ).toEqual(["the small form is not laid out for its area"]);
+    // …a hint drawn where the layout left it no room…
+    expect(caught("    if (lay.hint) hintAt(ctx, lay.hint, p);\n  }", "    hint(ctx, W, H, p);\n  }")).toEqual([
+      "the small form draws the hint where its layout left no room",
     ]);
-    // …and a small layout that brings the hint back.
-    const hinted = overlay.replace(
-      "    sharedChart(ctx, 16, 46, W - 32, H - 46 - 14, p);\n  }",
-      "    sharedChart(ctx, 16, 46, W - 32, H - 46 - 14, p);\n    hint(ctx, W, H, p);\n  }",
-    );
-    expect(hinted).not.toBe(overlay);
-    expect(cardLayoutViolations(hinted)).toEqual([
-      "drawCardWide draws the hint it has no room for",
-    ]);
+    // …and an old card layout brought back.
+    expect(
+      caught(
+        "  /** The verdict in words:",
+        "  function drawCardStack(ctx: CanvasRenderingContext2D) {\n    void ctx;\n  }\n  /** The verdict in words:",
+      ),
+    ).toEqual(["an old card layout is back"]);
   });
 
   it("draws the standby screen only where it fits", () => {
@@ -466,14 +473,6 @@ describe("idle card guard", () => {
     // …or one passed on to a step that no longer keeps it…
     expect(caught("    away = awayPush(away, r, awayThresholds());\n", "")).toEqual([
       "a failed poll leaves no gap in the history",
-    ]);
-    // …a small chart that draws through a failed poll…
-    expect(caught("      pushHist(NO_SAMPLE);\n      remember(gapReading(at));", "      remember(gapReading(at));")).toEqual([
-      "a failed poll leaves no gap in the small chart",
-    ]);
-    // …or through a silence — a hidden window that skipped its polls…
-    expect(caught("    if (silentSince(away.lastAt, at, away.gapMs)) pushHist(NO_SAMPLE);\n", "")).toEqual([
-      "a silence leaves no gap in the small chart",
     ]);
     // …and a history that does not know how often it is polled.
     expect(caught("      away = emptyAway(pollEveryMs(false));", "      away = emptyAway(5000);")).toEqual([
@@ -535,6 +534,27 @@ describe("idle card guard", () => {
         "      [t(\"idle.factDisk\"), fmtPct(sDisk), thresholdLevel(sDisk, settings.statusBarThresholds.disk)],\n      [\"SWAP\", \"—\", \"ok\"],\n",
       ),
     ).toEqual(["the numbers under the pulse are not four"]);
+    // …and a small form that goes its own way: its own verdict, a line that
+    // keeps to CPU, the time away left untold, numbers of its own.
+    const small = (from: string, to: string) => {
+      const at = overlay.indexOf("function drawSmall(");
+      const end = overlay.indexOf("function verdictText(", at);
+      const body = overlay.slice(at, end);
+      expect(body.includes(from), from).toBe(true);
+      return calmViolations(overlay.slice(0, at) + body.replace(from, to) + overlay.slice(end));
+    };
+    expect(small("verdictLine(lastMetrics != null, problems)", "verdictLine(lastMetrics != null, [])")).toEqual([
+      "a small form has a verdict of its own",
+    ]);
+    expect(small("drawPulse(ctx, lay.pulse, pulseOf(problems),", "drawPulse(ctx, lay.pulse, pulseOf([]),")).toEqual([
+      "a small form's pulse does not follow the verdict",
+    ]);
+    expect(small("storyText(awayStory(away, leftAt), wall)", '""')).toEqual([
+      "a small form tells the time away other than in one sentence",
+    ]);
+    expect(small("drawNumbers(ctx, lay.numbers, p)", "void lay.numbers")).toEqual([
+      "a small form counts other than the four numbers",
+    ]);
   });
 
   it("runs numbers and lines to each reading instead of jumping", () => {
@@ -548,10 +568,6 @@ describe("idle card guard", () => {
     // The check catches its own violations: a number drawn from the raw reading…
     expect(caught("[pulseName(\"cpu\"), fmtPct(sCpu),", "[pulseName(\"cpu\"), fmtPct(cpu),")).toEqual(["a number jumps to the reading"]);
     expect(caught("    const sMem = shown(shownTw.mem);", "    const sMem = mem;")).toEqual(["a number jumps to the reading"]);
-    // …a small card's number that jumps…
-    expect(caught('["CPU", fmtPct(shown(shownTw.cpu)), p.green, "cpu"],', '["CPU", fmtPct(cpu), p.green, "cpu"],')).toEqual([
-      "a number jumps to the reading",
-    ]);
     // …a value that no reading sends on…
     expect(caught("      cpu: retarget(shownTw.cpu, cpu, t, ms(RING_MS)),\n", "")).toEqual(["what is shown does not follow the readings"]);
     expect(caught("      disk: retarget(shownTw.disk,", "      disk: still(")).toEqual(["what is shown does not follow the readings"]);
@@ -562,10 +578,6 @@ describe("idle card guard", () => {
     // …a load pulse whose ceiling jumps to a new peak…
     expect(caught("const loadTop = tweenAt(loadTopTw, frameAt, ms(SCALE_MS)) ?? wantTop;", "const loadTop = wantTop;")).toEqual([
       "the load pulse's ceiling jumps",
-    ]);
-    // …a small chart that jumps…
-    expect(caught("const end = tweenAt(histTw, frameAt, ms(LINE_MS));", "const end = histSeq;")).toEqual([
-      "the small chart jumps to the newest sample",
     ]);
     // …and movement that ignores reduced motion: a raw duration, or none of the setting.
     expect(caught("tweenAt(tw, frameAt, ms(RING_MS));", "tweenAt(tw, frameAt, RING_MS);")).toEqual(["a change moves with reduced motion on"]);

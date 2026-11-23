@@ -63,55 +63,6 @@ export function tokenizeBuffer(text: string): WordToken[] {
   return out;
 }
 
-// ── Away card chart ──────────────────────────────────────────────────────────
-// Three series on one chart, each a fraction of its own ceiling so they share a
-// 0…1 axis whose top line is "100 %": CPU and memory of the whole machine, and
-// the 1-minute load average against the logical-CPU count (load = cores means
-// every core has work). A value vterm cannot know is `null`, never a guessed 0.
-
-/** One chart sample: each series as a fraction 0…1, or null when unknown. */
-export interface IdleSample {
-  cpu: number | null;
-  mem: number | null;
-  load: number | null;
-}
-
-const clamp01 = (v: number) => Math.min(1, Math.max(0, v));
-
-/** Load average as a share of the machine: `load1 / cpuCount`, capped at 1.
- *  Null without a load average (Windows) or without a known core count. */
-export function loadFraction(load1: number | null, cpuCount: number | null): number | null {
-  if (load1 == null || !Number.isFinite(load1) || cpuCount == null || cpuCount <= 0) return null;
-  return clamp01(load1 / cpuCount);
-}
-
-/** Build a sample from percentages (0–100) and the load pair. */
-export function idleSample(
-  cpuPct: number | null,
-  memPct: number | null,
-  load1: number | null,
-  cpuCount: number | null,
-): IdleSample {
-  const pct = (v: number | null) => (v == null || !Number.isFinite(v) ? null : clamp01(v / 100));
-  return { cpu: pct(cpuPct), mem: pct(memPct), load: loadFraction(load1, cpuCount) };
-}
-
-/** A moment nothing was read: the small cards' line breaks there (v1.34). */
-export const NO_SAMPLE: IdleSample = Object.freeze({ cpu: null, mem: null, load: null });
-
-/** Samples a small card's chart spans. */
-export const HIST_POINTS = 70;
-/**
- * Samples it keeps: one more than it spans, so the oldest can slide out past
- * the left edge while the newest slides in (v1.33).
- */
-export const HIST_KEEP = HIST_POINTS + 1;
-
-/** Append a sample, keeping the newest `cap`. Returns a new array. */
-export function pushSample(hist: IdleSample[], s: IdleSample, cap = HIST_POINTS): IdleSample[] {
-  return [...hist, s].slice(-Math.max(1, cap));
-}
-
 // ── Away card layout ─────────────────────────────────────────────────────────
 // The card is drawn over the terminal area, and that area is whatever the docks
 // leave: a raised bottom dock makes it a low strip, two wide side docks a narrow
@@ -120,41 +71,35 @@ export function pushSample(hist: IdleSample[], s: IdleSample, cap = HIST_POINTS)
 // room there is (v1.14.1).
 
 /**
- * How the card lays itself out:
- * - `standby` — a large area (v1.31): the server's clock, four rings, the
- *   history of the whole time away and a transfer under way, each with room
- *   for its details (standby.ts);
+ * How the card lays itself out — one look at every size (ADR 0075, ADR 0082):
+ * - `standby` — a large area: the server's clock, the host and its verdict, the
+ *   pulse with one sentence about the time away, four numbers, a transfer under
+ *   way, each with room for its details (standby.ts, `pulseLayout`);
  * - `compact` — the same screen for a middling area, in short form;
- * - `full`  — the card: header, three large numbers, the chart under them;
- * - `wide`  — low and wide: one header line carrying the numbers, the chart on
- *   everything below it;
- * - `row`   — too low for a chart: that header line alone;
- * - `stack` — narrow and tall: a column of three rows, each with its own line;
- * - `mini`  — no room for a chart: the host and the three numbers;
- * - `line`  — only the host fits.
+ * - `small`  — the same screen in its small form (`smallLayout`): the clock and
+ *   the host with its verdict share the top row, and what has no room leaves in
+ *   one order — the axis, the hint, the heading, the numbers' own row, the
+ *   date, the pulse;
+ * - `narrow` — a narrow, tall area: the same in a column, the numbers two by two;
+ * - `line`   — the host and its verdict alone.
  */
-export type CardTier = "standby" | "compact" | "full" | "wide" | "row" | "stack" | "mini" | "line";
+export type CardTier = "standby" | "compact" | "small" | "narrow" | "line";
 
 /** The room each layout needs, px. */
 export const CARD_ROOM = {
-  /** The clock, four rings with their details, the history and a transfer at full size. */
+  /** The clock, the pulse with its details and a transfer at full size. */
   standbyW: 1100,
   standbyH: 780,
-  /** The same in short form: the clock beside the host and rings, the history under them. */
+  /** The same in short form: the clock beside the host, the pulse under them. */
   compactW: 600,
   compactH: 400,
-  /** Below this width the numbers no longer stand in one row with the host. */
-  wideW: 480,
-  /** The card's own header, numbers and a chart worth looking at. */
-  fullH: 280,
-  /** A header line and a chart at least as tall as that line. */
-  wideH: 110,
-  /** The column: a header and three rows, each a label over a number. */
-  stackW: 220,
-  stackH: 270,
-  /** The host over three numbers. */
-  miniW: 200,
-  miniH: 90,
+  /** Narrower than this, a tall area stands in a column. */
+  columnW: 480,
+  /** A column: the clock, the host and its verdict over the numbers. */
+  narrowH: 300,
+  /** The small form at its least: the clock beside the host, a line of numbers. */
+  smallW: 200,
+  smallH: 100,
 } as const;
 
 /**
@@ -162,14 +107,12 @@ export const CARD_ROOM = {
  * gets the smallest one: it draws nothing it could not fit.
  */
 export function cardTier(w: number, h: number): CardTier {
-  if (!(w > 0) || !(h > 0)) return "line";
+  if (!(w > 0) || !(h > 0) || !Number.isFinite(w) || !Number.isFinite(h)) return "line";
   const R = CARD_ROOM;
   if (w >= R.standbyW && h >= R.standbyH) return "standby";
   if (w >= R.compactW && h >= R.compactH) return "compact";
-  if (w >= R.wideW) return h >= R.fullH ? "full" : h >= R.wideH ? "wide" : "row";
-  if (w >= R.stackW && h >= R.stackH) return "stack";
-  if (w >= R.miniW && h >= R.miniH) return "mini";
-  return "line";
+  if (w < R.smallW || h < R.smallH) return "line";
+  return w < R.columnW && h >= R.narrowH ? "narrow" : "small";
 }
 
 /**

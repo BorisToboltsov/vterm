@@ -6,9 +6,10 @@ import {
   keyPathRows,
   loginRows,
   planImport,
+  planLocalDbs,
   remapServers,
 } from "./backupimport";
-import type { ServerProfile, ServerProxy } from "../types";
+import type { DbProfile, ServerProfile, ServerProxy } from "../types";
 
 const server = (id: string, over: Partial<ServerProfile> = {}): ServerProfile => ({
   id,
@@ -228,5 +229,40 @@ describe("planImport", () => {
     const plan = planImport("merge", [], [], [server("x")], ["A"]);
     expect(plan.catalog).toEqual({ servers: [server("x")], folders: ["A"] });
     expect(plan.added).toBe(1);
+  });
+});
+
+describe("planLocalDbs", () => {
+  const db = (id: string, over: Partial<DbProfile> = {}): DbProfile => ({
+    id,
+    name: id,
+    kind: "postgres",
+    host: "127.0.0.1",
+    port: 5432,
+    database: "app",
+    user: "postgres",
+    hasSavedPassword: true,
+    readOnly: false,
+    container: null,
+    ...over,
+  });
+
+  it("adds only what is not here, by id or by where and as whom", () => {
+    const here = [db("a")];
+    const plan = planLocalDbs(here, [db("a", { port: 6543 }), db("b"), db("c", { port: 6543 }), db("d", { kind: "mysql", port: 3306 })]);
+    // "b" is "a" under another id: the same engine, address, port and user.
+    expect(plan.add.map((d) => d.id)).toEqual(["c", "d"]);
+    expect(plan.skipped).toBe(2);
+  });
+
+  it("never claims a saved password for an added database", () => {
+    const plan = planLocalDbs([], [db("x")]);
+    expect(plan.add[0].hasSavedPassword).toBe(false);
+  });
+
+  it("adds a database the backup names twice once", () => {
+    const plan = planLocalDbs([], [db("x"), db("x", { port: 1 }), db("y", { port: 7000 })]);
+    expect(plan.add.map((d) => d.id)).toEqual(["x", "y"]);
+    expect(plan.skipped).toBe(1);
   });
 });

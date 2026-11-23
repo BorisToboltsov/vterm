@@ -1,8 +1,10 @@
 //! Backup export/import.
 //!
-//! A backup is a portable **`.zip` archive** holding any combination of three
-//! data sections — server profiles + folder structure (`servers`), the UI
-//! settings snapshot (`settings`), and session recordings (`recordings`). The
+//! A backup is a portable **`.zip` archive** holding any combination of four
+//! data sections — server profiles + folder structure + the databases of this
+//! computer (`servers`), the UI settings snapshot (`settings`), session
+//! recordings (`recordings`) and the recipes of the app's own folder
+//! (`scripts`, a full backup only). The
 //! user picks what to export via a preset *kind* (`servers` / `settings` /
 //! `recordings` / `all`).
 //!
@@ -25,7 +27,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::error::{AppError, AppResult};
-use crate::model::ServerProfile;
+use crate::model::{DbProfile, ServerProfile};
 
 /// Current backup schema version. Bump on breaking changes; `decode` rejects
 /// versions newer than this.
@@ -171,6 +173,10 @@ pub struct Backup {
     pub servers: Vec<ServerProfile>,
     #[serde(default)]
     pub folders: Vec<String>,
+    /// The databases this computer reaches itself (ADR 0080) — part of the
+    /// catalog, so of the `servers` section. Older backups carry none.
+    #[serde(default)]
+    pub local_databases: Vec<DbProfile>,
     /// Opaque UI settings (frontend localStorage snapshot); backend doesn't
     /// interpret it.
     #[serde(default)]
@@ -181,6 +187,7 @@ pub struct Backup {
 pub fn build(
     servers: Vec<ServerProfile>,
     folders: Vec<String>,
+    local_databases: Vec<DbProfile>,
     settings: Option<Value>,
     exported_at: u64,
 ) -> Backup {
@@ -190,6 +197,7 @@ pub fn build(
         app: "vterm".to_string(),
         servers,
         folders,
+        local_databases,
         settings,
     }
 }
@@ -284,6 +292,8 @@ pub struct BackupContents {
     /// Server profiles; None when the backup has no servers section.
     pub servers: Option<Vec<ServerProfile>>,
     pub folders: Option<Vec<String>>,
+    /// The databases of this computer; None when the backup has no servers section.
+    pub local_databases: Option<Vec<DbProfile>>,
     /// The backup carries a settings snapshot.
     pub settings: bool,
     /// How many recordings it carries; None when it has no recordings section.
@@ -302,6 +312,7 @@ pub fn read_contents(bytes: Vec<u8>) -> AppResult<BackupContents> {
             settings: doc.settings.is_some(),
             servers: Some(doc.servers),
             folders: Some(normalize_folders(doc.folders)),
+            local_databases: Some(doc.local_databases),
             recordings: None,
             scripts: None,
         });
@@ -319,16 +330,19 @@ pub fn read_contents(bytes: Vec<u8>) -> AppResult<BackupContents> {
     };
     let settings =
         manifest.has(SECTION_SETTINGS) && doc.as_ref().is_some_and(|d| d.settings.is_some());
-    let (servers, folders) = match doc {
-        Some(d) if manifest.has(SECTION_SERVERS) => {
-            (Some(d.servers), Some(normalize_folders(d.folders)))
-        }
-        _ => (None, None),
+    let (servers, folders, local_databases) = match doc {
+        Some(d) if manifest.has(SECTION_SERVERS) => (
+            Some(d.servers),
+            Some(normalize_folders(d.folders)),
+            Some(d.local_databases),
+        ),
+        _ => (None, None, None),
     };
     Ok(BackupContents {
         kind: manifest.kind,
         servers,
         folders,
+        local_databases,
         settings,
         recordings,
         scripts,
@@ -384,6 +398,39 @@ pub fn check_catalog(servers: &[ServerProfile]) -> AppResult<()> {
     Ok(())
 }
 
+/// The databases of this computer after an import adds `incoming` to
+/// `current` (ADR 0080): an import only adds — one whose id is here already
+/// stays as it is, none is removed or changed. Each added one is checked like
+/// a profile the form saves, and has no saved password: the keychain holds
+/// passwords by id, and this id is new here. Nothing is written by this.
+pub fn local_additions(
+    current: &[DbProfile],
+    incoming: Vec<DbProfile>,
+) -> AppResult<(Vec<DbProfile>, usize)> {
+    let mut seen = std::collections::HashSet::new();
+    let mut next = current.to_vec();
+    let mut added = 0usize;
+    for mut d in incoming {
+        let usable = crate::db::check_profile(&d).is_ok()
+            && crate::db::net::Addr::of(d.kind, &d.host, d.port)
+                .on_this_computer()
+                .is_ok();
+        if !usable || !seen.insert(d.id.clone()) {
+            return Err(AppError::Message(format!(
+                "backup import: a database of this computer that cannot be used: {}",
+                d.id
+            )));
+        }
+        if current.iter().any(|c| c.id == d.id) {
+            continue;
+        }
+        d.has_saved_password = false;
+        next.push(d);
+        added += 1;
+    }
+    Ok((next, added))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -419,11 +466,27 @@ mod tests {
         }
     }
 
+    fn local_db(id: &str) -> DbProfile {
+        DbProfile {
+            id: id.into(),
+            name: "Local".into(),
+            kind: crate::model::DbKind::Postgres,
+            host: "127.0.0.1".into(),
+            port: 5432,
+            database: "app".into(),
+            user: "postgres".into(),
+            has_saved_password: true,
+            read_only: false,
+            container: None,
+        }
+    }
+
     #[test]
     fn round_trip_preserves_servers_and_folders() {
         let backup = build(
             vec![sample_server()],
             vec!["Prod".into(), "Prod/EU".into()],
+            vec![local_db("pg")],
             Some(serde_json::json!({ "theme": "dracula", "fontSize": 14 })),
             1_700_000_000,
         );
@@ -437,6 +500,8 @@ mod tests {
         assert_eq!(back.servers.len(), 1);
         assert_eq!(back.servers[0].alias, "Web");
         assert_eq!(back.folders, vec!["Prod", "Prod/EU"]);
+        assert_eq!(back.local_databases[0].id, "pg");
+        assert!(json.contains("\"localDatabases\""));
         assert_eq!(back.settings.unwrap()["theme"], "dracula");
     }
 
@@ -444,7 +509,14 @@ mod tests {
     fn backup_never_contains_secret_fields() {
         // ServerProfile has no password/passphrase field, so a backup can't leak
         // one. Guard against that invariant regressing.
-        let json = encode(&build(vec![sample_server()], vec![], None, 0)).unwrap();
+        let json = encode(&build(
+            vec![sample_server()],
+            vec![],
+            vec![local_db("pg")],
+            None,
+            0,
+        ))
+        .unwrap();
         let lower = json.to_lowercase();
         assert!(!lower.contains("\"password\""));
         assert!(!lower.contains("passphrase"));
@@ -477,6 +549,7 @@ mod tests {
         let doc = build(
             vec![sample_server()],
             vec!["Prod".into(), "Dev".into(), "Prod".into()],
+            vec![local_db("pg")],
             Some(serde_json::json!({ "theme": "nord" })),
             0,
         );
@@ -493,6 +566,7 @@ mod tests {
         assert_eq!(c.kind, KIND_ALL);
         assert_eq!(c.servers.unwrap()[0].id, "srv-1");
         assert_eq!(c.folders.unwrap(), vec!["Dev", "Prod"]);
+        assert_eq!(c.local_databases.unwrap()[0].id, "pg");
         assert!(c.settings);
         // Only entries that would be restored are counted.
         assert_eq!(c.recordings, Some(2));
@@ -503,11 +577,14 @@ mod tests {
         let doc = build(
             vec![sample_server()],
             vec![],
+            vec![local_db("pg")],
             Some(serde_json::json!({})),
             0,
         );
         let c = read_contents(archive(KIND_SETTINGS, Some(&doc), &[])).unwrap();
         assert!(c.servers.is_none() && c.folders.is_none() && c.recordings.is_none());
+        // The databases of this computer travel with the servers, not the settings.
+        assert!(c.local_databases.is_none());
         assert!(c.settings);
         let c = read_contents(archive(KIND_RECORDINGS, None, &["recordings/x.cast"])).unwrap();
         assert!(c.servers.is_none() && !c.settings);
@@ -516,7 +593,14 @@ mod tests {
 
     #[test]
     fn contents_of_a_legacy_json_backup_are_everything_but_recordings() {
-        let json = encode(&build(vec![sample_server()], vec!["A".into()], None, 0)).unwrap();
+        let json = encode(&build(
+            vec![sample_server()],
+            vec!["A".into()],
+            vec![],
+            None,
+            0,
+        ))
+        .unwrap();
         let c = read_contents(json.into_bytes()).unwrap();
         assert_eq!(c.kind, KIND_ALL);
         assert_eq!(c.servers.unwrap().len(), 1);
@@ -556,6 +640,41 @@ mod tests {
     }
 
     #[test]
+    fn an_import_only_adds_databases_of_this_computer() {
+        let mut mine = local_db("pg");
+        mine.name = "Mine".into();
+        let mut same_id = local_db("pg");
+        same_id.port = 6543;
+        let mut new = local_db("my");
+        new.kind = crate::model::DbKind::Mysql;
+        new.port = 3306;
+        let (next, added) =
+            local_additions(std::slice::from_ref(&mine), vec![same_id, new]).unwrap();
+        assert_eq!(added, 1);
+        // The one already here is not changed, the added one has no saved password.
+        assert_eq!(next[0], mine);
+        assert_eq!(next[1].id, "my");
+        assert!(!next[1].has_saved_password);
+        // Nothing here is removed by a backup that does not name it.
+        let (next, added) = local_additions(std::slice::from_ref(&mine), vec![]).unwrap();
+        assert_eq!((next.len(), added), (1, 0));
+    }
+
+    #[test]
+    fn an_import_refuses_a_database_this_computer_cannot_use() {
+        let mut far = local_db("far");
+        far.host = "10.0.0.5".into();
+        assert!(local_additions(&[], vec![far]).is_err());
+        let mut option = local_db("opt");
+        option.host = "--defaults-file=/tmp/x".into();
+        assert!(local_additions(&[], vec![option]).is_err());
+        assert!(local_additions(&[], vec![local_db("a"), local_db("a")]).is_err());
+        let mut socket = local_db("sock");
+        socket.host = "/var/run/postgresql".into();
+        assert_eq!(local_additions(&[], vec![socket]).unwrap().1, 1);
+    }
+
+    #[test]
     fn decode_rejects_garbage() {
         assert!(decode(b"{ not json").is_err());
         assert!(decode(b"[]").is_err()); // not an object
@@ -575,6 +694,8 @@ mod tests {
         let b = decode(raw.to_string().as_bytes()).unwrap();
         assert!(b.servers.is_empty());
         assert!(b.folders.is_empty());
+        // A backup from before the databases of this computer carries none.
+        assert!(b.local_databases.is_empty());
         assert!(b.settings.is_none());
     }
 

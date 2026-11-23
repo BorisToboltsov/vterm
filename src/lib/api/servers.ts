@@ -1,7 +1,7 @@
 // Server profiles, folder tree, and config backup export/import.
 import { call } from "./call";
 import { open, save } from "@tauri-apps/plugin-dialog";
-import type { NewServerProfile, ServerProfile } from "../types";
+import type { DbProfile, NewServerProfile, ServerProfile } from "../types";
 
 // ── Server profiles ───────────────────────────────────────────────────────────
 
@@ -132,6 +132,8 @@ export interface BackupContents {
   recordings: number | null;
   /** How many recipes of the library it carries (ADR 0071); absent in an older backup. */
   scripts?: number | null;
+  /** The databases of this computer (ADR 0080) — with the servers; `null` without them. */
+  localDatabases?: DbProfile[] | null;
 }
 
 /** The server catalog an import writes: assembled by `backupimport.ts`. */
@@ -153,7 +155,21 @@ export interface ImportResult {
   recordings: number | null;
   /** Recipes written into the library; `null` — none asked for or none carried. */
   scripts?: number | null;
+  /** Databases of this computer added; `null` — none asked for. */
+  localDatabases?: number | null;
   settings: unknown | null;
+}
+
+/**
+ * What an export wrote beyond the servers: the databases of this computer and
+ * the recipes (`null` — not in this kind of backup), and how many files of the
+ * recipes folder were left out — the library reads them neither (larger than
+ * 64 KB, not text, past the 300 it reads).
+ */
+export interface ExportResult {
+  localDatabases: number | null;
+  scripts: number | null;
+  scriptsSkipped: number;
 }
 
 /**
@@ -161,8 +177,8 @@ export interface ImportResult {
  * (servers + folders, UI settings, recordings, or all). Secrets are never
  * exported — they stay in the OS keychain.
  */
-export function exportBackup(path: string, kind: BackupKind, settings: unknown): Promise<void> {
-  return call<void>("export_backup", { path, kind, settings });
+export function exportBackup(path: string, kind: BackupKind, settings: unknown): Promise<ExportResult> {
+  return call<ExportResult>("export_backup", { path, kind, settings });
 }
 
 /** What the backup at `path` holds (`.zip` archive or legacy `.json`); nothing is written. */
@@ -172,17 +188,20 @@ export function readBackup(path: string): Promise<BackupContents> {
 
 /**
  * Restore a backup from `path`: write `catalog` (null — leave the servers as
- * they are), extract the recordings when `recordings` is set, and the recipes
- * of the library when `scripts` is (a recipe whose name is taken stays as it
- * is). The backup's own server list is never written as is.
+ * they are), add `localDatabases` to the databases of this computer (null —
+ * none; one already here stays as it is), extract the recordings when
+ * `recordings` is set, and the recipes of the library when `scripts` is (a
+ * recipe whose name is taken stays as it is). The backup's own server list is
+ * never written as is.
  */
 export function importBackup(
   path: string,
   catalog: ImportCatalog | null,
   recordings: boolean,
   scripts = false,
+  localDatabases: DbProfile[] | null = null,
 ): Promise<ImportResult> {
-  return call<ImportResult>("import_backup", { path, catalog, recordings, scripts });
+  return call<ImportResult>("import_backup", { path, catalog, recordings, scripts, localDatabases });
 }
 
 /** Native "save as" dialog for a backup archive; returns the chosen path or null. */

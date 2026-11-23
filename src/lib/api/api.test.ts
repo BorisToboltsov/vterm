@@ -439,6 +439,7 @@ describe("backup wrappers", () => {
       catalog,
       recordings: true,
       scripts: false,
+      localDatabases: null,
     });
     expect(res.servers).toBe(2);
 

@@ -14,10 +14,14 @@
 //    nearly always the same server — and the added ones can go into a folder
 //    of their own;
 //  - a key path is checked against this computer before the import (v1.34):
-//    the paths of another machine are named, not found out at the first connect.
+//    the paths of another machine are named, not found out at the first connect;
+//  - the databases of this computer (ADR 0080) are only added: one already here
+//    — the same id, or the same engine, address, port and user — is skipped, and
+//    none is removed or changed, whatever happens to the servers. The backend
+//    checks the list again and writes no saved password for an added one.
 
 import type { ImportCatalog } from "../api/servers";
-import type { ServerProfile } from "../types";
+import type { DbProfile, ServerProfile } from "../types";
 
 export type ImportMode = "replace" | "merge";
 
@@ -223,6 +227,33 @@ export function planImport(
     sameHost,
     removed: 0,
   };
+}
+
+/** Where a database is reached, and as whom. */
+const dbEndpoint = (d: DbProfile): string => `${d.kind}\n${d.host.trim()}\n${d.port}\n${d.user}`;
+
+/** The backup's databases of this computer an import adds, and how many are here already. */
+export interface LocalDbPlan {
+  add: DbProfile[];
+  skipped: number;
+}
+
+/**
+ * The backup's databases of this computer that are not here yet — by id, or by
+ * engine, address, port and user — with no saved password: the keychain holds
+ * passwords by id, and these ids are new here.
+ */
+export function planLocalDbs(current: readonly DbProfile[], incoming: readonly DbProfile[]): LocalDbPlan {
+  const ids = new Set(current.map((d) => d.id));
+  const endpoints = new Set(current.map(dbEndpoint));
+  const add: DbProfile[] = [];
+  for (const d of incoming) {
+    if (ids.has(d.id) || endpoints.has(dbEndpoint(d))) continue;
+    ids.add(d.id);
+    endpoints.add(dbEndpoint(d));
+    add.push({ ...d, hasSavedPassword: false });
+  }
+  return { add, skipped: incoming.length - add.length };
 }
 
 /** Each key path of the backup as it will be written: its replacement, or itself. */
