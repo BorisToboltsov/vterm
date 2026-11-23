@@ -1697,8 +1697,16 @@ mod live_db {
     #[tokio::test(flavor = "multi_thread")]
     #[ignore = "needs docker compose -f e2e/docker-compose.db.yml up"]
     async fn a_wrong_password_asks_again_and_a_closed_port_is_the_tunnels_answer() {
+        // A password the stand does not have: its own, reversed — made at run
+        // time, not written here (CodeQL #508 took a literal for a hard-coded one).
+        let wrong: String = stand_password().chars().rev().collect();
+        assert_ne!(
+            wrong,
+            stand_password(),
+            "the reversed password is still the password"
+        );
         for p in [postgres(), mysql(), mariadb()] {
-            let refused = open(ssh().await, &p, "wrong", false).await;
+            let refused = open(ssh().await, &p, &wrong, false).await;
             assert!(
                 matches!(refused, Err(AppError::DbAuthRejected)),
                 "{:?}",
