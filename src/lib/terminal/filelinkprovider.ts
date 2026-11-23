@@ -18,19 +18,18 @@
 //   * links — for a hovered line, the names its folder's listing confirms
 //     (listings are cached briefly and dropped on every command, which may
 //     have changed them);
-//   * the click — never with a selection (dragging across a name selects
-//     it), never on the first click of a double-click (which selects the
-//     name), only with ⌘/Ctrl in modifier mode.
+//   * the click — handed to the terminal's link gate (`linkgate.ts`), the
+//     same one its web links pass: never with a selection (dragging across a
+//     name selects it), never on the first click of a double-click (which
+//     selects the name); ⌘/Ctrl-click opens, a plain click shows the hint.
 
 import type { IBufferLine, ILink, ILinkProvider, IMarker, Terminal } from "@xterm/xterm";
 import type { CdShell } from "../pathsync/cdterminal";
 import type { FileEntry } from "../types";
 import {
   blockAt,
-  clickOpens,
   commandDir,
   dirsToList,
-  DOUBLE_CLICK_MS,
   headerDir,
   isSecurityContext,
   lineCandidates,
@@ -43,11 +42,11 @@ import {
   resolveName,
   spanRange,
   unplacedNames,
-  type FileLinkClick,
   type FileLinkTarget,
   type Listing,
   type PathStyle,
 } from "./termfiles";
+import type { LinkGate, LinkHintKind } from "./linkgate";
 
 /** One command's output as file links keep it: the buffer row its line is on and its folder. */
 /**
@@ -73,13 +72,19 @@ export interface FileLinkHost {
   shell(): CdShell;
   /** Folders are links: the file panel can show them. */
   dirs(): boolean;
-  click(): FileLinkClick;
-  mac(): boolean;
+  /** The terminal's link gate: which click opens, and the hint. */
+  gate: LinkGate;
   /** A link was clicked (and the click counts). */
   open(target: FileLinkTarget): void;
   list(dir: string): Promise<FileEntry[]>;
   /** Local tabs: the folder the last line sent ran in (`local_submitted_cwd`). */
   submittedCwd(): Promise<string | null>;
+}
+
+/** What the hint calls opening a link to `target`: a name not placed yet or
+ *  missing from its folder is neither a file nor a folder so far. */
+export function hintKind(target: FileLinkTarget): LinkHintKind {
+  return target.kind === "file" || target.kind === "dir" ? target.kind : "path";
 }
 
 /** The part of xterm the provider uses — a fake one stands in for tests. */
@@ -126,7 +131,7 @@ export function createFileLinks(term: LinkTerminal, host: FileLinkHost): FileLin
   // The command before path sync's setup line, until the shell answers it.
   let beforeSetup: Block | null = null;
   const listings = new Map<string, { at: number; listing: Promise<Listing | undefined> }>();
-  let pending: ReturnType<typeof setTimeout> | undefined;
+  let disposed = false;
 
   const live = (): Block[] => {
     if (blocks.some((b) => b.marker.isDisposed)) blocks = blocks.filter((b) => !b.marker.isDisposed);
@@ -191,20 +196,12 @@ export function createFileLinks(term: LinkTerminal, host: FileLinkHost): FileLin
     return pickLinks(r.cands, (d) => r.got.get(d), style, host.dirs());
   }
 
+  /** A click on a name: the gate decides whether and when it opens — never
+   *  once the links are gone (the gate's wait or hint may outlive them). */
   function activate(event: MouseEvent, target: FileLinkTarget): void {
-    clearTimeout(pending);
-    pending = undefined;
-    if (term.hasSelection() || !clickOpens(host.click(), event, host.mac())) return;
-    // The second click of a double-click: it selects the name.
-    if (event.detail > 1) return;
-    if (host.click() === "modifier") {
-      host.open(target);
-      return;
-    }
-    pending = setTimeout(() => {
-      pending = undefined;
-      if (!term.hasSelection()) host.open(target);
-    }, DOUBLE_CLICK_MS);
+    host.gate.activate(event, hintKind(target), () => {
+      if (!disposed) host.open(target);
+    });
   }
 
   /**
@@ -337,7 +334,7 @@ export function createFileLinks(term: LinkTerminal, host: FileLinkHost): FileLin
       blocks = [...restored, ...blocks].slice(-MAX_BLOCKS);
     },
     dispose() {
-      clearTimeout(pending);
+      disposed = true;
       for (const b of blocks) b.marker.dispose();
       blocks = [];
       listings.clear();

@@ -11,7 +11,9 @@ vi.mock("../app/clipboard", () => ({
 }));
 
 import { settings } from "../settings/settings.svelte";
-import { answerLink, clickLink, currentLinkQuestion, terminalLinkHandler } from "./linkopen.svelte";
+import { answerLink, clickLink, currentLinkQuestion, terminalLinkGate, terminalLinkHandler } from "./linkopen.svelte";
+import { currentLinkHint, dismissLinkHint, followLinkHint } from "./linkhint.svelte";
+import { DOUBLE_CLICK_MS } from "../terminal/linkgate";
 import { clearToasts, toastsState } from "./toasts.svelte";
 
 const flush = () => new Promise((r) => setTimeout(r, 0));
@@ -135,18 +137,55 @@ describe("the xterm link handler", () => {
     start: { x: x1, y },
     end: { x: x2, y },
   });
-  const click = {} as MouseEvent;
+  // ⌘-click: the gate lets it through at once (the host reads as macOS here).
+  const click = new MouseEvent("click", { metaKey: true, ctrlKey: true, detail: 1 });
+  const gate = () => terminalLinkGate(() => false);
 
   it("reads the text shown over the link and asks when it names another site", () => {
-    const handler = terminalLinkHandler(() => buffer(["", "see github.com now"]));
+    const handler = terminalLinkHandler(() => buffer(["", "see github.com now"]), gate());
     handler.activate(click, "https://evil.io/", range(2, 5, 14));
     expect(openUrl).not.toHaveBeenCalled();
     expect(currentLinkQuestion()?.shown).toBe("github.com");
   });
 
   it("opens a link whose text claims no site", () => {
-    const handler = terminalLinkHandler(() => buffer(["open the docs"]));
+    settings.terminalLinks = "direct";
+    const handler = terminalLinkHandler(() => buffer(["open the docs"]), gate());
     handler.activate(click, "https://example.com/docs", range(1, 10, 13));
     expect(openUrl).toHaveBeenCalledWith("https://example.com/docs");
+  });
+
+  it("shows the hint for a plain click, and the hint's button opens as ⌘-click does", () => {
+    vi.useFakeTimers();
+    try {
+      settings.terminalLinks = "direct";
+      settings.terminalLinkClick = "modifier";
+      const handler = terminalLinkHandler(() => buffer(["open the docs"]), gate());
+      handler.activate(new MouseEvent("click", { detail: 1, clientX: 5, clientY: 6 }), "https://example.com/docs", range(1, 10, 13));
+      vi.advanceTimersByTime(DOUBLE_CLICK_MS);
+      expect(openUrl).not.toHaveBeenCalled();
+      expect(currentLinkHint()).toMatchObject({ x: 5, y: 6, kind: "web" });
+      followLinkHint();
+      expect(currentLinkHint()).toBeNull();
+      expect(openUrl).toHaveBeenCalledWith("https://example.com/docs");
+    } finally {
+      dismissLinkHint();
+      vi.useRealTimers();
+    }
+  });
+
+  it("a misleading link asks even when the hint's button opens it", () => {
+    vi.useFakeTimers();
+    try {
+      settings.terminalLinks = "direct";
+      const handler = terminalLinkHandler(() => buffer(["see github.com now"]), gate());
+      handler.activate(new MouseEvent("click", { detail: 1 }), "https://evil.io/", range(1, 5, 14));
+      vi.advanceTimersByTime(DOUBLE_CLICK_MS);
+      followLinkHint();
+      expect(openUrl).not.toHaveBeenCalled();
+      expect(currentLinkQuestion()?.shown).toBe("github.com");
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

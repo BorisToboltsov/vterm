@@ -49,7 +49,7 @@ describe("cspNonceExtension", () => {
 
 describe("editors thread the nonce through (regression guard)", () => {
   const read = (f: string) => readFileSync(join(process.cwd(), "src", "lib", f), "utf8");
-  for (const file of ["editor/EditorTab.svelte", "editor/DiffModal.svelte"]) {
+  for (const file of ["editor/EditorTab.svelte", "editor/DiffPanes.svelte"]) {
     it(`${file} adds cspNonceExtension() to its CodeMirror extensions`, () => {
       const src = read(file);
       expect(src, `${file} must import cspNonceExtension`).toMatch(

@@ -10,7 +10,7 @@
 // The fix: read the nonce Tauri stamped on the inline <style> it injected into
 // app.html and hand it to CodeMirror via `EditorView.cspNonce` so CodeMirror's own
 // <style> carries the matching nonce and is allowed. Thread this through every
-// EditorView the app creates (EditorTab, DiffModal); the shared style module is
+// EditorView the app creates (EditorTab, DiffPanes); the shared style module is
 // created on the first view, so all of them must supply the nonce.
 
 import { EditorView } from "@codemirror/view";

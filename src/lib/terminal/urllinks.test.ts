@@ -76,21 +76,27 @@ function fakeTerm(rows: { text: string; wrapped?: boolean; wide?: string }[], co
   } as unknown as UrlTerminal;
 }
 
-function linksOf(term: UrlTerminal, y: number, open: (uri: string) => void = () => {}): ILink[] {
+function linksOf(
+  term: UrlTerminal,
+  y: number,
+  click: (event: MouseEvent, uri: string) => void = () => {},
+): ILink[] {
   let got: ILink[] | undefined;
-  createUrlLinks(term, open).provideLinks(y, (links) => (got = links));
+  createUrlLinks(term, click).provideLinks(y, (links) => (got = links));
   return got ?? [];
 }
 
 describe("createUrlLinks", () => {
-  it("offers the address of the hovered line, and a click opens it", () => {
-    const opened: string[] = [];
-    const links = linksOf(fakeTerm([{ text: "go https://пример.рф/x now" }]), 1, (u) => opened.push(u));
+  it("offers the address of the hovered line, and hands a click on it over with its keys", () => {
+    const clicked: [boolean, string][] = [];
+    const links = linksOf(fakeTerm([{ text: "go https://пример.рф/x now" }]), 1, (e, u) =>
+      clicked.push([e.metaKey, u]),
+    );
     expect(links.map((l) => [l.text, l.range])).toEqual([
       ["https://пример.рф/x", { start: { x: 4, y: 1 }, end: { x: 22, y: 1 } }],
     ]);
-    links[0].activate(new MouseEvent("click"), links[0].text);
-    expect(opened).toEqual(["https://пример.рф/x"]);
+    links[0].activate(new MouseEvent("click", { metaKey: true }), links[0].text);
+    expect(clicked).toEqual([[true, "https://пример.рф/x"]]);
   });
 
   it("reads an address across the rows it wraps onto", () => {

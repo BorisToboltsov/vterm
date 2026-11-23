@@ -314,6 +314,7 @@
   import CopyToDialog from "#lib/files/CopyToDialog.svelte";
   import ReplaceDialog from "#lib/files/ReplaceDialog.svelte";
   import LinkOpenDialog from "#lib/terminal/LinkOpenDialog.svelte";
+  import LinkHint from "#lib/terminal/LinkHint.svelte";
   import FileLinkDialog from "#lib/terminal/FileLinkDialog.svelte";
   import { createFileLinkFlow } from "#lib/page/filelinkflow.svelte.ts";
   import { createEditorFlow } from "#lib/page/editorflow.svelte.ts";
@@ -4487,6 +4488,7 @@
   oncancel={copyFlow.cancel}
 />
 <ReplaceDialog />
+<LinkHint />
 <LinkOpenDialog />
 <FileLinkDialog ask={fileLinks.ask} onanswer={fileLinks.answer} />
 

@@ -1,7 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ILink } from "@xterm/xterm";
-import { createFileLinks, type FileLinkHost, type LinkTerminal } from "./filelinkprovider";
-import { DOUBLE_CLICK_MS, type FileLinkTarget } from "./termfiles";
+import { createFileLinks, hintKind, type FileLinkHost, type LinkTerminal } from "./filelinkprovider";
+import type { FileLinkTarget } from "./termfiles";
+import { createLinkGate, DOUBLE_CLICK_MS, type LinkClick, type LinkHintKind } from "./linkgate";
 import type { FileEntry } from "../types";
 
 const COLS = 60;
@@ -72,14 +73,28 @@ function entry(name: string, isDir = false): FileEntry {
 interface Setup {
   term: FakeTerm;
   opened: FileLinkTarget[];
+  /** Hints the terminal's gate put up, with their buttons. */
+  hints: { kind: LinkHintKind; act: () => void }[];
   list: ReturnType<typeof vi.fn>;
   links: ReturnType<typeof createFileLinks>;
   host: FileLinkHost;
 }
 
-function setup(over: Partial<FileLinkHost> = {}, fs: Record<string, FileEntry[]> = {}): Setup {
+/** What a test may change: the host, and which click the terminal's gate wants
+ *  (a plain one by default here, so most tests need no modifier). */
+type Over = Partial<FileLinkHost> & { click?: () => LinkClick };
+
+function setup(over: Over = {}, fs: Record<string, FileEntry[]> = {}): Setup {
+  const { click: clickMode = () => "click", ...rest } = over;
   const term = new FakeTerm();
   const opened: FileLinkTarget[] = [];
+  const hints: Setup["hints"] = [];
+  const gate = createLinkGate({
+    click: clickMode,
+    mac: () => true,
+    selected: () => term.selection,
+    hint: (_at, kind, act) => hints.push({ kind, act }),
+  });
   const list = vi.fn(async (dir: string) => {
     const got = fs[dir];
     if (!got) throw new Error(`no such dir ${dir}`);
@@ -90,14 +105,13 @@ function setup(over: Partial<FileLinkHost> = {}, fs: Record<string, FileEntry[]>
     style: () => "posix",
     shell: () => "posix",
     dirs: () => true,
-    click: () => "click",
-    mac: () => true,
+    gate,
     open: (t) => opened.push(t),
     list,
     submittedCwd: async () => "/home/u",
-    ...over,
+    ...rest,
   };
-  return { term, opened, list, links: createFileLinks(term.asTerminal(), host), host };
+  return { term, opened, hints, list, links: createFileLinks(term.asTerminal(), host), host };
 }
 
 /** The links of 1-based buffer line `n`. */
@@ -459,7 +473,7 @@ describe("the click", () => {
   beforeEach(() => vi.useFakeTimers());
   afterEach(() => vi.useRealTimers());
 
-  async function linked(over: Partial<FileLinkHost> = {}) {
+  async function linked(over: Over = {}) {
     vi.useRealTimers();
     const s = setup(over, HOME);
     await run(s, "ls");
@@ -502,13 +516,24 @@ describe("the click", () => {
     expect(s.opened).toEqual([]);
   });
 
-  it("in modifier mode opens ⌘-click at once and ignores a plain one", async () => {
+  it("in modifier mode opens ⌘-click at once; a plain one shows the hint, whose button opens", async () => {
     const { s, link } = await linked({ click: () => "modifier" });
     link.activate(click(), "a.txt");
     vi.advanceTimersByTime(DOUBLE_CLICK_MS);
     expect(s.opened).toEqual([]);
+    expect(s.hints.map((h) => h.kind)).toEqual(["file"]);
+    s.hints[0].act();
+    expect(s.opened).toEqual([{ kind: "file", path: "/home/u/a.txt" }]);
     link.activate(click(1, { metaKey: true }), "a.txt");
-    expect(s.opened).toHaveLength(1);
+    expect(s.opened).toHaveLength(2);
+    expect(s.hints).toHaveLength(1);
+  });
+
+  it("names in the hint where the link opens", () => {
+    expect(hintKind({ kind: "file", path: "/a" })).toBe("file");
+    expect(hintKind({ kind: "dir", path: "/a" })).toBe("dir");
+    expect(hintKind({ kind: "unplaced" })).toBe("path");
+    expect(hintKind({ kind: "missing", name: "a" })).toBe("path");
   });
 
   it("ignores alt-click, which moves the cursor", async () => {
