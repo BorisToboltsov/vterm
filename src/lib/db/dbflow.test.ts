@@ -221,4 +221,89 @@ describe("grid", () => {
     await fireEvent.blur(input);
     expect(edited).toEqual([]);
   });
+
+  it("says why a cell is not edited — asked before that was known, and after", async () => {
+    const wants = vi.fn();
+    const outcome = answer({ columns: [col("note", "1", "1")], rows: [["a"]] });
+    const { rerender } = render(DbResultGrid, { outcome, canEdit: null, refusal: null, onedit: vi.fn(), onwantEdit: wants });
+    const cell = screen.getByRole("gridcell");
+    // Not known yet: it is asked, and nothing is said.
+    await fireEvent.dblClick(cell);
+    expect(wants).toHaveBeenCalledTimes(1);
+    expect(screen.queryByTestId("db-edit-refused")).toBeNull();
+    // The answer is "no": said above the rows, not swallowed.
+    await rerender({ outcome, canEdit: null, refusal: "Not editable: the table has no primary key.", onedit: vi.fn(), onwantEdit: wants });
+    expect(screen.getByTestId("db-edit-refused").textContent).toContain("no primary key");
+    expect(cell.querySelector("input, textarea")).toBeNull();
+    await fireEvent.click(screen.getByRole("button", { name: "Close" }));
+    expect(screen.queryByTestId("db-edit-refused")).toBeNull();
+    // Known: the menu shows the edits off with the reason under them, and a double click says it at once.
+    await fireEvent.contextMenu(cell);
+    const edit = screen.getByRole("menuitem", { name: "Edit the value" });
+    expect((edit as HTMLButtonElement).disabled).toBe(true);
+    expect(screen.getByText("Not editable: the table has no primary key.").tagName).toBe("P");
+    await fireEvent.keyDown(document.activeElement!, { key: "Escape" });
+    await fireEvent.dblClick(cell);
+    expect(screen.getByTestId("db-edit-refused")).toBeTruthy();
+    // Another answer: nothing of the last one is said.
+    await rerender({ outcome: answer({ columns: [col("note", "1", "1")], rows: [["b"]] }), canEdit: null, refusal: "Not editable: the table has no primary key.", onedit: vi.fn(), onwantEdit: wants });
+    expect(screen.queryByTestId("db-edit-refused")).toBeNull();
+  });
+
+  /** The grid measured at `h` px — as the browser would tell it — and scrolled to `top`. */
+  async function measure(grid: HTMLElement, h: number) {
+    Object.defineProperty(grid, "clientHeight", { value: h, configurable: true });
+    // Only the observers of the grid: another's (CodeMirror's) would measure text jsdom does not lay out.
+    const observers = (ResizeObserver as unknown as { instances: { cb: ResizeObserverCallback; targets: Set<Element> }[] }).instances;
+    for (const ro of observers.filter((o) => o.targets.has(grid))) ro.cb([{ target: grid } as unknown as ResizeObserverEntry], ro as unknown as ResizeObserver);
+    await Promise.resolve();
+  }
+  async function scrollTo(grid: HTMLElement, top: number) {
+    Object.defineProperty(grid, "scrollTop", { value: top, configurable: true });
+    await fireEvent.scroll(grid);
+  }
+  const many = (n: number, cols = [col("id", "1", "1")]) => answer({ columns: cols, rows: Array.from({ length: n }, (_, i) => [String(i + 1)]) });
+
+  it("asks for more rows a screen before its end, and not before it is measured", async () => {
+    const onend = vi.fn();
+    const first = many(200);
+    const { rerender } = render(DbResultGrid, { outcome: first, onend });
+    const grid = screen.getByTestId("db-grid");
+    // Unmeasured, the window holds every row: that is not the user at the end.
+    expect(onend).not.toHaveBeenCalled();
+    await measure(grid, 240);
+    expect(onend).not.toHaveBeenCalled();
+    // Ten rows on screen: within a screen of the 200th, more is asked for — once, however it scrolls on.
+    await scrollTo(grid, 180 * 24);
+    expect(onend).toHaveBeenCalledTimes(1);
+    await scrollTo(grid, 190 * 24);
+    expect(onend).toHaveBeenCalledTimes(1);
+    // Rows read on below: away from the end again, nothing more is asked.
+    await rerender({ outcome: { ...first, rows: [...first.rows, ...many(200).rows] }, onend });
+    expect(onend).toHaveBeenCalledTimes(1);
+  });
+
+  it("asks again while a short read leaves its view unfilled", async () => {
+    const onend = vi.fn();
+    const first = many(5);
+    const { rerender } = render(DbResultGrid, { outcome: first, onend });
+    await measure(screen.getByTestId("db-grid"), 600);
+    expect(onend).toHaveBeenCalledTimes(1);
+    await rerender({ outcome: { ...first, rows: [...first.rows, ...many(5).rows] }, onend });
+    expect(onend).toHaveBeenCalledTimes(2);
+  });
+
+  it("keeps the selection over rows read on below, and drops it for another answer", async () => {
+    const onselect = vi.fn();
+    const first = many(3);
+    const { rerender } = render(DbResultGrid, { outcome: first, onselect });
+    await fireEvent.click(screen.getAllByRole("gridcell")[1]);
+    expect(onselect).toHaveBeenLastCalledWith({ row: 1, col: 0 });
+    await rerender({ outcome: { ...first, rows: [...first.rows, ["4"]] }, onselect });
+    expect(onselect).toHaveBeenLastCalledWith({ row: 1, col: 0 });
+    expect(screen.getAllByRole("gridcell")[1].className).toContain("outline-accent");
+    // Another answer — its own columns, though named the same.
+    await rerender({ outcome: many(3), onselect });
+    expect(onselect).toHaveBeenLastCalledWith(null);
+  });
 });

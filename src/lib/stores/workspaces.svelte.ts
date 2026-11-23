@@ -124,11 +124,12 @@ export interface EditorDoc {
   project?: { kind: "ansible" | "terraform"; root: string; ask?: ProjectAsk; askSeq?: number; library?: boolean };
   /**
    * Not a file but a database of the connection (ADR 0080): its SQL console
-   * (the text is the console's, never saved anywhere) or its activity view.
-   * `place` — the server whose profile holds it, null — this computer. Not
-   * reopened at launch: its connection is the backend's and ends with the session.
+   * (the text is the console's, never saved anywhere), its activity view, or
+   * one of its tables (ADR 0081). `place` — the server whose profile holds it,
+   * null — this computer. Not reopened at launch: its connection is the
+   * backend's and ends with the session.
    */
-  db?: { place: string | null; dbId: string; kind: DbKind; view: "console" | "activity" };
+  db?: { place: string | null; dbId: string; kind: DbKind; view: "console" | "activity" | "table"; table?: { schema: string; name: string } };
 }
 
 /** What a project view is opened for, beyond its overview. */
@@ -551,10 +552,11 @@ export function addProjectView(
 }
 
 /**
- * A database's console or activity (ADR 0080) in the connection's file zone:
- * a document with no file. The activity of a database asked for again is shown,
- * not opened twice; a console opens anew each time — two consoles of one
- * database are two connections, like two `psql` sessions. `sql` — text to start with.
+ * A database's console, activity or table (ADR 0080, 0081) in the connection's
+ * file zone: a document with no file. The activity of a database, or a table,
+ * asked for again is shown, not opened twice; a console opens anew each time —
+ * two consoles of one database are two connections, like two `psql` sessions.
+ * `sql` — text to start with.
  */
 export function addDbView(
   sessionId: string,
@@ -564,8 +566,14 @@ export function addDbView(
   sql = "",
 ): string {
   const ws = ensure(sessionId);
-  if (db.view === "activity") {
-    const known = ws.editors.find((e) => e.db && e.db.view === "activity" && e.db.dbId === db.dbId && e.db.place === db.place);
+  if (db.view !== "console") {
+    const same = (e: EditorDoc) =>
+      e.db &&
+      e.db.view === db.view &&
+      e.db.dbId === db.dbId &&
+      e.db.place === db.place &&
+      (db.view !== "table" || (e.db.table?.schema === db.table?.schema && e.db.table?.name === db.table?.name));
+    const known = ws.editors.find(same);
     if (known) {
       patch(sessionId, { layout: showView(ws.layout, known.id) });
       return known.id;
@@ -584,7 +592,7 @@ export function addDbView(
     eol: "lf",
     encoding: "utf-8",
     mode: null,
-    readOnly: db.view === "activity",
+    readOnly: db.view !== "console",
     writeAccess: "unknown",
     saveIssue: "none",
     loading: false,
@@ -592,7 +600,7 @@ export function addDbView(
     sudo: false,
     sudoRoute: null,
     gotoLine: null,
-    db: { ...db },
+    db: { ...db, ...(db.table ? { table: { ...db.table } } : {}) },
   };
   patch(sessionId, { editors: [...ws.editors, doc], layout: openView(ws.layout, id) });
   return id;

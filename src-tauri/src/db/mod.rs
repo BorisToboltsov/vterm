@@ -1731,14 +1731,17 @@ mod live_db {
         let rw = open(ssh().await, &postgres(), "vtermpass", false)
             .await
             .expect("connect");
+        // What a failed run left depends on the table: it goes first.
+        ok(&rw, "DROP VIEW IF EXISTS live_view").await;
+        ok(&rw, "DROP TABLE IF EXISTS live_ref").await;
         ok(&rw, "DROP TABLE IF EXISTS live_key").await;
         ok(&rw, "CREATE TABLE live_key (a int, b int, note text, extra int, PRIMARY KEY (b, a) INCLUDE (extra))").await;
         let oid = ok(&rw, "SELECT 'live_key'::regclass::oid::text").await.rows[0][0]
             .clone()
             .expect("oid");
         let reads = app_reads(DbKind::Postgres);
-        let meta =
-            the_one(&reads, &["pg_attribute a ON a.attrelid = c.oid"]).replace("16384", &oid);
+        let meta = the_one(&reads, &["pg_attribute a ON a.attrelid = c.oid", "16384"])
+            .replace("16384", &oid);
         let got = ok(&conn, &meta).await;
         let keys: Vec<(String, String, String)> = got
             .rows
@@ -1776,6 +1779,89 @@ mod live_db {
                 ok(&conn, q).await;
             }
         }
+        // A table document's own SQL (ADR 0081), on this stand's table: a key
+        // of two columns in its order, and a foreign key pointing at it.
+        ok(&rw, "DROP TABLE IF EXISTS live_ref").await;
+        ok(&rw, "CREATE TABLE live_ref (id int PRIMARY KEY, kb int, ka int, FOREIGN KEY (kb, ka) REFERENCES live_key (b, a) ON DELETE CASCADE)").await;
+        ok(
+            &rw,
+            "INSERT INTO live_key (a, b, note) VALUES (1, 2, repeat('x', 70000))",
+        )
+        .await;
+        let keys = the_one(&reads, &["contype IN ('p', 'f')"]);
+        let got = ok(&conn, &keys).await;
+        let of = |table: &str| -> Vec<Vec<String>> {
+            got.rows
+                .iter()
+                .filter(|r| r[1].as_deref() == Some(table))
+                .map(|r| r.iter().map(|c| c.clone().unwrap_or_default()).collect())
+                .collect()
+        };
+        assert_eq!(
+            of("live_key")
+                .iter()
+                .map(|r| r[3].as_str())
+                .collect::<Vec<_>>(),
+            ["b", "a"],
+            "the key's columns in its order"
+        );
+        assert_eq!(
+            of("live_ref")
+                .iter()
+                .filter(|r| r[2] == "f")
+                .map(|r| (r[3].as_str(), r[5].as_str(), r[6].as_str()))
+                .collect::<Vec<_>>(),
+            [("kb", "live_key", "b"), ("ka", "live_key", "a")]
+        );
+        let here = |q: &String| {
+            q.replace("\"app\"", "\"public\"")
+                .replace("\"orders\"", "\"live_key\"")
+                .replace("\"meta\"", "\"note\"")
+                .replace("\"id\" = '7'", "\"a\" = '1'")
+                .replace("\"created_at\"", "\"b\"")
+                .replace("status = 'failed'", "note <> 'x'")
+                .replace("total > 10", "a > 0")
+        };
+        let mine: Vec<String> = reads
+            .iter()
+            .filter(|q| q.contains("\"app\".\"orders\"") && !q.contains("pg_get_viewdef"))
+            .map(here)
+            .collect();
+        assert!(mine.len() >= 9, "{}", mine.len());
+        for q in &mine {
+            ok(&conn, q).await;
+        }
+        let incoming = mine
+            .iter()
+            .find(|q| q.contains("k.confdeltype"))
+            .expect("the foreign keys' query");
+        let fks = ok(&conn, incoming).await;
+        assert!(fks
+            .rows
+            .iter()
+            .all(|r| r[3].as_deref() == Some("live_ref") && r[8].as_deref() == Some("c")));
+        let length = mine
+            .iter()
+            .find(|q| q.starts_with("SELECT length("))
+            .expect("a long value's length");
+        assert_eq!(ok(&conn, length).await.rows[0][0].as_deref(), Some("70000"));
+        let part = mine
+            .iter()
+            .find(|q| q.starts_with("SELECT substr("))
+            .expect("a part of a long value");
+        let got = ok(&conn, part).await;
+        assert!(got.cut.is_empty() && got.rows[0][0].as_deref().is_some_and(|v| v.len() == 16_384));
+        ok(
+            &rw,
+            "CREATE OR REPLACE VIEW live_view AS SELECT a, b FROM live_key",
+        )
+        .await;
+        let view = the_one(&reads, &["pg_get_viewdef"])
+            .replace("\"app\"", "\"public\"")
+            .replace("\"orders\"", "\"live_view\"");
+        assert!(ok(&conn, &view).await.rows[0][0].is_some());
+        ok(&rw, "DROP VIEW live_view").await;
+        ok(&rw, "DROP TABLE live_ref").await;
 
         for p in [mysql(), mariadb()] {
             let rw = open(ssh().await, &p, "vtermpass", false)
@@ -1784,10 +1870,11 @@ mod live_db {
             let conn = open(ssh().await, &p, "vtermpass", true)
                 .await
                 .expect("connect");
+            ok(&rw, "DROP TABLE IF EXISTS live_ref").await;
             ok(&rw, "DROP TABLE IF EXISTS live_key").await;
             ok(&rw, "CREATE TABLE live_key (a int, b int, note text, raw blob, PRIMARY KEY (b, a)) ENGINE=InnoDB").await;
             let reads = app_reads(DbKind::Mysql);
-            let meta = the_one(&reads, &["KEY_COLUMN_USAGE"])
+            let meta = the_one(&reads, &["KEY_COLUMN_USAGE", "e.ENGINE = 'InnoDB'"])
                 .replace("'shop'", "'vterm'")
                 .replace("'orders'", "'live_key'");
             let got = ok(&conn, &meta).await;
@@ -1805,11 +1892,66 @@ mod live_db {
                 "FROM information_schema.TABLES WHERE",
                 "FROM information_schema.ROUTINES",
                 "FROM information_schema.COLUMNS WHERE",
+                "FROM information_schema.KEY_COLUMN_USAGE WHERE TABLE_SCHEMA NOT IN",
                 "@@max_connections",
                 "Innodb_buffer_pool",
             ] {
                 ok(&conn, &the_one(&reads, &[mark])).await;
             }
+            // A table document's own SQL (ADR 0081) on this stand's table.
+            ok(&rw, "DROP TABLE IF EXISTS live_ref").await;
+            ok(&rw, "CREATE TABLE live_ref (id int PRIMARY KEY, kb int, ka int, FOREIGN KEY (kb, ka) REFERENCES live_key (b, a) ON DELETE CASCADE) ENGINE=InnoDB").await;
+            // TEXT holds 65,535 bytes.
+            ok(
+                &rw,
+                "INSERT INTO live_key (a, b, note) VALUES (1, 2, REPEAT('x', 60000))",
+            )
+            .await;
+            let here = |q: &String| {
+                q.replace("`app`", "`vterm`")
+                    .replace("'app'", "'vterm'")
+                    .replace("`orders`", "`live_key`")
+                    .replace("'orders'", "'live_key'")
+                    .replace("`meta`", "`note`")
+                    .replace("`id` = '7'", "`a` = '1'")
+                    .replace("`created_at`", "`b`")
+                    .replace("status = 'failed'", "note <> 'x'")
+                    .replace("total > 10", "a > 0")
+            };
+            let mine: Vec<String> = reads
+                .iter()
+                .filter(|q| q.contains("`app`.`orders`") || q.contains("'app'"))
+                .map(here)
+                .collect();
+            assert!(mine.len() >= 9, "{}", mine.len());
+            for q in &mine {
+                ok(&conn, q).await;
+            }
+            let fks = ok(
+                &conn,
+                mine.iter()
+                    .find(|q| q.contains("REFERENTIAL_CONSTRAINTS"))
+                    .expect("the foreign keys' query"),
+            )
+            .await;
+            assert_eq!(fks.rows.len(), 2, "{}", p.host);
+            assert!(fks.rows.iter().all(|r| r[8].as_deref() == Some("CASCADE")));
+            let ddl = ok(
+                &conn,
+                mine.iter()
+                    .find(|q| q.starts_with("SHOW CREATE TABLE"))
+                    .expect("the DDL"),
+            )
+            .await;
+            assert!(ddl.rows[0][1]
+                .as_deref()
+                .is_some_and(|d| d.contains("CREATE TABLE")));
+            let length = mine
+                .iter()
+                .find(|q| q.starts_with("SELECT CHAR_LENGTH("))
+                .expect("a long value's length");
+            assert_eq!(ok(&conn, length).await.rows[0][0].as_deref(), Some("60000"));
+            ok(&rw, "DROP TABLE live_ref").await;
         }
     }
 

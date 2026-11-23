@@ -45,3 +45,13 @@ export function windowRange(
   const end = Math.min(count, first + visibleRows + overscan);
   return { start, end, padTop: start * rowH, totalHeight };
 }
+
+/**
+ * Whether the rows on screen reach within `ahead` rows of the list's end — the
+ * moment to read more of a list that is read on as it is scrolled. A list not
+ * yet measured (no height) is not near anything: before its first frame the
+ * window holds every row.
+ */
+export function nearEnd(win: ListWindow, count: number, viewportH: number, ahead = 0): boolean {
+  return viewportH > 0 && count > 0 && win.end + ahead >= count;
+}

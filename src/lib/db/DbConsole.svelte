@@ -436,6 +436,7 @@
                   onedit={(r, c, v) => editDbCell(doc.id, r, c, v)}
                   ondelete={(r) => toggleDbRowDelete(doc.id, r)}
                   onwantEdit={() => void prepareEdit(doc.id)}
+                  refusal={notEditable ? t(`db.edit.not.${notEditable}`) : null}
                 />
               </div>
               <div class="flex shrink-0 flex-wrap items-center gap-x-3 border-t border-edge px-2 py-0.5 text-meta text-muted">

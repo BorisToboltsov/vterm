@@ -37,18 +37,26 @@ if (typeof Element !== "undefined" && !Element.prototype.scrollIntoView) {
 
 // jsdom doesn't implement ResizeObserver, which SettingsPanel uses to re-scroll a
 // deep-linked section after its async content grows. Provide a controllable mock:
-// tests can grab the latest instance and fire its callback to simulate a resize.
+// tests can grab the latest instance and fire its callback to simulate a resize
+// — or only those of the instances that observe an element (`targets`).
 if (typeof globalThis.ResizeObserver === "undefined") {
   class ResizeObserverMock {
     static instances: ResizeObserverMock[] = [];
     cb: ResizeObserverCallback;
+    targets = new Set<Element>();
     constructor(cb: ResizeObserverCallback) {
       this.cb = cb;
       ResizeObserverMock.instances.push(this);
     }
-    observe() {}
-    unobserve() {}
-    disconnect() {}
+    observe(target: Element) {
+      this.targets.add(target);
+    }
+    unobserve(target: Element) {
+      this.targets.delete(target);
+    }
+    disconnect() {
+      this.targets.clear();
+    }
   }
   globalThis.ResizeObserver = ResizeObserverMock as unknown as typeof ResizeObserver;
 }

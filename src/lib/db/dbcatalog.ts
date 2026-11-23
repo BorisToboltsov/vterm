@@ -26,6 +26,22 @@ export interface CatRoutine {
 export interface CatColumn {
   name: string;
   type: string;
+  /** The column takes NULL; null — the server did not say. */
+  nullable: boolean | null;
+}
+
+/** A foreign key: its columns and the columns of the table they point at, in order. */
+export interface ForeignKey {
+  name: string;
+  columns: string[];
+  ref: { schema: string; name: string };
+  refColumns: string[];
+}
+
+/** A table's primary key and its foreign keys (ADR 0081). */
+export interface TableKeys {
+  primary: string[];
+  foreign: ForeignKey[];
 }
 
 export interface Catalog {
@@ -33,6 +49,8 @@ export interface Catalog {
   routines: CatRoutine[];
   /** By `schema.table`. */
   columns: Record<string, CatColumn[]>;
+  /** Primary and foreign keys by `schema.table` (ADR 0081): the tree's marks, the grid's links. */
+  keys: Record<string, TableKeys>;
   /** The schema a bare name means: `current_schema()` / the current database. */
   current: string | null;
   /** A list was longer than is read: the tree and the completion say so. */
@@ -46,19 +64,22 @@ const PG_HIDDEN = "('pg_catalog', 'information_schema')";
 const MY_HIDDEN = "('mysql', 'information_schema', 'performance_schema', 'sys')";
 
 /** The catalog's queries, run one by one on a connection. */
-export function catalogQueries(kind: DbKind): { current: string; tables: string; routines: string; columns: string } {
+export function catalogQueries(kind: DbKind): { current: string; tables: string; routines: string; columns: string; keys: string } {
   if (kind === "postgres")
     return {
       current: "SELECT current_schema()",
       tables: `SELECT n.nspname, c.relname, c.relkind, c.reltuples::bigint FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace WHERE c.relkind IN ('r', 'p', 'v', 'm', 'f') AND n.nspname NOT IN ${PG_HIDDEN} AND n.nspname NOT LIKE 'pg\\_toast%' AND n.nspname NOT LIKE 'pg\\_temp%' AND NOT c.relispartition ORDER BY 1, 2 LIMIT ${CATALOG_MAX + 1}`,
       routines: `SELECT n.nspname, p.proname, pg_get_function_identity_arguments(p.oid), p.prokind FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace WHERE n.nspname NOT IN ${PG_HIDDEN} AND p.prokind IN ('f', 'p') ORDER BY 1, 2 LIMIT ${CATALOG_MAX + 1}`,
-      columns: `SELECT table_schema, table_name, column_name, data_type FROM information_schema.columns WHERE table_schema NOT IN ${PG_HIDDEN} ORDER BY table_schema, table_name, ordinal_position LIMIT ${CATALOG_MAX + 1}`,
+      columns: `SELECT table_schema, table_name, column_name, data_type, is_nullable FROM information_schema.columns WHERE table_schema NOT IN ${PG_HIDDEN} ORDER BY table_schema, table_name, ordinal_position LIMIT ${CATALOG_MAX + 1}`,
+      // One row a column of a key: the constraint's name keeps a key of several columns together.
+      keys: `SELECT n.nspname, c.relname, k.contype::text, a.attname, coalesce(fn.nspname, ''), coalesce(fc.relname, ''), coalesce(fa.attname, ''), k.conname FROM pg_constraint k JOIN pg_class c ON c.oid = k.conrelid JOIN pg_namespace n ON n.oid = c.relnamespace CROSS JOIN LATERAL unnest(k.conkey) WITH ORDINALITY AS u(attnum, i) JOIN pg_attribute a ON a.attrelid = c.oid AND a.attnum = u.attnum LEFT JOIN pg_class fc ON fc.oid = k.confrelid LEFT JOIN pg_namespace fn ON fn.oid = fc.relnamespace LEFT JOIN pg_attribute fa ON fa.attrelid = k.confrelid AND fa.attnum = k.confkey[u.i::int] WHERE k.contype IN ('p', 'f') AND n.nspname NOT IN ${PG_HIDDEN} ORDER BY 1, 2, k.conname, u.i LIMIT ${CATALOG_MAX + 1}`,
     };
   return {
     current: "SELECT DATABASE()",
     tables: `SELECT TABLE_SCHEMA, TABLE_NAME, TABLE_TYPE, TABLE_ROWS FROM information_schema.TABLES WHERE TABLE_SCHEMA NOT IN ${MY_HIDDEN} ORDER BY 1, 2 LIMIT ${CATALOG_MAX + 1}`,
     routines: `SELECT ROUTINE_SCHEMA, ROUTINE_NAME, '', ROUTINE_TYPE FROM information_schema.ROUTINES WHERE ROUTINE_SCHEMA NOT IN ${MY_HIDDEN} ORDER BY 1, 2 LIMIT ${CATALOG_MAX + 1}`,
-    columns: `SELECT TABLE_SCHEMA, TABLE_NAME, COLUMN_NAME, COLUMN_TYPE FROM information_schema.COLUMNS WHERE TABLE_SCHEMA NOT IN ${MY_HIDDEN} ORDER BY TABLE_SCHEMA, TABLE_NAME, ORDINAL_POSITION LIMIT ${CATALOG_MAX + 1}`,
+    columns: `SELECT TABLE_SCHEMA, TABLE_NAME, COLUMN_NAME, COLUMN_TYPE, IS_NULLABLE FROM information_schema.COLUMNS WHERE TABLE_SCHEMA NOT IN ${MY_HIDDEN} ORDER BY TABLE_SCHEMA, TABLE_NAME, ORDINAL_POSITION LIMIT ${CATALOG_MAX + 1}`,
+    keys: `SELECT TABLE_SCHEMA, TABLE_NAME, CASE WHEN CONSTRAINT_NAME = 'PRIMARY' THEN 'p' ELSE 'f' END, COLUMN_NAME, coalesce(REFERENCED_TABLE_SCHEMA, ''), coalesce(REFERENCED_TABLE_NAME, ''), coalesce(REFERENCED_COLUMN_NAME, ''), CONSTRAINT_NAME FROM information_schema.KEY_COLUMN_USAGE WHERE TABLE_SCHEMA NOT IN ${MY_HIDDEN} AND (CONSTRAINT_NAME = 'PRIMARY' OR REFERENCED_TABLE_NAME IS NOT NULL) ORDER BY 1, 2, CONSTRAINT_NAME, ORDINAL_POSITION LIMIT ${CATALOG_MAX + 1}`,
   };
 }
 
@@ -94,7 +115,32 @@ export function parseColumns(o: DbOutcome): Record<string, CatColumn[]> {
   const out: Record<string, CatColumn[]> = {};
   for (let r = 0; r < o.rows.length; r++) {
     const key = `${cell(o, r, 0)}.${cell(o, r, 1)}`;
-    (out[key] ??= []).push({ name: cell(o, r, 2), type: cell(o, r, 3) });
+    const nullable = o.rows[r][4];
+    (out[key] ??= []).push({ name: cell(o, r, 2), type: cell(o, r, 3), nullable: nullable === null || nullable === undefined ? null : nullable.toUpperCase() === "YES" });
+  }
+  return out;
+}
+
+/** Keys by `schema.table`; a foreign key's columns in the order the key has them. */
+export function parseKeys(o: DbOutcome): Record<string, TableKeys> {
+  const out: Record<string, TableKeys> = {};
+  const fks = new Map<string, ForeignKey>();
+  for (let r = 0; r < o.rows.length; r++) {
+    const key = `${cell(o, r, 0)}.${cell(o, r, 1)}`;
+    const keys = (out[key] ??= { primary: [], foreign: [] });
+    if (cell(o, r, 2) === "p") {
+      keys.primary.push(cell(o, r, 3));
+      continue;
+    }
+    const id = `${key}\u0000${cell(o, r, 7)}`;
+    let fk = fks.get(id);
+    if (!fk) {
+      fk = { name: cell(o, r, 7), columns: [], ref: { schema: cell(o, r, 4), name: cell(o, r, 5) }, refColumns: [] };
+      fks.set(id, fk);
+      keys.foreign.push(fk);
+    }
+    fk.columns.push(cell(o, r, 3));
+    fk.refColumns.push(cell(o, r, 6));
   }
   return out;
 }

@@ -9,6 +9,10 @@
 // 3. Work is never lost without a question: a document, a tab, a bulk close and
 //    quitting each look at the store's `dbWork`.
 // 4. What a database answers is text: no `{@html}` in the subsystem.
+// 5. A table document only reads (ADR 0081): the statements it builds from
+//    what the user typed go to the database only after `readRefusal` let them,
+//    and a page's rows are sorted by the server — the window never reorders
+//    them: one page sorted would show an order the table does not have.
 //
 // Sources are read without comments: a rule written only in a comment is not a rule.
 
@@ -66,6 +70,7 @@ const TOLD = [
   `diag.warn("db", "the database password was not kept in the keychain: the next connection asks again")`,
   `diag.info("db", "database profiles saved", { count: list.length, local: place === null })`,
   `diag.info("db", "table edits applied", { count: statements.length })`,
+  `diag.info("db", "table columns changed between reads", { rows: offset })`,
   `notifyError(t("db.act.stopFailed", { id: s.session.id, error: got.missing ? t("db.act.noSuch") : (got.error ?? "") }), { source: "db", sessionId })`,
   `notifySuccess(s.terminate ? t("db.act.terminated", { id: s.session.id }) : t("db.act.cancelled", { id: s.session.id }), { source: "db", sessionId })`,
   `notifySuccess(t("db.export.copied", { rows: out.rows.length }), { source: "db", sessionId })`,
@@ -104,6 +109,30 @@ export function lossViolations(page: string, editorflow: string): string[] {
   return out;
 }
 
+/** The table document's reads: each sends its statement only after `readRefusal` judged it. */
+export function tableReadViolations(store: string, views: Record<string, string>): string[] {
+  const out: string[] = [];
+  const src = code(store);
+  for (const fn of ["export function readTable(", "export function readMoreTable(", "export function countTable("]) {
+    // The body: from the brace that ends the signature's line — a default `= {}` is not it.
+    const at = src.indexOf(fn);
+    const body = at < 0 ? "" : span(src.slice(src.indexOf("{\n", at)), "{", "{}");
+    if (!body) {
+      out.push(`${fn.slice(16, -1)} is missing`);
+      continue;
+    }
+    const judged = body.indexOf("readRefusal(");
+    const sent = Math.max(body.indexOf("dbQuery("), body.indexOf("quiet("));
+    if (judged < 0 || sent < 0 || judged > sent) out.push(`${fn.slice(16, -1)} sends a statement before it is judged a read`);
+  }
+  for (const [name, raw] of Object.entries(views)) {
+    const v = code(raw);
+    if (/\.rows\s*(?:\.slice\(\))?\s*\.(?:sort|toSorted)\(/.test(v)) out.push(`${name} sorts the rows in the window`);
+    if (/\brunSql\(/.test(v)) out.push(`${name} runs a statement of its own`);
+  }
+  return out;
+}
+
 const files = (): Record<string, string> => ({
   ...Object.fromEntries(
     readdirSync(join(ROOT, "src/lib/db"))
@@ -114,6 +143,8 @@ const files = (): Record<string, string> => ({
 });
 
 const COMMANDS = "src-tauri/src/commands/db.rs";
+const TABLE_VIEWS = ["DbTableView.svelte", "DbResultGrid.svelte", "DbValuePanel.svelte", "DbTableStructure.svelte"];
+const tableViews = (): Record<string, string> => Object.fromEntries(TABLE_VIEWS.map((f) => [f, read(`src/lib/db/${f}`)]));
 const PAGE = "src/routes/+page.svelte";
 const FLOW = "src/lib/page/editorflow.svelte.ts";
 
@@ -128,6 +159,10 @@ describe("databases guard", () => {
 
   it("work is never lost without a question", () => {
     expect(lossViolations(read(PAGE), read(FLOW))).toEqual([]);
+  });
+
+  it("a table document only reads, and its rows are sorted by the server", () => {
+    expect(tableReadViolations(read("src/lib/stores/db.svelte.ts"), tableViews())).toEqual([]);
   });
 });
 
@@ -151,6 +186,18 @@ describe("databases guard — catches what it exists for", () => {
     const toast = mutate(files()["stores/db.svelte.ts"], "error: errorCodeText(out.error) }", "error: out.error.message }");
     expect(tellViolations({ toast })).toEqual(["toast gives a toast the database's words"]);
     expect(tellViolations({ view: "<td>{@html value}</td>" })).toHaveLength(1);
+  });
+
+  it("a table's statement sent unjudged, rows sorted here, a statement of its own", () => {
+    const store = read("src/lib/stores/db.svelte.ts");
+    const unjudged = mutate(store, "    const refusal = readRefusal(d.kind, sql, pageTail(0, rows));", "    const refusal = null;");
+    expect(tableReadViolations(unjudged, {})).toEqual(["readTable sends a statement before it is judged a read"]);
+    const more = mutate(store, "    const refusal = readRefusal(d.kind, sql, pageTail(offset, rows));", "    const refusal = null;");
+    expect(tableReadViolations(more, {})).toEqual(["readMoreTable sends a statement before it is judged a read"]);
+    const late = mutate(store, "  if (readRefusal(d.kind, sql, countTail(d.kind, d.table.ref, where))) {", "  if (false) {");
+    expect(tableReadViolations(late, {})).toEqual(["countTable sends a statement before it is judged a read"]);
+    expect(tableReadViolations(store, { "v.svelte": "const shown = out.rows.slice().sort((a, b) => a[0] < b[0] ? -1 : 1);" })).toEqual(["v.svelte sorts the rows in the window"]);
+    expect(tableReadViolations(store, { "v.svelte": "void runSql(doc.id, sql);" })).toEqual(["v.svelte runs a statement of its own"]);
   });
 
   it("work closed without its question", () => {

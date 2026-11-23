@@ -292,8 +292,10 @@ export interface Settings {
   dockerRefreshSec: number;
   // Databases (ADR 0080): the most rows a statement brings back, how often the
   // activity view reads the server while it is on screen (s), and where
-  // activity turns into a problem (dbactivity.ts).
+  // activity turns into a problem (dbactivity.ts); the rows of a table's page
+  // (ADR 0081).
   dbMaxRows: number;
+  dbPageRows: number;
   dbActivitySec: number;
   dbThresholds: DbThresholds;
   // Git panel (v1.27): the branches starred in its tree, by name, for every
@@ -496,6 +498,7 @@ const DEFAULTS: Settings = {
   idleShiftEverySec: DEFAULT_IDLE_SHIFT,
   dockerRefreshSec: 3,
   dbMaxRows: 1000,
+  dbPageRows: 200,
   dbActivitySec: 5,
   dbThresholds: { ...DEFAULT_DB_THRESHOLDS },
   dockerRegistries: [],
@@ -524,6 +527,12 @@ const DEFAULTS: Settings = {
 export function clampDbRows(v: unknown): number {
   const n = typeof v === "number" && Number.isFinite(v) ? Math.round(v) : DEFAULTS.dbMaxRows;
   return Math.max(100, Math.min(10_000, n));
+}
+
+/** The rows of a table's page: 20…1000. */
+export function clampDbPage(v: unknown): number {
+  const n = typeof v === "number" && Number.isFinite(v) ? Math.round(v) : DEFAULTS.dbPageRows;
+  return Math.max(20, Math.min(1000, n));
 }
 
 /** How often the activity view reads: 2…60 s. */
@@ -673,6 +682,7 @@ function load(): Settings {
       idleShiftEverySec: sanitizeShiftInterval(raw.idleShiftEverySec),
       dockerRefreshSec: clampDockerRefresh(raw.dockerRefreshSec),
       dbMaxRows: clampDbRows(raw.dbMaxRows),
+      dbPageRows: clampDbPage(raw.dbPageRows),
       dbActivitySec: clampDbActivity(raw.dbActivitySec),
       dbThresholds: sanitizeDbThresholds(raw.dbThresholds),
       dockerRegistries: sanitizeDockerRegistries(raw.dockerRegistries),
@@ -869,6 +879,7 @@ export function applyImportedSettings(raw: unknown): void {
   next.idleShiftEverySec = sanitizeShiftInterval(next.idleShiftEverySec);
   next.dockerRefreshSec = clampDockerRefresh(next.dockerRefreshSec);
   next.dbMaxRows = clampDbRows(next.dbMaxRows);
+  next.dbPageRows = clampDbPage(next.dbPageRows);
   next.dbActivitySec = clampDbActivity(next.dbActivitySec);
   next.dbThresholds = sanitizeDbThresholds(r.dbThresholds);
   next.dockerRegistries = sanitizeDockerRegistries(r.dockerRegistries);

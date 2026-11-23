@@ -162,6 +162,22 @@ describe("context menu expansion", () => {
     expect(popup.style.left).toBe(`${window.innerWidth - 244}px`);
   });
 
+  it("shows a note as wrapped text that no key lands on", async () => {
+    const pick = vi.fn();
+    render(ContextMenu, { menu: { x: 0, y: 0, items: [
+      { label: "Edit", disabled: true, onSelect: vi.fn() },
+      { kind: "note", text: "Not editable: the table has no primary key." },
+      { label: "Copy", onSelect: pick },
+    ] }, onclose: vi.fn() });
+    const note = screen.getByText("Not editable: the table has no primary key.");
+    expect(note.tagName).toBe("P");
+    expect(note.className).not.toContain("truncate");
+    const copy = screen.getByRole("menuitem", { name: "Copy" });
+    await waitFor(() => expect(copy).toHaveFocus());
+    await fireEvent.keyDown(copy, { key: "ArrowDown" });
+    expect(copy).toHaveFocus();
+  });
+
   it("closes before invoking an action and ignores a disabled action", async () => {
     const calls: string[] = [];
     const disabled = vi.fn();

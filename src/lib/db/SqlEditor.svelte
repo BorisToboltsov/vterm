@@ -3,10 +3,12 @@
   // (loaded on first use), completion from the database's catalog, ⌘/Ctrl+Enter
   // to run the statement under the caret (or the selection), ⌘/Ctrl+Shift+Enter
   // to run them all, and the place the database said was wrong underlined.
-  // The clipboard goes through the backend, as in the file editor.
+  // The clipboard goes through the backend, as in the file editor. `single` —
+  // a one-line field of a table document (ADR 0081): its WHERE or ORDER BY,
+  // the table's columns completed bare, Enter applies it.
   import { onDestroy, onMount, untrack } from "svelte";
   import { Compartment, EditorState, StateEffect, StateField, RangeSet } from "@codemirror/state";
-  import { Decoration, EditorView, keymap, lineNumbers, highlightActiveLine, drawSelection } from "@codemirror/view";
+  import { Decoration, EditorView, keymap, lineNumbers, highlightActiveLine, drawSelection, placeholder as placeholderText } from "@codemirror/view";
   import { defaultKeymap, history, historyKeymap, indentWithTab } from "@codemirror/commands";
   import { autocompletion, closeBrackets, closeBracketsKeymap, completionKeymap } from "@codemirror/autocomplete";
   import { bracketMatching, syntaxHighlighting, defaultHighlightStyle } from "@codemirror/language";
@@ -28,6 +30,10 @@
     onrun,
     onrunAll,
     onready,
+    single = false,
+    defaultTable = null,
+    placeholder = "",
+    onsubmit,
   }: {
     value: string;
     kind: DbKind;
@@ -42,6 +48,12 @@
     onrunAll: () => void;
     /** The view, for whoever reads the caret (the toolbar's buttons). */
     onready?: (api: { caret: () => { from: number; to: number }; insert: (text: string) => void; focus: () => void }) => void;
+    /** One line: no gutter, no line breaks, Enter submits. */
+    single?: boolean;
+    /** The table whose columns complete bare. */
+    defaultTable?: string | null;
+    placeholder?: string;
+    onsubmit?: () => void;
   } = $props();
 
   let host: HTMLDivElement;
@@ -79,19 +91,55 @@
       dialect: kind === "postgres" ? m.PostgreSQL : m.MySQL,
       schema: names,
       defaultSchema: defaultSchema ?? undefined,
+      defaultTable: defaultTable ?? undefined,
       upperCaseKeywords: true,
     });
   }
+
+  /**
+   * What one line needs: Enter submits, a line break never gets in. Its text and
+   * its hint are the row's own — the mono `text-meta` of the field's box (below),
+   * not the console's size or CodeMirror's own font; the line fills the box inside
+   * its border.
+   */
+  const oneLine = () => [
+    placeholderText(placeholder),
+    EditorState.transactionFilter.of((tr) => (tr.newDoc.lines > 1 ? [] : tr)),
+    EditorView.theme({
+      ".cm-content": { padding: "0" },
+      ".cm-line": { padding: "0 6px" },
+      ".cm-scroller": { overflow: "hidden", fontFamily: "inherit", lineHeight: "calc(1.375rem - 2px)" },
+      ".cm-placeholder": { color: "var(--color-muted)" },
+    }),
+    keymap.of([
+      ...completionKeymap,
+      {
+        key: "Enter",
+        preventDefault: true,
+        run: () => {
+          onsubmit?.();
+          return true;
+        },
+      },
+      {
+        key: "Mod-Enter",
+        preventDefault: true,
+        run: () => {
+          onsubmit?.();
+          return true;
+        },
+      },
+    ]),
+  ];
 
   onMount(() => {
     const state = EditorState.create({
       doc: value,
       extensions: [
         cspNonceExtension(),
-        lineNumbers(),
+        ...(single ? oneLine() : [lineNumbers(), highlightActiveLine()]),
         history(),
         drawSelection(),
-        highlightActiveLine(),
         bracketMatching(),
         closeBrackets(),
         highlightSelectionMatches(),
@@ -137,7 +185,7 @@
             run: (v) => {
               void readClipboard()
                 .then((text) => {
-                  if (text) v.dispatch(v.state.replaceSelection(text));
+                  if (text) v.dispatch(v.state.replaceSelection(single ? text.replace(/\s*[\r\n]+\s*/g, " ") : text));
                 })
                 .catch(swallow("db", "the clipboard was not read: nothing was pasted"));
               return true;
@@ -213,5 +261,12 @@
   });
 </script>
 
-<!-- The file editor's size and box: a size inherited from the page left the gutter measured for another one. -->
-<div class="h-full min-h-0 overflow-hidden text-sm [&_.cm-editor]:h-full" bind:this={host} data-testid="sql-editor"></div>
+<!-- The file editor's size and box: a size inherited from the page left the gutter measured for another one.
+     One line is a field of its row: the height of a list's filter field, the size of the row's text. -->
+<div
+  class="min-h-0 overflow-hidden [&_.cm-editor]:h-full {single
+    ? 'h-[1.375rem] rounded border border-edge bg-panel-alt font-mono text-meta focus-within:border-accent'
+    : 'h-full text-sm'}"
+  bind:this={host}
+  data-testid={single ? "sql-field" : "sql-editor"}
+></div>
