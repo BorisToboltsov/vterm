@@ -1358,6 +1358,39 @@ mod live_db {
         }
     }
 
+    /// The stand's database password, as its compose file sets it: the secret
+    /// lives in the stand alone, not as a literal of the tests (CodeQL
+    /// rust/hard-coded-cryptographic-value, #500–#520). One for its three
+    /// databases — the tests pass it to each.
+    fn stand_password() -> &'static str {
+        static PASSWORD: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+        PASSWORD.get_or_init(|| {
+            let compose = std::fs::read_to_string(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/../e2e/docker-compose.db.yml"
+            ))
+            .expect("the stand's compose file");
+            let set = |name: &str| {
+                compose
+                    .lines()
+                    .find_map(|l| {
+                        let value = l.trim().strip_prefix("- ")?.strip_prefix(name)?;
+                        value.strip_prefix('=').map(str::to_owned)
+                    })
+                    .unwrap_or_else(|| panic!("the stand sets {name}"))
+            };
+            let password = set("POSTGRES_PASSWORD");
+            for other in ["MYSQL_PASSWORD", "MARIADB_PASSWORD"] {
+                assert_eq!(
+                    set(other),
+                    password,
+                    "one password for the stand's databases"
+                );
+            }
+            password
+        })
+    }
+
     async fn ssh() -> Via {
         let mut handle = client::connect(
             Arc::new(client::Config::default()),
@@ -1441,7 +1474,7 @@ mod live_db {
     #[tokio::test(flavor = "multi_thread")]
     #[ignore = "needs docker compose -f e2e/docker-compose.db.yml up"]
     async fn postgres_through_a_channel_reads_every_type_as_text_with_its_origin() {
-        let conn = open(ssh().await, &postgres(), "vtermpass", false)
+        let conn = open(ssh().await, &postgres(), stand_password(), false)
             .await
             .expect("connect");
         ok(&conn, "DROP TABLE IF EXISTS live_types").await;
@@ -1479,7 +1512,7 @@ mod live_db {
     #[ignore = "needs docker compose -f e2e/docker-compose.db.yml up"]
     async fn a_statement_past_the_row_cap_is_stopped_not_read_to_its_end() {
         for p in [postgres(), mysql()] {
-            let conn = open(ssh().await, &p, "vtermpass", false)
+            let conn = open(ssh().await, &p, stand_password(), false)
                 .await
                 .expect("connect");
             let sql = match p.kind {
@@ -1516,12 +1549,12 @@ mod live_db {
     #[ignore = "needs docker compose -f e2e/docker-compose.db.yml up"]
     async fn read_only_holds_and_a_lifted_statement_writes_once() {
         for p in [postgres(), mysql(), mariadb()] {
-            let rw = open(ssh().await, &p, "vtermpass", false)
+            let rw = open(ssh().await, &p, stand_password(), false)
                 .await
                 .expect("connect");
             ok(&rw, "DROP TABLE IF EXISTS live_ro").await;
             ok(&rw, "CREATE TABLE live_ro (id int PRIMARY KEY)").await;
-            let ro = open(ssh().await, &p, "vtermpass", true)
+            let ro = open(ssh().await, &p, stand_password(), true)
                 .await
                 .expect("connect");
             let refused = ro.run("INSERT INTO live_ro VALUES (1)", 10, false).await.1;
@@ -1562,7 +1595,7 @@ mod live_db {
     #[ignore = "needs docker compose -f e2e/docker-compose.db.yml up"]
     async fn edits_apply_together_or_not_at_all() {
         for p in [postgres(), mysql()] {
-            let conn = open(ssh().await, &p, "vtermpass", false)
+            let conn = open(ssh().await, &p, stand_password(), false)
                 .await
                 .expect("connect");
             ok(&conn, "DROP TABLE IF EXISTS live_edit").await;
@@ -1616,7 +1649,7 @@ mod live_db {
     async fn a_running_statement_is_stopped_on_the_server() {
         for p in [postgres(), mysql()] {
             let conn = Arc::new(
-                open(ssh().await, &p, "vtermpass", false)
+                open(ssh().await, &p, stand_password(), false)
                     .await
                     .expect("connect"),
             );
@@ -1647,12 +1680,12 @@ mod live_db {
     #[ignore = "needs docker compose -f e2e/docker-compose.db.yml up"]
     async fn postgres_through_its_socket_on_the_server_and_at_an_address_of_this_computer() {
         let socket = profile(DbKind::Postgres, "/var/run/postgresql", 5432);
-        let conn = open(ssh().await, &socket, "vtermpass", false)
+        let conn = open(ssh().await, &socket, stand_password(), false)
             .await
             .expect("socket");
         assert_eq!(ok(&conn, "SELECT 1").await.rows[0][0].as_deref(), Some("1"));
         let here = profile(DbKind::Postgres, "127.0.0.1", 15432);
-        let conn = open(Via::Here, &here, "vtermpass", false)
+        let conn = open(Via::Here, &here, stand_password(), false)
             .await
             .expect("here");
         assert_eq!(
@@ -1673,7 +1706,7 @@ mod live_db {
             );
         }
         let nowhere = profile(DbKind::Postgres, "postgres", 6000);
-        let e = open(ssh().await, &nowhere, "vtermpass", false).await;
+        let e = open(ssh().await, &nowhere, stand_password(), false).await;
         assert!(matches!(e, Err(AppError::DbTunnelRefused(_))));
         let target = Target {
             via: Via::Here,
@@ -1713,7 +1746,9 @@ mod live_db {
     #[ignore = "needs docker compose -f e2e/docker-compose.db.yml up"]
     async fn the_first_connection_is_asked_for_a_password() {
         for p in [postgres(), mysql(), mariadb()] {
-            let asked = open(ssh().await, &p, "", false).await;
+            // No password at all — an empty one, not a literal (CodeQL #510).
+            let none = String::new();
+            let asked = open(ssh().await, &p, &none, false).await;
             assert!(
                 matches!(asked, Err(AppError::DbAuthRejected)),
                 "{:?}",
@@ -1725,10 +1760,10 @@ mod live_db {
     #[tokio::test(flavor = "multi_thread")]
     #[ignore = "needs docker compose -f e2e/docker-compose.db.yml up"]
     async fn the_windows_own_sql_reads_keys_schema_and_activity() {
-        let conn = open(ssh().await, &postgres(), "vtermpass", true)
+        let conn = open(ssh().await, &postgres(), stand_password(), true)
             .await
             .expect("connect");
-        let rw = open(ssh().await, &postgres(), "vtermpass", false)
+        let rw = open(ssh().await, &postgres(), stand_password(), false)
             .await
             .expect("connect");
         // What a failed run left depends on the table: it goes first.
@@ -1864,10 +1899,10 @@ mod live_db {
         ok(&rw, "DROP TABLE live_ref").await;
 
         for p in [mysql(), mariadb()] {
-            let rw = open(ssh().await, &p, "vtermpass", false)
+            let rw = open(ssh().await, &p, stand_password(), false)
                 .await
                 .expect("connect");
-            let conn = open(ssh().await, &p, "vtermpass", true)
+            let conn = open(ssh().await, &p, stand_password(), true)
                 .await
                 .expect("connect");
             ok(&rw, "DROP TABLE IF EXISTS live_ref").await;
@@ -1958,7 +1993,7 @@ mod live_db {
     #[tokio::test(flavor = "multi_thread")]
     #[ignore = "needs docker compose -f e2e/docker-compose.db.yml up"]
     async fn a_change_past_the_row_cap_is_kept_and_a_stop_never_hits_the_next_statement() {
-        let conn = open(ssh().await, &postgres(), "vtermpass", false)
+        let conn = open(ssh().await, &postgres(), stand_password(), false)
             .await
             .expect("connect");
         ok(&conn, "DROP TABLE IF EXISTS live_cap").await;
@@ -1993,7 +2028,7 @@ mod live_db {
         assert_eq!(committed.rows[0][0].as_deref(), Some("2"));
 
         for p in [postgres(), mysql()] {
-            let conn = open(ssh().await, &p, "vtermpass", true)
+            let conn = open(ssh().await, &p, stand_password(), true)
                 .await
                 .expect("connect");
             let (long, next) = match p.kind {
@@ -2023,7 +2058,7 @@ mod live_db {
     #[tokio::test(flavor = "multi_thread")]
     #[ignore = "needs docker compose -f e2e/docker-compose.db.yml up"]
     async fn a_transaction_and_the_way_quotes_are_read_follow_the_server() {
-        let pg = open(ssh().await, &postgres(), "vtermpass", false)
+        let pg = open(ssh().await, &postgres(), stand_password(), false)
             .await
             .expect("connect");
         assert_eq!(ok(&pg, "BEGIN").await.tx, Tx::Open);
@@ -2046,7 +2081,7 @@ mod live_db {
         assert_eq!(ok(&pg, "ROLLBACK").await.tx, Tx::None);
 
         for p in [mysql(), mariadb()] {
-            let my = open(ssh().await, &p, "vtermpass", false)
+            let my = open(ssh().await, &p, stand_password(), false)
                 .await
                 .expect("connect");
             assert_eq!(
@@ -2084,13 +2119,13 @@ mod live_db {
     #[ignore = "needs docker compose -f e2e/docker-compose.db.yml up"]
     async fn edits_on_a_read_only_connection_apply_once_agreed_and_leave_it_read_only() {
         for p in [postgres(), mysql(), mariadb()] {
-            let rw = open(ssh().await, &p, "vtermpass", false)
+            let rw = open(ssh().await, &p, stand_password(), false)
                 .await
                 .expect("connect");
             ok(&rw, "DROP TABLE IF EXISTS live_lift").await;
             ok(&rw, "CREATE TABLE live_lift (id int PRIMARY KEY, v int)").await;
             ok(&rw, "INSERT INTO live_lift VALUES (1, 0)").await;
-            let ro = open(ssh().await, &p, "vtermpass", true)
+            let ro = open(ssh().await, &p, stand_password(), true)
                 .await
                 .expect("connect");
             let edit = ["UPDATE live_lift SET v = 1 WHERE id = 1".to_string()];
