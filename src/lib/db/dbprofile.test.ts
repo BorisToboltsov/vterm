@@ -129,7 +129,7 @@ describe("catalog", () => {
     ]);
     expect(parseTables("mysql", answer([["shop", "orders", "BASE TABLE", "12"], ["shop", "vv", "VIEW", null]]))[1].kind).toBe("view");
     expect(parseRoutines(answer([["public", "f", "a integer", "f"], ["shop", "p", "", "PROCEDURE"]])).map((r) => r.kind)).toEqual(["function", "procedure"]);
-    const cat: Catalog = { tables, routines: [], columns: parseColumns(answer([["public", "invoices", "id", "integer"], ["public", "invoices", "status", "text"]])), current: "public" };
+    const cat: Catalog = { tables, routines: [], columns: parseColumns(answer([["public", "invoices", "id", "integer"], ["public", "invoices", "status", "text"]])), keys: {}, current: "public" };
     expect(schemasOf(cat)).toEqual(["public", "app"]);
     expect(completionNames(cat).public.invoices).toEqual(["id", "status"]);
     expect(firstRowsSql("mysql", { schema: "shop", name: "orders" })).toBe("SELECT * FROM `shop`.`orders` LIMIT 100");

@@ -26,7 +26,7 @@ import {
   type ListOrder,
   type ListSchema,
 } from "./listview";
-import type { MenuAction, MenuItem, MenuSubmenu } from "./ctxmenu";
+import { isAction, type MenuAction, type MenuItem, type MenuSubmenu } from "./ctxmenu";
 
 interface Box {
   name: string;
@@ -93,11 +93,11 @@ const TEXT: ListMenuText = {
 };
 
 const labels = (items: MenuItem[]) =>
-  items.map((i) => (i.kind === "separator" ? "—" : i.label));
+  items.map((i) => (i.kind === "separator" ? "—" : i.kind === "note" ? i.text : i.label));
 const submenu = (items: MenuItem[], key: string) =>
   items.find((i): i is MenuSubmenu => i.kind === "submenu" && i.key === key)!;
 const action = (items: MenuItem[], label: string) =>
-  items.find((i): i is MenuAction => i.kind !== "separator" && i.kind !== "submenu" && i.label === label)!;
+  items.find((i): i is MenuAction => isAction(i) && i.label === label)!;
 
 describe("the filter field", () => {
   it("finds every term, in any order and case", () => {

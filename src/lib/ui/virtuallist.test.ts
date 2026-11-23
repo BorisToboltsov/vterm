@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { windowRange } from "./virtuallist";
+import { nearEnd, windowRange } from "./virtuallist";
 
 describe("windowRange", () => {
   const rowH = 28;
@@ -53,5 +53,30 @@ describe("windowRange", () => {
     expect(w.end).toBe(count);
     expect(w.start).toBeGreaterThanOrEqual(0);
     expect(w.start).toBeLessThanOrEqual(count);
+  });
+});
+
+describe("nearEnd", () => {
+  const rowH = 24;
+
+  it("is the window reaching within `ahead` rows of the end", () => {
+    const top = windowRange(0, 240, rowH, 200, 6);
+    expect(nearEnd(top, 200, 240, 10)).toBe(false);
+    const bottom = windowRange(200 * rowH - 240, 240, rowH, 200, 6);
+    expect(nearEnd(bottom, 200, 240)).toBe(true);
+    // A screen before the end: read on before the user reaches it.
+    const before = windowRange(180 * rowH - 240, 240, rowH, 200, 6);
+    expect(nearEnd(before, 200, 240)).toBe(false);
+    expect(nearEnd(before, 200, 240, 20)).toBe(true);
+  });
+
+  it("is not, for a list not measured yet or empty", () => {
+    // Unmeasured, the window holds every row: that is not the user at the end.
+    expect(nearEnd(windowRange(0, 0, rowH, 200), 200, 0)).toBe(false);
+    expect(nearEnd(windowRange(0, 240, rowH, 0), 0, 240)).toBe(false);
+  });
+
+  it("is, for a short list that fills less than its view", () => {
+    expect(nearEnd(windowRange(0, 600, rowH, 20), 20, 600)).toBe(true);
   });
 });

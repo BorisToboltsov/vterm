@@ -116,6 +116,8 @@
   {#each items as item, i (i)}
     {#if item.kind === "separator"}
       <div class="my-1 border-t border-edge/60"></div>
+    {:else if item.kind === "note"}
+      <p class="px-2 py-1 text-caption leading-4 text-muted" style:padding-left={`${0.5 + path.length * 1.5}rem`} data-menu-note>{item.text}</p>
     {:else if item.kind === "submenu"}
       {@const next = [...path, item.key]}
       {@const opened = menuPathOpen(expanded, next)}

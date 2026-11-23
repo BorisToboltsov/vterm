@@ -9,6 +9,8 @@ const env = vi.hoisted(() => ({
   refuse: null as null | string,
   saved: [] as unknown[],
   saveError: null as null | string,
+  connects: 0,
+  reply: null as null | ((sql: string) => object | undefined),
 }));
 
 vi.mock("../api/db", () => {
@@ -25,11 +27,14 @@ vi.mock("../api/db", () => {
       return {};
     }),
     dbForgetPassword: vi.fn(async () => {}),
-    dbConnect: vi.fn(async () => ({ opened: { connId: "c", version: "16.6", readOnly: true, prod: true, kind: "postgres", rememberFailed: false }, refused: null })),
+    dbConnect: vi.fn(async () => {
+      env.connects++;
+      return { opened: { connId: "c", version: "16.6", readOnly: true, prod: true, kind: "postgres", rememberFailed: false }, refused: null };
+    }),
     dbQuery: vi.fn(async (_id: string, sql: string, _rows: number, writable: boolean) => {
       env.ran.push({ sql, writable });
       if (sql === env.refuse && !writable) throw "db-read-only: the statement needs read-only lifted";
-      return answer(writable ? { read: false, affected: 1 } : {}) as DbOutcome;
+      return answer({ ...(env.reply?.(sql) ?? {}), ...(writable ? { read: false, affected: 1 } : {}) }) as DbOutcome;
     }),
     dbApply: vi.fn(async () => ({ changed: [], failure: null })),
     dbCancel: vi.fn(async () => {}),
@@ -49,6 +54,18 @@ const profile = (over: Partial<DbProfile> = {}): DbProfile => ({ ...newProfile("
 const server = (databases: DbProfile[]): ServerProfile =>
   ({ id: "srv", alias: "db-prod-1", host: "10.0.0.5", port: 22, username: "ops", tags: [], prod: true, databases }) as unknown as ServerProfile;
 
+/** What the panel is given, nothing of it connected. */
+const panelProps = () => ({
+  servers: [] as ServerProfile[],
+  connected: new Set<string>(),
+  sessionFor: () => null,
+  onConnect: vi.fn(),
+  onOpen: vi.fn(),
+  onTable: vi.fn(),
+  onConsoleSql: vi.fn(),
+  onTerminal: () => {},
+});
+
 let n = 0;
 async function consoleWith(sql: string): Promise<void> {
   const id = `view-${++n}`;
@@ -67,6 +84,8 @@ beforeEach(() => {
   env.saved.length = 0;
   env.refuse = null;
   env.saveError = null;
+  env.connects = 0;
+  env.reply = null;
 });
 afterEach(() => store.forgetDb("v"));
 
@@ -128,7 +147,7 @@ describe("form", () => {
 describe("panel", () => {
   it("lists a server's databases and opens a console", async () => {
     const onOpen = vi.fn();
-    render(DbPanel, { servers: [server([profile({ name: "ledger" })])], connected: new Set(["srv"]), onOpen, onTerminal: () => {} });
+    render(DbPanel, { ...panelProps(), servers: [server([profile({ name: "ledger" })])], connected: new Set(["srv"]), onOpen });
     // The form's test left one at this computer: the server's is the last.
     const row = screen.getByText("ledger").closest('[data-testid="db-row"]') as HTMLElement;
     expect(row.textContent).toContain("RO");
@@ -138,12 +157,50 @@ describe("panel", () => {
 
   it("opens the form it was asked for once, not again when mounted again", async () => {
     store.askNewDb("srv", profile({ id: "new", name: "found" }));
-    const first = render(DbPanel, { servers: [server([])], connected: new Set<string>(), onOpen: () => {}, onTerminal: () => {} });
+    const first = render(DbPanel, { ...panelProps(), servers: [server([])] });
     expect(await screen.findByTestId("db-form")).toBeTruthy();
     first.unmount();
-    render(DbPanel, { servers: [server([])], connected: new Set<string>(), onOpen: () => {}, onTerminal: () => {} });
+    render(DbPanel, { ...panelProps(), servers: [server([])] });
     await new Promise((r) => setTimeout(r, 20));
     expect(screen.queryByTestId("db-form")).toBeNull();
+  });
+
+  it("reads the schema by itself once its place is connected — tables, their columns and keys — and opens a table on double-click", async () => {
+    env.reply = (sql) =>
+      sql.includes("c.relkind IN")
+        ? { rows: [["public", "orders", "r", "1240000"]] }
+        : sql.includes("information_schema.columns")
+          ? { rows: [["public", "orders", "id", "bigint", "NO"], ["public", "orders", "customer_id", "bigint", "YES"]] }
+          : sql.includes("contype IN ('p', 'f')")
+            ? { rows: [["public", "orders", "p", "id", "", "", "", "orders_pkey"], ["public", "orders", "f", "customer_id", "public", "customers", "id", "orders_customer_fkey"]] }
+            : sql === "SELECT current_schema()"
+              ? { rows: [["public"]] }
+              : undefined;
+    const props = { ...panelProps(), servers: [server([profile({ id: "auto", name: "shop" })])], connected: new Set(["srv"]), sessionFor: () => "v" };
+    render(DbPanel, props);
+    await fireEvent.click(screen.getByRole("button", { name: "Show or hide the schema" }));
+    await fireEvent.click(await screen.findByText("public"));
+    const row = (await screen.findByText("orders")).closest('[data-testid="db-table-row"]') as HTMLElement;
+    expect(env.connects).toBe(1);
+    expect(row.textContent).toContain("1.2 M");
+    await fireEvent.click(row.querySelector('button[aria-label="Show or hide the columns"]') as HTMLElement);
+    const cols = screen.getAllByTestId("db-column-row").map((r) => r.textContent?.replace(/\s+/g, " ").trim());
+    expect(cols).toEqual(["id bigint", "customer_id bigint → customers · null"]);
+    await fireEvent.dblClick(row);
+    expect(props.onTable).toHaveBeenCalledWith("srv", expect.objectContaining({ id: "auto" }), { schema: "public", name: "orders" }, "data");
+    // No console was opened for it.
+    expect(props.onOpen).not.toHaveBeenCalled();
+  });
+
+  it("connects nothing for a place with no connected tab until asked", async () => {
+    const props = { ...panelProps(), servers: [server([profile({ id: "off", name: "cold" })])] };
+    render(DbPanel, props);
+    await fireEvent.click(screen.getByRole("button", { name: "Show or hide the schema" }));
+    expect(await screen.findByText("The server is not connected")).toBeTruthy();
+    await new Promise((r) => setTimeout(r, 20));
+    expect(env.connects).toBe(0);
+    await fireEvent.click(screen.getByRole("button", { name: "Connect" }));
+    expect(props.onConnect).toHaveBeenCalledWith("srv");
   });
 
   it("takes for a database its image alone, not what stands beside it", () => {

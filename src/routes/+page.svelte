@@ -158,9 +158,11 @@
   import DbPanel from "#lib/db/DbPanel.svelte";
   import DbConsole from "#lib/db/DbConsole.svelte";
   import DbActivityView from "#lib/db/DbActivityView.svelte";
+  import DbTableView from "#lib/db/DbTableView.svelte";
+  import { pickSession, type TableRef } from "#lib/db/dbtable.ts";
   import { consoleArgv, profileFromContainer, profileTitle, type ContainerSeen } from "#lib/db/dbprofile.ts";
   import { parsePorts } from "#lib/docker/dockernet.ts";
-  import { askNewDb, attachDb, connectDb, dbRunning, dbWork, dbWorking, dropDb, forgetDb, loadLocalDbs, profilesOf } from "#lib/stores/db.svelte.ts";
+  import { askNewDb, attachDb, browseDoc, catalogOf, connectDb, dbDoc, dbRunning, dbWork, dbWorking, dropDb, forgetDb, loadLocalDbs, profilesOf, readTable, showTableTab } from "#lib/stores/db.svelte.ts";
   import type { DbProfile } from "#lib/types.ts";
   import NewProjectDialog from "#lib/scenarios/NewProjectDialog.svelte";
   import { folderName, isPinned as isProjectPinned, togglePin, type ProjectBookmark } from "#lib/scenarios/bookmarks.ts";
@@ -178,6 +180,7 @@
     addScratchEditor,
     addProjectView,
     addDbView,
+    setConsoleText,
     type ProjectAsk,
     setEditorSaveIssue,
     carryEditor,
@@ -720,9 +723,55 @@
     if (!sid || !tab) return;
     const title = profileTitle(db);
     const id = addDbView(sid, tab.kind === "local" ? "local" : "sftp", { place, dbId: db.id, kind: db.kind, view }, view === "console" ? title : `${title} · ${t("db.panel.activity")}`, sql);
-    // "First rows" of a table: the console runs what it opened with, once connected.
-    attachDb(id, { sessionId: sid, place, dbId: db.id, kind: db.kind, view, autorun: sql || null });
+    attachDb(id, { sessionId: sid, place, dbId: db.id, kind: db.kind, view });
     await connectDb(id);
+  }
+
+  /**
+   * The connected tab of a place whose session reads a database's schema (ADR
+   * 0081): the one that already has its browse connection, else the tab in
+   * focus, else the first. None is opened for it: the tree asks first.
+   */
+  function dbSessionFor(place: string | null, dbId: string): string | null {
+    const ready = tabsState.list
+      .filter((x) => !x.attach && dockConnection(x.status) === "connected" && (place === null ? x.kind === "local" : x.kind === "ssh" && x.serverId === place))
+      .map((x) => x.sessionId);
+    return pickSession(ready, tabsState.activeId, (sid) => browseDoc(sid, dbId) !== null);
+  }
+
+  /**
+   * A table of a database as a document of its place's tab (ADR 0081), on a
+   * view; a table already open is shown — with the filter, when a key was followed.
+   */
+  async function openDbTable(place: string | null, db: DbProfile, ref: TableRef, tab: "data" | "structure", where = "") {
+    const sid = await readyTabForPlace(place);
+    const t0 = sid ? findTab(sid) : null;
+    if (!sid || !t0) return;
+    const id = addDbView(sid, t0.kind === "local" ? "local" : "sftp", { place, dbId: db.id, kind: db.kind, view: "table", table: ref }, `${ref.name} · ${profileTitle(db)}`);
+    if (dbDoc(id)) {
+      if (tab !== "data") showTableTab(id, tab);
+      else if (where) void readTable(id, { where, orderBy: "" });
+      return;
+    }
+    const tableKind = catalogOf(place, db.id)?.catalog?.tables.find((x) => x.schema === ref.schema && x.name === ref.name)?.kind ?? "table";
+    attachDb(id, { sessionId: sid, place, dbId: db.id, kind: db.kind, view: "table", table: { ref, tableKind, tab, where } });
+    if (tab === "structure") showTableTab(id, "structure");
+    await connectDb(id);
+  }
+
+  /**
+   * A statement into a database's console (ADR 0081): the console of the
+   * place's tab already open gets it at its end; else one opens with it. It is
+   * not run: ⌘/Ctrl+Enter runs it.
+   */
+  async function dbSqlToConsole(place: string | null, db: DbProfile, sql: string) {
+    const sid = await readyTabForPlace(place);
+    if (!sid) return;
+    const known = getWorkspace(sid).editors.find((e) => e.db?.view === "console" && e.db.dbId === db.id && e.db.place === place);
+    if (!known) return openDb(place, db, "console", sql);
+    const text = known.content.trimEnd();
+    setConsoleText(sid, known.id, text ? `${text}\n\n${sql}` : sql);
+    showSessionView(sid, known.id);
   }
 
   /** The user's own client for a database, typed into its place's terminal. */
@@ -3050,7 +3099,16 @@
      mounted, and a hidden one must go on working for its own session. -->
 {#snippet dockPanel(id: PanelId, visible: boolean, sid: string | null)}
   {#if id === "db"}
-    <DbPanel {servers} connected={connectedServers} onOpen={(place, db, view, sql) => void openDb(place, db, view, sql)} onTerminal={(place, db) => void dbClientInTerminal(place, db)} />
+    <DbPanel
+      {servers}
+      connected={connectedServers}
+      sessionFor={dbSessionFor}
+      onConnect={(place) => void readyTabForPlace(place)}
+      onOpen={(place, db, view) => void openDb(place, db, view)}
+      onTable={(place, db, ref, tab) => void openDbTable(place, db, ref, tab)}
+      onConsoleSql={(place, db, sql) => void dbSqlToConsole(place, db, sql)}
+      onTerminal={(place, db) => void dbClientInTerminal(place, db)}
+    />
   {:else if id === "scenarios"}
     <ScenariosPanel
       {visible}
@@ -4061,6 +4119,14 @@
                                 typeInTerminal(tab.sessionId, argv);
                               }}
                               onAsk={aiOn ? (context) => askAiAboutResource(tab.sessionId, context, "db") : undefined}
+                            />
+                          {:else if ed.db.view === "table"}
+                            <DbTableView
+                              doc={ed}
+                              profile={dbProfile}
+                              serverName={dbServer}
+                              onopen={(ref, where) => dbProfile && void openDbTable(ed.db?.place ?? null, dbProfile, ref, "data", where)}
+                              onconsole={(sql) => dbProfile && void dbSqlToConsole(ed.db?.place ?? null, dbProfile, `${sql};`)}
                             />
                           {:else}
                             <DbActivityView sessionId={tab.sessionId} docId={ed.id} visible={zone?.active === ed.id && tabsState.activeId === tab.sessionId} profile={dbProfile} serverName={dbServer} />

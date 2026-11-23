@@ -39,7 +39,17 @@ export interface MenuSubmenu<T = MenuAction> {
   items: T[];
 }
 
-export type MenuItem = MenuAction | MenuSeparator | MenuSubmenu<MenuItem>;
+/**
+ * A line of text, not an action: why the rows above it are off (a table's cells
+ * that cannot be edited, ADR 0081). It wraps rather than being cut, and takes
+ * no focus.
+ */
+export interface MenuNote {
+  kind: "note";
+  text: string;
+}
+
+export type MenuItem = MenuAction | MenuSeparator | MenuNote | MenuSubmenu<MenuItem>;
 
 /** Reuse an existing menu inside one expandable group, without a second nesting level. */
 export function menuActions(items: readonly MenuItem[]): MenuAction[] {

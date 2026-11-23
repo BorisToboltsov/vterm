@@ -16,7 +16,7 @@ import {
 } from "./filesort";
 import type { FileEntry } from "../types";
 import { filterItems, viewMenu, type ListMenuText, type ListOrder } from "../ui/listview";
-import type { MenuSubmenu } from "../ui/ctxmenu";
+import { isAction, type MenuSubmenu } from "../ui/ctxmenu";
 
 const entry = (name: string, over: Partial<FileEntry> = {}): FileEntry => ({
   name,
@@ -285,7 +285,7 @@ describe("the listing in the lists' model (v1.29)", () => {
     cols.find((r) => r.label === "col:size")!.onSelect();
     cols.find((r) => r.label === "col:owner")!.onSelect();
     cols.find((r) => r.label === "col:name")!.onSelect();
-    (menu.find((i) => i.kind !== "separator" && i.kind !== "submenu" && i.label === "dir:asc") as { onSelect: () => void }).onSelect();
+    (menu.find((i) => isAction(i) && i.label === "dir:asc") as { onSelect: () => void }).onSelect();
     expect(picked.map((o) => o.sort)).toEqual([
       { key: "size", dir: "desc" },
       { key: "owner", dir: "asc" },

@@ -1,9 +1,9 @@
 <script lang="ts">
-  // Settings → Databases (ADR 0080): how many rows a statement brings back,
-  // how often the activity is read while on screen, and where it turns into
+  // Settings → Databases (ADR 0080, 0081): how many rows a statement brings
+  // back, how many a table's page shows, how often the activity is read while on screen, and where it turns into
   // "needs attention". A value is taken when the field is left, within bounds.
   import { t, type MessageKey } from "../i18n";
-  import { settings, clampDbActivity, clampDbRows, sanitizeDbThresholds } from "../settings/settings.svelte";
+  import { settings, clampDbActivity, clampDbPage, clampDbRows, sanitizeDbThresholds } from "../settings/settings.svelte";
   import InfoHint from "../ui/InfoHint.svelte";
   import type { DbThresholds } from "./dbactivity";
 
@@ -40,6 +40,19 @@
         value={settings.dbMaxRows}
         onchange={(e) => take(e.currentTarget, (n) => (settings.dbMaxRows = clampDbRows(n)))}
         data-testid="settings-db-rows"
+      />
+    </label>
+    <label class="block w-40 text-xs text-muted">
+      <span class="flex items-center gap-1">{t("settings.dbPageRows")}<InfoHint text={t("settings.dbPageRowsHint")} /></span>
+      <input
+        type="number"
+        min="20"
+        max="1000"
+        step="10"
+        class={input}
+        value={settings.dbPageRows}
+        onchange={(e) => take(e.currentTarget, (n) => (settings.dbPageRows = clampDbPage(n)))}
+        data-testid="settings-db-page"
       />
     </label>
     <label class="block w-40 text-xs text-muted">

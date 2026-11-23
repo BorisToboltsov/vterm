@@ -8,6 +8,12 @@
 // It closes with the document (`closeDbDoc`), the tab (`forgetDb` in
 // `closeTabFully`) and the session (the backend closes it with `end_session`).
 // Only this store calls the database commands (`vterm/owned-imports`).
+//
+// A database's browse connection (ADR 0081) is a document of the store with no
+// view of its own (`browseId`): the tree reads the catalog on it, and every
+// table document of the tab reads its rows on it, one after another (its
+// lane). It ends with the tab, the session, or "Disconnect" — never with a
+// table document, which only borrows it.
 
 import { dbApply, dbCancel, dbClose, dbConnect, dbForgetPassword, dbLocalList, dbQuery, dbSaveLocal, setServerDatabases } from "../api/db";
 import { nullWrittenByCall, writtenByCall } from "../api/call";
@@ -17,7 +23,37 @@ import type { DbConnect, DbKind, DbOutcome, DbProfile, DbTx, ServerProfile } fro
 import { settings } from "../settings/settings.svelte";
 import { classify, writes, type Classified } from "../db/sqlclass";
 import { applyFailureText, dbFailure, errorCodeText, failureText, refusedFailure, type DbFailure } from "../db/dberror";
-import { CATALOG_MAX, catalogQueries, indexesSql, parseColumns, parseIndexes, parseRoutines, parseTableMeta, parseTables, tableMetaSql, type Catalog } from "../db/dbcatalog";
+import { CATALOG_MAX, catalogQueries, indexesSql, parseColumns, parseIndexes, parseKeys, parseRoutines, parseTableMeta, parseTables, tableMetaSql, type Catalog, type TableKind } from "../db/dbcatalog";
+import {
+  countSql,
+  countTail,
+  ddlQueries,
+  keysOf,
+  matchWhere,
+  appendPage,
+  moreRows,
+  pageOf,
+  pageSql,
+  pageTail,
+  rereadRows,
+  parseColumns as parseStructColumns,
+  parseForeign,
+  parseIndexes as parseStructIndexes,
+  parseSize,
+  readRefusal,
+  rowValues,
+  shownDdl,
+  structureQueries,
+  tableDdl,
+  tableKey,
+  valueQueries,
+  VALUE_CHUNK,
+  VALUE_MAX,
+  viewDdl,
+  type ReadRefusal,
+  type TableRef,
+  type TableStructure,
+} from "../db/dbtable";
 import { explainSql, flatten, parsePlan, resolveAliases, type Plan } from "../db/dbplan";
 import { editCount, editStatements, editTarget, NO_EDITS, setCell, sourceTable, toggleDelete, type Edits, type EditTarget, type NotEditable } from "../db/dbedit";
 import {
@@ -33,7 +69,8 @@ import {
   type Activity,
 } from "../db/dbactivity";
 
-export type DbView = "console" | "activity";
+/** A document's view; `browse` — a database's browse connection, shown by no view (ADR 0081). */
+export type DbView = "console" | "activity" | "table" | "browse";
 
 export interface DbConnInfo {
   id: string;
@@ -76,6 +113,28 @@ export interface DbActivityState {
   notes: Partial<Record<"sessions" | "locks" | "replicas" | "statements", string>>;
 }
 
+/** A table document (ADR 0081): what it shows, as the rows on screen were read. */
+export interface DbTableState {
+  ref: TableRef;
+  tableKind: TableKind;
+  tab: "data" | "structure" | "ddl";
+  /** The filter and the sort of the rows shown. */
+  where: string;
+  orderBy: string;
+  /** The table has rows after those read. */
+  hasNext: boolean;
+  /** Reading the rows after those shown; `changed` — the table's columns are not those of the rows shown. */
+  more: { running: boolean; error: string | null; changed: boolean } | null;
+  /** Why the last filter or sort was not run: the document only reads. */
+  refusal: ReadRefusal | null;
+  /** The exact count, of the filter it was asked with. */
+  count: { where: string; n: number | null; running: boolean; error: string | null } | null;
+  structure: { data: TableStructure | null; loading: boolean; error: string | null } | null;
+  ddl: { text: string | null; how: "server" | "assembled" | "none"; loading: boolean; error: string | null } | null;
+  /** A long value read in full, for the value panel. */
+  value: { row: number; col: number; text: string | null; loading: boolean; error: string | null; capped: boolean } | null;
+}
+
 export interface DbDocState {
   sessionId: string;
   place: string | null;
@@ -95,9 +154,10 @@ export interface DbDocState {
   txState: DbTx;
   /** The server reads `\` in a string as an escape (MySQL's default). */
   backslashEscapes: boolean;
-  /** A statement to run once connected ("first rows" of a table); cleared when it ran. */
-  autorun: string | null;
   activity: DbActivityState | null;
+  /** The browse connection a table document reads on; null — its own connection. */
+  via: string | null;
+  table: DbTableState | null;
 }
 
 export interface DbCatalogState {
@@ -111,6 +171,8 @@ export interface DbCatalogState {
 let docs = $state.raw<Record<string, DbDocState>>({});
 let catalogs = $state.raw<Record<string, DbCatalogState>>({});
 let local = $state.raw<DbProfile[]>([]);
+/** Exact row counts asked for, by `place/db#schema.table`: shown in the tree instead of the estimate. */
+let counts = $state.raw<Record<string, number>>({});
 
 function putDoc(docId: string, d: DbDocState | null): void {
   const next = { ...docs };
@@ -162,11 +224,40 @@ const catalogKey = (place: string | null, dbId: string) => `${place ?? "local"}/
 
 export const catalogOf = (place: string | null, dbId: string): DbCatalogState | null => catalogs[catalogKey(place, dbId)] ?? null;
 
-/** Whether a document of the place's database has a live connection (the tree reads its catalog then). */
+/** A document of the place's database whose connection reads the catalog: a browse connection, else a console. */
 export function openDocOf(place: string | null, dbId: string): string | null {
-  for (const [id, d] of Object.entries(docs)) if (d.place === place && d.dbId === dbId && d.view === "console" && d.conn) return id;
-  return null;
+  let console: string | null = null;
+  for (const [id, d] of Object.entries(docs)) {
+    if (d.place !== place || d.dbId !== dbId || !d.conn) continue;
+    if (d.view === "browse") return id;
+    if (d.view === "console") console ??= id;
+  }
+  return console;
 }
+
+/** A tab's browse connection of a database: a document of the store, with no view. */
+export const browseId = (sessionId: string, dbId: string): string => `browse:${sessionId}:${dbId}`;
+
+/** The browse connection of a tab, if it was opened. */
+export const browseDoc = (sessionId: string, dbId: string): DbDocState | null => docs[browseId(sessionId, dbId)] ?? null;
+
+/** Where a document's statements wait their turn: a table document — on its browse connection's. */
+const laneOf = (docId: string): string => docs[docId]?.via ?? docId;
+
+/** The connection a document runs on: its own, or its browse connection's. */
+function connOf(d: DbDocState | null | undefined): DbConnInfo | null {
+  if (!d) return null;
+  return d.via ? (docs[d.via]?.conn ?? null) : d.conn;
+}
+
+/** A table document's connection as it stands: its browse connection's state. */
+export function tableConn(docId: string): DbDocState | null {
+  const via = docs[docId]?.via;
+  return via ? (docs[via] ?? null) : null;
+}
+
+/** The exact row count of a table, when it was counted. */
+export const exactCount = (place: string | null, dbId: string, ref: TableRef): number | null => counts[`${catalogKey(place, dbId)}#${tableKey(ref)}`] ?? null;
 
 function patch(docId: string, next: Partial<DbDocState>): void {
   const d = docs[docId];
@@ -176,12 +267,37 @@ function patch(docId: string, next: Partial<DbDocState>): void {
 /** Start tracking a document (its connection comes with `connectDb`). */
 export function attachDb(
   docId: string,
-  init: { sessionId: string; place: string | null; dbId: string; kind: DbKind; view: DbView; autorun?: string | null },
+  init: {
+    sessionId: string;
+    place: string | null;
+    dbId: string;
+    kind: DbKind;
+    view: DbView;
+    /** A table document: the table, and how it opens. */
+    table?: { ref: TableRef; tableKind: TableKind; tab?: DbTableState["tab"]; where?: string };
+  },
 ): void {
   if (docs[docId]) return;
+  const { table, ...rest } = init;
   putDoc(docId, {
-    ...init,
-    autorun: init.autorun ?? null,
+    ...rest,
+    via: table ? browseId(init.sessionId, init.dbId) : null,
+    table: table
+      ? {
+          ref: table.ref,
+          tableKind: table.tableKind,
+          tab: table.tab ?? "data",
+          where: table.where ?? "",
+          orderBy: "",
+          hasNext: false,
+          more: null,
+          refusal: null,
+          count: null,
+          structure: null,
+          ddl: null,
+          value: null,
+        }
+      : null,
     conn: null,
     status: "connecting",
     failure: null,
@@ -199,7 +315,7 @@ export function attachDb(
 
 const queues = new Map<string, Promise<unknown>>();
 
-/** Run `work` after whatever the document is running: one statement at a time. */
+/** Run `work` after whatever its lane is running (`laneOf`): one statement at a time on a connection. */
 function serial<T>(docId: string, work: () => Promise<T>): Promise<T> {
   const before = queues.get(docId) ?? Promise.resolve();
   const next = before.then(work, work);
@@ -220,10 +336,10 @@ function stands(docId: string, o: DbOutcome): void {
 
 /** A query of the app's own (catalog, meta, activity): its answer, or null — the doc said why. */
 async function quiet(docId: string, sql: string, rows = 10_000): Promise<DbOutcome | null> {
-  const d = docs[docId];
-  if (!d?.conn) return null;
+  const conn = connOf(docs[docId]);
+  if (!conn) return null;
   try {
-    const out = await dbQuery(d.conn.id, sql, rows, false);
+    const out = await dbQuery(conn.id, sql, rows, false);
     stands(docId, out);
     return out;
   } catch (e) {
@@ -232,10 +348,11 @@ async function quiet(docId: string, sql: string, rows = 10_000): Promise<DbOutco
   }
 }
 
-/** A refusal of a command: the connection is gone — say so on the document. */
+/** A refusal of a command: the connection is gone — say so on the document (a table's: on its browse connection). */
 function lost(docId: string, e: unknown): DbFailure {
   const f = dbFailure(e);
-  if (f.kind === "closed" || f.kind === "noSession") patch(docId, { conn: null, status: "closed", failure: f, running: null, txState: "none" });
+  const owner = docs[docId]?.via ?? docId;
+  if (f.kind === "closed" || f.kind === "noSession") patch(owner, { conn: null, status: "closed", failure: f, running: null, txState: "none" });
   return f;
 }
 
@@ -248,6 +365,14 @@ const opening = new Set<string>();
  */
 export async function connectDb(docId: string, password: string | null = null, remember = false): Promise<void> {
   const d = docs[docId];
+  if (d?.via) {
+    // A table document connects its browse connection, which reads it once open.
+    if (!docs[d.via]) attachDb(d.via, { sessionId: d.sessionId, place: d.place, dbId: d.dbId, kind: d.kind, view: "browse" });
+    if (docs[d.via]?.conn) {
+      if (!d.result && !d.running) await readTable(docId);
+    } else await connectDb(d.via, password, remember);
+    return;
+  }
   if (!d || d.conn || opening.has(docId)) return;
   opening.add(docId);
   patch(docId, { status: "connecting", failure: null });
@@ -273,12 +398,40 @@ export async function connectDb(docId: string, password: string | null = null, r
   }
   patch(docId, { conn: { id: opened.connId, version: opened.version, readOnly: opened.readOnly, prod: opened.prod }, status: "ready", failure: null });
   if (opened.rememberFailed) diag.warn("db", "the database password was not kept in the keychain: the next connection asks again");
-  if (d.view === "console") void loadCatalog(d.place, d.dbId, docId);
-  const autorun = docs[docId]?.autorun ?? null;
-  if (autorun) {
-    patch(docId, { autorun: null });
-    await runSql(docId, autorun);
+  if (d.view === "console" || d.view === "browse") void loadCatalog(d.place, d.dbId, docId);
+  if (d.view === "browse") {
+    // The table documents that waited on it.
+    for (const [id, x] of Object.entries(docs)) if (x.via === docId && !x.result && !x.running) void readTable(id);
   }
+}
+
+/**
+ * Open a tab's browse connection of a database (the tree asked, its place's tab
+ * being connected): once — a closed or failed one opens again only when asked.
+ */
+export function openBrowse(sessionId: string, place: string | null, dbId: string, kind: DbKind): string {
+  const id = browseId(sessionId, dbId);
+  if (!docs[id]) {
+    attachDb(id, { sessionId, place, dbId, kind, view: "browse" });
+    void connectDb(id);
+  }
+  return id;
+}
+
+/** "Disconnect": the browse connection closes; its table documents say so and can connect it again. */
+export function closeBrowse(sessionId: string, dbId: string): void {
+  closeDbDoc(browseId(sessionId, dbId));
+}
+
+/** What disconnecting a browse connection would lose: a table document's work on it. */
+export function browseWork(sessionId: string, dbId: string): DbWork | null {
+  const id = browseId(sessionId, dbId);
+  for (const [docId, d] of Object.entries(docs)) {
+    if (d.via !== id) continue;
+    const work = dbWork(docId);
+    if (work) return work;
+  }
+  return null;
 }
 
 /** What a statement needs before it runs: the lock lifted, a question — or nothing. */
@@ -357,9 +510,11 @@ export function runSql(docId: string, statement: string, writable = false): Prom
 /** Stop what the document is running. */
 export async function cancelDb(docId: string): Promise<void> {
   const d = docs[docId];
-  if (!d?.conn || !d.running) return;
+  const conn = connOf(d);
+  // On a shared connection, what runs is this document's only while it says it runs.
+  if (!conn || !d?.running) return;
   try {
-    await dbCancel(d.conn.id);
+    await dbCancel(conn.id);
   } catch (e) {
     lost(docId, e);
   }
@@ -415,7 +570,7 @@ export function planOf(docId: string, statement: string, analyze: boolean): Prom
 
 /** Find out whether the last answer can be edited (its table's key) — once, when first asked. */
 export function prepareEdit(docId: string): Promise<void> {
-  return serial(docId, async () => {
+  return serial(laneOf(docId), async () => {
     const d = docs[docId];
     // A failed look at the table is taken again.
     if (!d?.result || (d.edit.target !== null && d.edit.target !== "metaFailed")) return;
@@ -471,15 +626,16 @@ export const pendingCount = (docId: string): number => {
  * grid shows what the table now holds; a statement that changed something never does.
  */
 export function applyDbEdits(docId: string, writable: boolean): Promise<boolean> {
-  return serial(docId, async () => {
+  return serial(laneOf(docId), async () => {
     const d = docs[docId];
-    if (!d?.conn || !d.result?.outcome.read || !d.edit.target || typeof d.edit.target === "string") return false;
+    const conn = connOf(d);
+    if (!d || !conn || !d.result?.outcome.read || !d.edit.target || typeof d.edit.target === "string") return false;
     const statements = editStatements(d.result.outcome, d.edit.target, d.edit.edits, d.kind, d.backslashEscapes);
     if (statements.length === 0) return false;
     patch(docId, { edit: { ...d.edit, applying: true, error: null } });
     let error: string | null = null;
     try {
-      const { failure } = await dbApply(d.conn.id, statements, writable);
+      const { failure } = await dbApply(conn.id, statements, writable);
       if (failure) error = applyFailureText(failure);
     } catch (e) {
       error = failureText(lost(docId, e));
@@ -493,8 +649,8 @@ export function applyDbEdits(docId: string, writable: boolean): Promise<boolean>
     const statement = d.result.statement;
     patch(docId, { edit: { target: null, edits: NO_EDITS, applying: false, error: null } });
     diag.info("db", "table edits applied", { count: statements.length });
-    // Read again, outside this turn of the queue.
-    queueMicrotask(() => void runSql(docId, statement));
+    // Read again, outside this turn of the queue: a table document — the rows it showed.
+    queueMicrotask(() => void (d.table ? readTable(docId, {}, "shown") : runSql(docId, statement)));
     return true;
   });
 }
@@ -568,6 +724,296 @@ export function stopDbSession(docId: string, sessionId: string, terminate: boole
   });
 }
 
+// ── Tables (ADR 0081) ─────────────────────────────────────────────────────────
+
+function patchTable(docId: string, next: Partial<DbTableState>): void {
+  const d = docs[docId];
+  if (d?.table) patch(docId, { table: { ...d.table, ...next } });
+}
+
+/**
+ * Read a table document's rows from the start — with a new filter or sort when
+ * given: a page of them, or (`shown`, a refresh, edits applied) as many as were
+ * shown, so the list stays where it was. It only reads: what the user typed is
+ * run only as one statement that reads and closes what it opened
+ * (`readRefusal`); otherwise the rows stay as they were and the document says
+ * why. False — nothing new was read.
+ */
+export function readTable(docId: string, next: Partial<Pick<DbTableState, "where" | "orderBy">> = {}, extent: "page" | "shown" = "page"): Promise<boolean> {
+  return serial(laneOf(docId), async () => {
+    const d = docs[docId];
+    const conn = connOf(d);
+    if (!d?.table || !conn) return false;
+    const want = { ...d.table, ...next };
+    const page = settings.dbPageRows;
+    const rows = extent === "shown" ? rereadRows(d.result?.outcome.rows.length ?? 0, page) : page;
+    const sql = pageSql(d.kind, want.ref, want.where, want.orderBy, 0, rows);
+    const refusal = readRefusal(d.kind, sql, pageTail(0, rows));
+    if (refusal) {
+      patchTable(docId, { refusal });
+      return false;
+    }
+    patch(docId, { running: { statement: sql, since: Date.now() }, failure: null });
+    let outcome: DbOutcome;
+    try {
+      outcome = await dbQuery(conn.id, sql, rows + 1, false);
+    } catch (e) {
+      const f = lost(docId, e);
+      // The backend saw a change the classifier here did not: the document does not ask, it only reads.
+      if (f.kind === "readOnly") {
+        patch(docId, { running: null });
+        patchTable(docId, { refusal: "notRead" });
+      } else patch(docId, { running: null, failure: f });
+      return false;
+    }
+    stands(docId, outcome);
+    const now = docs[docId];
+    if (!now?.table) return false;
+    const { outcome: shown, hasNext } = pageOf(outcome, rows);
+    const filterChanged = want.where !== now.table.where;
+    patch(docId, {
+      running: null,
+      result: { statement: sql, cls: classify(sql, d.kind), outcome: shown, at: Date.now() },
+      edit: { target: null, edits: NO_EDITS, applying: false, error: null },
+      table: { ...now.table, ...next, hasNext, more: null, refusal: null, value: null, count: filterChanged ? null : now.table.count },
+    });
+    // Whether its cells may be edited is known before anyone asks: the menu and
+    // a double click say "no, and why" at once. After this read, on its lane.
+    void prepareEdit(docId);
+    return true;
+  });
+}
+
+/**
+ * Read the rows after those a table document shows — the list was scrolled to
+ * its end — and add them below: the rows before keep their numbers, so the
+ * pending edits, the selection and a value read in full stay. One read at a
+ * time, never past `TABLE_ROWS_MAX`, and judged a read like every other.
+ * False — nothing was added.
+ */
+export function readMoreTable(docId: string): Promise<boolean> {
+  const d = docs[docId];
+  const shown = d?.result?.outcome;
+  if (!d?.table || !shown || shown.error || !d.table.hasNext || d.table.more?.running || d.table.more?.changed) return Promise.resolve(false);
+  const offset = shown.rows.length;
+  const rows = moreRows(offset, settings.dbPageRows);
+  if (rows === 0) return Promise.resolve(false);
+  patchTable(docId, { more: { running: true, error: null, changed: false } });
+  return serial(laneOf(docId), async () => {
+    const d = docs[docId];
+    const conn = connOf(d);
+    // Another read came first (a filter, a refresh): these are not the rows after its own.
+    if (!d?.table || d.result?.outcome !== shown || !conn) {
+      patchTable(docId, { more: null });
+      return false;
+    }
+    const sql = pageSql(d.kind, d.table.ref, d.table.where, d.table.orderBy, offset, rows);
+    const refusal = readRefusal(d.kind, sql, pageTail(offset, rows));
+    if (refusal) {
+      patchTable(docId, { more: null, refusal });
+      return false;
+    }
+    patch(docId, { running: { statement: sql, since: Date.now() }, failure: null });
+    let outcome: DbOutcome;
+    try {
+      outcome = await dbQuery(conn.id, sql, rows + 1, false);
+    } catch (e) {
+      // Said as the document's failure (or a refusal), as a read from the start says it.
+      const f = lost(docId, e);
+      patch(docId, f.kind === "readOnly" ? { running: null } : { running: null, failure: f });
+      patchTable(docId, f.kind === "readOnly" ? { more: null, refusal: "notRead" } : { more: null });
+      return false;
+    }
+    stands(docId, outcome);
+    const now = docs[docId];
+    if (!now?.table || !now.result || now.result.outcome !== shown) return false;
+    if (outcome.error) {
+      patch(docId, { running: null });
+      patchTable(docId, { more: { running: false, error: outcome.error.message, changed: false } });
+      return false;
+    }
+    const { outcome: page, hasNext } = pageOf(outcome, rows);
+    const joined = appendPage(shown, page);
+    if (!joined) {
+      // The table changed between the reads: its rows are read again from the start, by the user's word.
+      diag.info("db", "table columns changed between reads", { rows: offset });
+      patch(docId, { running: null });
+      patchTable(docId, { more: { running: false, error: null, changed: true } });
+      return false;
+    }
+    patch(docId, {
+      running: null,
+      result: { ...now.result, outcome: joined, at: Date.now() },
+      table: { ...now.table, hasNext, more: null },
+    });
+    return true;
+  });
+}
+
+/** Count a table's rows exactly, with the filter shown: by the user's word, it is a whole pass. */
+export function countTable(docId: string): Promise<void> {
+  const d = docs[docId];
+  if (!d?.table) return Promise.resolve();
+  const where = d.table.where;
+  const sql = countSql(d.kind, d.table.ref, where);
+  if (readRefusal(d.kind, sql, countTail(d.kind, d.table.ref, where))) {
+    patchTable(docId, { refusal: "open" });
+    return Promise.resolve();
+  }
+  patchTable(docId, { count: { where, n: null, running: true, error: null } });
+  return serial(laneOf(docId), async () => {
+    patch(docId, { running: { statement: sql, since: Date.now() } });
+    const out = await quiet(docId, sql, 1);
+    const now = docs[docId];
+    if (!now?.table) return;
+    const n = out && !out.error ? Number(out.rows[0]?.[0]) : NaN;
+    const ok = Number.isFinite(n);
+    patch(docId, {
+      running: null,
+      table: { ...now.table, count: { where, n: ok ? n : null, running: false, error: ok ? null : (out?.error?.message ?? failureText({ kind: "closed" })) } },
+    });
+    if (ok && !where.trim()) counts = { ...counts, [`${catalogKey(now.place, now.dbId)}#${tableKey(now.table.ref)}`]: n };
+  });
+}
+
+/** Count a table's rows on a browse connection (the tree's "Count rows"). */
+export function countRows(browse: string, ref: TableRef): Promise<number | null> {
+  const d = docs[browse];
+  if (!d) return Promise.resolve(null);
+  return serial(browse, async () => {
+    const out = await quiet(browse, countSql(d.kind, ref, ""), 1);
+    const n = out && !out.error ? Number(out.rows[0]?.[0]) : NaN;
+    if (!Number.isFinite(n)) return null;
+    counts = { ...counts, [`${catalogKey(d.place, d.dbId)}#${tableKey(ref)}`]: n };
+    return n;
+  });
+}
+
+/** Show a view of a table document; the structure and the DDL are read the first time they are shown. */
+export function showTableTab(docId: string, tab: DbTableState["tab"]): void {
+  patchTable(docId, { tab });
+  const t = docs[docId]?.table;
+  if (tab === "structure" && !t?.structure?.data) void loadStructure(docId);
+  if (tab === "ddl" && !t?.ddl?.text) void loadDdl(docId);
+}
+
+/** Read a table's structure: its columns, indexes, foreign keys both ways, size and upkeep. */
+async function readStructure(docId: string): Promise<TableStructure | null> {
+  const d = docs[docId];
+  if (!d?.table) return null;
+  const q = structureQueries(d.kind, d.table.ref);
+  const columns = await quiet(docId, q.columns, 2000);
+  if (!columns || columns.error) {
+    patchTable(docId, { structure: { data: null, loading: false, error: columns?.error?.message ?? failureText({ kind: "closed" }) } });
+    return null;
+  }
+  const indexes = await quiet(docId, q.indexes, 500);
+  const foreign = await quiet(docId, q.foreign, 2000);
+  const size = await quiet(docId, q.size, 1);
+  const fks = foreign && !foreign.error ? parseForeign(foreign, d.table.ref) : { foreign: [], incoming: [] };
+  const data: TableStructure = {
+    columns: parseStructColumns(columns),
+    indexes: indexes && !indexes.error ? parseStructIndexes(indexes) : [],
+    ...fks,
+    size: size && !size.error ? parseSize(size) : null,
+  };
+  patchTable(docId, { structure: { data, loading: false, error: null } });
+  return data;
+}
+
+export function loadStructure(docId: string): Promise<void> {
+  patchTable(docId, { structure: { data: docs[docId]?.table?.structure?.data ?? null, loading: true, error: null } });
+  return serial(laneOf(docId), async () => {
+    await readStructure(docId);
+  });
+}
+
+/** Read a table's DDL: MySQL's own; PostgreSQL's put together from its catalog, which the view says. */
+export function loadDdl(docId: string): Promise<void> {
+  const fail = (error: string) => patchTable(docId, { ddl: { text: null, how: "none", loading: false, error } });
+  patchTable(docId, { ddl: { text: null, how: "none", loading: true, error: null } });
+  return serial(laneOf(docId), async () => {
+    const d = docs[docId];
+    if (!d?.table) return;
+    const { ref, tableKind } = d.table;
+    const q = ddlQueries(d.kind, ref, tableKind);
+    if (q.show) {
+      const out = await quiet(docId, q.show, 1);
+      const text = out && !out.error ? shownDdl(out) : null;
+      if (text === null) return fail(out?.error?.message ?? failureText({ kind: "closed" }));
+      patchTable(docId, { ddl: { text, how: "server", loading: false, error: null } });
+      return;
+    }
+    if (q.view) {
+      const out = await quiet(docId, q.view, 1);
+      const def = out && !out.error ? (out.rows[0]?.[0] ?? null) : null;
+      if (def === null) return fail(out?.error?.message ?? failureText({ kind: "closed" }));
+      patchTable(docId, { ddl: { text: viewDdl(ref, tableKind, def), how: "assembled", loading: false, error: null } });
+      return;
+    }
+    if (!q.constraints || !q.partition) {
+      patchTable(docId, { ddl: { text: null, how: "none", loading: false, error: null } });
+      return;
+    }
+    const structure = docs[docId]?.table?.structure?.data ?? (await readStructure(docId));
+    if (!structure) return fail(docs[docId]?.table?.structure?.error ?? failureText({ kind: "closed" }));
+    const constraints = await quiet(docId, q.constraints, 500);
+    const partition = await quiet(docId, q.partition, 1);
+    if (!constraints || constraints.error) return fail(constraints?.error?.message ?? failureText({ kind: "closed" }));
+    const text = tableDdl(ref, structure.columns, constraints, partition && !partition.error ? (partition.rows[0]?.[0] ?? null) : null, structure.indexes);
+    patchTable(docId, { ddl: { text, how: "assembled", loading: false, error: null } });
+  });
+}
+
+/**
+ * Read in full a value the backend cut at 64 KiB, by its row's primary key, in
+ * parts small enough not to be cut again — up to `VALUE_MAX` characters.
+ */
+export function readFullValue(docId: string, row: number, col: number, keyColumns: readonly string[]): Promise<void> {
+  const d = docs[docId];
+  const o = d?.result?.outcome;
+  if (!d?.table || !o) return Promise.resolve();
+  const values = rowValues(o, row, keyColumns);
+  const where = values && matchWhere(d.kind, keyColumns, values, d.backslashEscapes);
+  if (!where) {
+    patchTable(docId, { value: { row, col, text: null, loading: false, error: null, capped: false } });
+    return Promise.resolve();
+  }
+  patchTable(docId, { value: { row, col, text: null, loading: true, error: null, capped: false } });
+  const q = valueQueries(d.kind, d.table.ref, o.columns[col].name, where);
+  return serial(laneOf(docId), async () => {
+    const at = () => docs[docId]?.table?.value;
+    const done = (text: string | null, error: string | null, capped = false) => {
+      const v = at();
+      if (v && v.row === row && v.col === col) patchTable(docId, { value: { row, col, text, loading: false, error, capped } });
+    };
+    const len = await quiet(docId, q.length, 1);
+    const total = len && !len.error ? Number(len.rows[0]?.[0]) : NaN;
+    if (!Number.isFinite(total)) return done(null, len?.error?.message ?? failureText({ kind: "closed" }));
+    let text = "";
+    for (let from = 1; from <= Math.min(total, VALUE_MAX); from += VALUE_CHUNK) {
+      const v = at();
+      if (!v || v.row !== row || v.col !== col) return;
+      const part = await quiet(docId, q.part(from), 1);
+      if (!part || part.error || part.cut.length > 0) return done(null, part?.error?.message ?? failureText({ kind: "closed" }));
+      text += part.rows[0]?.[0] ?? "";
+    }
+    done(text, null, total > VALUE_MAX);
+  });
+}
+
+/** The value panel moved to another cell: a value read in full is of the cell it was read for. */
+export function forgetFullValue(docId: string): void {
+  patchTable(docId, { value: null });
+}
+
+/** The primary key's columns of a table document's table, from the catalog. */
+export function tablePrimary(docId: string): string[] {
+  const d = docs[docId];
+  if (!d?.table) return [];
+  return keysOf(catalogs[catalogKey(d.place, d.dbId)]?.catalog ?? null, d.table.ref).primary;
+}
+
 // ── Catalog ───────────────────────────────────────────────────────────────────
 
 /** Read a database's catalog over a document's connection. */
@@ -586,6 +1032,7 @@ export function loadCatalog(place: string | null, dbId: string, docId: string): 
     const tables = await quiet(docId, q.tables, CATALOG_MAX);
     const routines = await quiet(docId, q.routines, CATALOG_MAX);
     const columns = await quiet(docId, q.columns, CATALOG_MAX);
+    const keys = await quiet(docId, q.keys, CATALOG_MAX);
     if (!tables || tables.error) {
       putCatalog(key, { catalog: had?.catalog ?? null, loading: false, error: tables?.error?.message ?? failureText({ kind: "closed" }) });
       return;
@@ -595,8 +1042,9 @@ export function loadCatalog(place: string | null, dbId: string, docId: string): 
         tables: parseTables(d.kind, tables),
         routines: routines && !routines.error ? parseRoutines(routines) : [],
         columns: columns && !columns.error ? parseColumns(columns) : {},
+        keys: keys && !keys.error ? parseKeys(keys) : {},
         current: current?.rows[0]?.[0] ?? null,
-        cut: !!(tables.truncated || routines?.truncated || columns?.truncated),
+        cut: !!(tables.truncated || routines?.truncated || columns?.truncated || keys?.truncated),
       },
       loading: false,
       error: null,
@@ -611,7 +1059,10 @@ export function closeDbDoc(docId: string): void {
   const d = docs[docId];
   if (!d) return;
   if (d.conn) void dbClose(d.conn.id).catch(writtenByCall);
-  queues.delete(docId);
+  // A table document borrows its browse connection: what it runs there stops, the connection stays.
+  const shared = connOf(d);
+  if (d.via && d.running && shared) void dbCancel(shared.id).catch(writtenByCall);
+  if (!d.via) queues.delete(docId);
   putDoc(docId, null);
 }
 
@@ -638,7 +1089,8 @@ export function dbWork(docId: string): DbWork | null {
 
 /** The documents of a tab whose work would be lost with it. */
 export function dbWorking(sessionId: string): string[] {
-  return Object.keys(docs).filter((id) => docs[id].sessionId === sessionId && dbWork(id) !== null);
+  // A browse connection holds no work of the user's: the catalog it reads is read again.
+  return Object.keys(docs).filter((id) => docs[id].sessionId === sessionId && docs[id].view !== "browse" && dbWork(id) !== null);
 }
 
 /** A tab's documents, for its trip to another window. */
@@ -651,7 +1103,7 @@ export function adoptDb(arrived: Record<string, DbDocState> | undefined): void {
   for (const [id, d] of Object.entries(arrived ?? {})) {
     putDoc(id, { ...d, running: null });
     // The catalog is this window's own: it has none of this database yet.
-    if (d.conn && d.view === "console" && !catalogs[catalogKey(d.place, d.dbId)]) void loadCatalog(d.place, d.dbId, id);
+    if (d.conn && (d.view === "console" || d.view === "browse") && !catalogs[catalogKey(d.place, d.dbId)]) void loadCatalog(d.place, d.dbId, id);
   }
 }
 

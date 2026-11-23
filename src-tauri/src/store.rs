@@ -649,10 +649,11 @@ mod tests {
         fs::write(&path, b"{ not json").expect("write");
         let (got, events) = crate::diag::capture(|| read_store::<Vec<String>>(&path));
         assert!(got.is_empty());
+        // What it wrote instead, should it not be there: which branch ran.
         let e = events
             .iter()
             .find(|e| e.text == "store file did not parse: moved aside")
-            .expect("the quarantine is written");
+            .unwrap_or_else(|| panic!("the quarantine is written: {events:?}"));
         assert_eq!(e.level, crate::diag::Level::Warn);
         assert_eq!(e.source.as_deref(), Some("storage"));
         assert!(e.fields["file"]

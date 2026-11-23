@@ -1016,9 +1016,49 @@ pub fn capture<R>(f: impl FnOnce() -> R) -> (R, Vec<Event>) {
 #[cfg(test)]
 pub struct Capture;
 
+/// The global subscriber of the tests: asked about every call site, it enables
+/// nothing — the capturing thread's own subscriber decides. Without it a
+/// capture could lose its event: with one subscriber registered, tracing-core
+/// computes a call site's interest from the subscriber of the thread that
+/// reaches it first, and a parallel test with none cached a shared call site as
+/// "never" for every thread (the store's quarantine warning, Windows CI).
+#[cfg(test)]
+struct Asked;
+
+#[cfg(test)]
+impl Subscriber for Asked {
+    fn register_callsite(&self, _: &'static Metadata<'static>) -> Interest {
+        Interest::sometimes()
+    }
+    fn enabled(&self, _: &Metadata<'_>) -> bool {
+        false
+    }
+    fn new_span(&self, _: &Attributes<'_>) -> Id {
+        Id::from_u64(1)
+    }
+    fn record(&self, _: &Id, _: &tracing::span::Record<'_>) {}
+    fn record_follows_from(&self, _: &Id, _: &Id) {}
+    fn event(&self, _: &tracing::Event<'_>) {}
+    fn enter(&self, _: &Id) {}
+    fn exit(&self, _: &Id) {}
+}
+
+/// Install `Asked` once, before the first capture: from then on every call
+/// site is asked each time, whichever thread registered it.
+#[cfg(test)]
+fn every_call_site_asked() {
+    static ONCE: std::sync::Once = std::sync::Once::new();
+    ONCE.call_once(|| {
+        // The app's own subscriber (`start`) is never installed in tests.
+        tracing::subscriber::set_global_default(Asked)
+            .expect("no other global subscriber in tests");
+    });
+}
+
 #[cfg(test)]
 impl Capture {
     pub fn start() -> Capture {
+        every_call_site_asked();
         CAPTURED.with(|c| *c.borrow_mut() = Some(Vec::new()));
         Capture
     }
@@ -1070,6 +1110,25 @@ mod tests {
             submit(Event::new(Level::Warn, Some("app"), "not this".into()));
             assert_eq!(c.events().len(), 2);
         });
+    }
+
+    #[test]
+    fn an_event_is_heard_though_another_thread_reached_its_call_site_first() {
+        // One call site, reached first by a thread with no subscriber of its own
+        // while this capture is the only one registered: the capture still hears it.
+        fn shared() {
+            tracing::warn!(source = "storage", "a call site two threads reach");
+        }
+        let (_, events) = capture(|| {
+            std::thread::spawn(shared).join().expect("the other thread");
+            shared();
+        });
+        assert!(
+            events
+                .iter()
+                .any(|e| e.text == "a call site two threads reach"),
+            "{events:?}"
+        );
     }
 
     #[test]
